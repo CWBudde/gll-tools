@@ -531,6 +531,53 @@ header h1 {
   gap: 0.5rem;
 }
 
+/* Geometry Controls */
+.geometry-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.geometry-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.geometry-controls select {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  min-width: 180px;
+}
+
+.geometry-controls .geometry-toggle {
+  gap: 0.5rem;
+}
+
+/* Geometry Viewer */
+.geometry-viewer {
+  height: 420px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #f8fafc, #eef2f7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  position: relative;
+}
+
+.geometry-viewer canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 /* Balloon Viewer */
 .balloon-viewer {
   height: 460px;
@@ -1004,5 +1051,9 @@ footer a:hover {
 
   .balloon-viewer {
     height: 320px;
+  }
+
+  .geometry-viewer {
+    height: 300px;
   }
 }

@@ -285,6 +285,37 @@
         </div>
 
         <div id="tab-config" class="tab-content">
+          <div class="card">
+            <h3>3D Geometry</h3>
+            <div class="geometry-controls">
+              <label>
+                Type:
+                <select id="geometry-kind"></select>
+              </label>
+              <label>
+                Item:
+                <select id="geometry-item"></select>
+              </label>
+              <label class="geometry-toggle">
+                <input id="geometry-show-faces" type="checkbox" checked />
+                Faces
+              </label>
+              <label class="geometry-toggle">
+                <input id="geometry-show-edges" type="checkbox" checked />
+                Edges
+              </label>
+              <label class="geometry-toggle">
+                <input id="geometry-autorotate" type="checkbox" checked />
+                Auto-rotate
+              </label>
+            </div>
+            <div id="geometry-viewer" class="geometry-viewer">
+              <div id="geometry-placeholder" class="empty-state">
+                No geometry data available
+              </div>
+            </div>
+            <div id="geometry-meta" class="response-meta"></div>
+          </div>
           <div class="card card-collapsible" data-card="box-types">
             <h3 class="card-header" onclick="toggleCard('box-types')">
               <span class="card-toggle">▼</span>

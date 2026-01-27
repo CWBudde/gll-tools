@@ -12,6 +12,15 @@ let balloonMesh = null;
 let balloonFrameId = null;
 let balloonResizeBound = false;
 let balloonPointerState = null;
+let geometryRenderer = null;
+let geometryScene = null;
+let geometryCamera = null;
+let geometryGroup = null;
+let geometryMesh = null;
+let geometryLines = null;
+let geometryFrameId = null;
+let geometryResizeBound = false;
+let geometryPointerState = null;
 const polarSliderMax = 1000;
 let responseChartInitialized = false;
 let polarChartInitialized = false;
@@ -143,6 +152,29 @@ function setupEventListeners() {
   if (balloonAutorotate) {
     balloonAutorotate.addEventListener("change", handleBalloonAutorotateToggle);
   }
+  const geometryKind = document.getElementById("geometry-kind");
+  if (geometryKind) {
+    geometryKind.addEventListener("change", updateGeometryItemOptions);
+  }
+  const geometryItem = document.getElementById("geometry-item");
+  if (geometryItem) {
+    geometryItem.addEventListener("change", updateGeometryVisualization);
+  }
+  const geometryShowFaces = document.getElementById("geometry-show-faces");
+  if (geometryShowFaces) {
+    geometryShowFaces.addEventListener("change", updateGeometryVisualization);
+  }
+  const geometryShowEdges = document.getElementById("geometry-show-edges");
+  if (geometryShowEdges) {
+    geometryShowEdges.addEventListener("change", updateGeometryVisualization);
+  }
+  const geometryAutorotate = document.getElementById("geometry-autorotate");
+  if (geometryAutorotate) {
+    geometryAutorotate.addEventListener(
+      "change",
+      handleGeometryAutorotateToggle,
+    );
+  }
 }
 
 function handleDragOver(e) {
@@ -229,6 +261,7 @@ function clearResults() {
     polarChart = null;
   }
   destroyBalloonScene();
+  destroyGeometryScene();
   responseChartInitialized = false;
   polarChartInitialized = false;
   results.classList.add("hidden");
@@ -252,6 +285,7 @@ function displayResults() {
   setupResponseControls();
   setupPolarControls();
   setupBalloonControls();
+  setupGeometryControls();
 
   // Switch to overview tab
   switchTab("overview");
@@ -923,6 +957,11 @@ function setupBalloonControls() {
   }
   updateBalloonSourceOptions();
   updateBalloonOptions();
+}
+
+function setupGeometryControls() {
+  updateGeometryOptions();
+  updateGeometryVisualization();
 }
 
 function updateResponseOptions() {
@@ -2955,6 +2994,609 @@ function updateBalloonLegend(stats) {
   }
   labels[0].textContent = `${stats.displayMin.toFixed(1)} dB`;
   labels[1].textContent = `${stats.displayMax.toFixed(1)} dB`;
+}
+
+function updateGeometryOptions() {
+  const kindSelect = document.getElementById("geometry-kind");
+  const itemSelect = document.getElementById("geometry-item");
+  if (!kindSelect || !itemSelect) return;
+
+  const db = currentData?.database;
+  const boxTypes = (db?.box_types || []).filter((box) =>
+    hasGeometryData(box.case_geometry),
+  );
+  const frames = (db?.frames || []).filter((frame) =>
+    hasGeometryData(frame.case_geometry),
+  );
+
+  const options = [];
+  if (boxTypes.length > 0) {
+    options.push({ value: "box", label: "Box Types", count: boxTypes.length });
+  }
+  if (frames.length > 0) {
+    options.push({ value: "frame", label: "Frames", count: frames.length });
+  }
+
+  if (options.length === 0) {
+    kindSelect.innerHTML = '<option value="">No geometry</option>';
+    kindSelect.disabled = true;
+    itemSelect.innerHTML = "";
+    itemSelect.disabled = true;
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    destroyGeometryScene();
+    return;
+  }
+
+  kindSelect.disabled = false;
+  kindSelect.innerHTML = options
+    .map(
+      (opt) =>
+        `<option value="${opt.value}">${opt.label} (${opt.count})</option>`,
+    )
+    .join("");
+
+  updateGeometryItemOptions();
+}
+
+function updateGeometryItemOptions() {
+  const kindSelect = document.getElementById("geometry-kind");
+  const itemSelect = document.getElementById("geometry-item");
+  if (!kindSelect || !itemSelect) return;
+
+  const db = currentData?.database;
+  const kind = kindSelect.value;
+  const items =
+    kind === "frame"
+      ? db?.frames || []
+      : kind === "box"
+        ? db?.box_types || []
+        : [];
+
+  const filtered = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => hasGeometryData(item.case_geometry));
+
+  if (filtered.length === 0) {
+    itemSelect.innerHTML = '<option value="">No geometry</option>';
+    itemSelect.disabled = true;
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  itemSelect.disabled = false;
+  itemSelect.innerHTML = filtered
+    .map(
+      ({ item, index }, i) =>
+        `<option value="${index}">${escapeHtml(item.label || item.key || `${kind} ${i + 1}`)}</option>`,
+    )
+    .join("");
+
+  updateGeometryVisualization();
+}
+
+function updateGeometryPlaceholder(show) {
+  const container = document.getElementById("geometry-viewer");
+  if (!container) return;
+  let placeholder = document.getElementById("geometry-placeholder");
+  if (!placeholder) {
+    placeholder = document.createElement("div");
+    placeholder.id = "geometry-placeholder";
+    placeholder.className = "empty-state";
+    placeholder.textContent = "No geometry data available";
+    container.appendChild(placeholder);
+  }
+  placeholder.classList.toggle("hidden", !show);
+}
+
+function initGeometryScene() {
+  const container = document.getElementById("geometry-viewer");
+  if (!container || typeof THREE === "undefined") {
+    return false;
+  }
+
+  if (geometryRenderer && geometryScene && geometryCamera && geometryGroup) {
+    return true;
+  }
+
+  if (geometryRenderer && geometryRenderer.domElement?.parentNode) {
+    geometryRenderer.domElement.parentNode.removeChild(
+      geometryRenderer.domElement,
+    );
+  }
+
+  geometryRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  geometryRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  geometryRenderer.setSize(container.clientWidth, container.clientHeight);
+  geometryRenderer.setClearColor(0x000000, 0);
+  container.appendChild(geometryRenderer.domElement);
+
+  geometryScene = new THREE.Scene();
+  geometryCamera = new THREE.PerspectiveCamera(
+    42,
+    container.clientWidth / container.clientHeight,
+    0.01,
+    200,
+  );
+  geometryCamera.position.set(0, 0.4, 2.2);
+  geometryCamera.lookAt(0, 0, 0);
+
+  geometryGroup = new THREE.Group();
+  geometryGroup.userData.autoRotate =
+    document.getElementById("geometry-autorotate")?.checked ?? true;
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+  keyLight.position.set(2.5, 2.5, 2);
+  geometryScene.add(ambient, keyLight);
+
+  const grid = new THREE.GridHelper(2, 12, 0x94a3b8, 0xe2e8f0);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.45;
+  geometryScene.add(grid);
+
+  const axes = new THREE.AxesHelper(0.8);
+  axes.material.transparent = true;
+  axes.material.opacity = 0.5;
+  geometryScene.add(axes);
+  geometryScene.add(geometryGroup);
+
+  initGeometryPointerControls(geometryRenderer.domElement);
+
+  if (!geometryResizeBound) {
+    window.addEventListener("resize", handleGeometryResize);
+    geometryResizeBound = true;
+  }
+
+  startGeometryAnimation();
+  return true;
+}
+
+function startGeometryAnimation() {
+  if (!geometryRenderer || !geometryScene || !geometryCamera) {
+    return;
+  }
+
+  if (geometryFrameId) {
+    cancelAnimationFrame(geometryFrameId);
+  }
+
+  const animate = () => {
+    geometryFrameId = requestAnimationFrame(animate);
+    if (geometryGroup && geometryGroup.userData.autoRotate) {
+      geometryGroup.rotation.y += 0.004;
+    }
+    geometryRenderer.render(geometryScene, geometryCamera);
+  };
+
+  animate();
+}
+
+function initGeometryPointerControls(target) {
+  if (!target) return;
+  if (geometryPointerState?.bound) return;
+
+  const state = {
+    bound: true,
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+  };
+
+  const onPointerDown = (event) => {
+    state.dragging = true;
+    state.lastX = event.clientX;
+    state.lastY = event.clientY;
+    target.setPointerCapture?.(event.pointerId);
+  };
+
+  const onPointerMove = (event) => {
+    if (!state.dragging || !geometryGroup) return;
+    const dx = event.clientX - state.lastX;
+    const dy = event.clientY - state.lastY;
+    state.lastX = event.clientX;
+    state.lastY = event.clientY;
+    geometryGroup.rotation.y += dx * 0.006;
+    geometryGroup.rotation.x += dy * 0.006;
+    geometryGroup.rotation.x = Math.max(
+      -Math.PI / 2.2,
+      Math.min(Math.PI / 2.2, geometryGroup.rotation.x),
+    );
+  };
+
+  const onPointerUp = (event) => {
+    state.dragging = false;
+    target.releasePointerCapture?.(event.pointerId);
+  };
+
+  const onWheel = (event) => {
+    if (!geometryCamera) return;
+    event.preventDefault();
+    const delta = Math.sign(event.deltaY) * 0.2;
+    const nextZ = Math.max(
+      0.5,
+      Math.min(10, geometryCamera.position.z + delta),
+    );
+    geometryCamera.position.z = nextZ;
+  };
+
+  target.addEventListener("pointerdown", onPointerDown);
+  target.addEventListener("pointermove", onPointerMove);
+  target.addEventListener("pointerup", onPointerUp);
+  target.addEventListener("pointerleave", onPointerUp);
+  target.addEventListener("wheel", onWheel, { passive: false });
+
+  geometryPointerState = state;
+}
+
+function handleGeometryResize() {
+  if (!geometryRenderer || !geometryCamera) {
+    return;
+  }
+  const container = document.getElementById("geometry-viewer");
+  if (!container) return;
+  const width = container.clientWidth || 1;
+  const height = container.clientHeight || 1;
+  geometryRenderer.setSize(width, height);
+  geometryCamera.aspect = width / height;
+  geometryCamera.updateProjectionMatrix();
+}
+
+function destroyGeometryScene() {
+  if (geometryFrameId) {
+    cancelAnimationFrame(geometryFrameId);
+    geometryFrameId = null;
+  }
+
+  if (geometryMesh) {
+    geometryMesh.geometry?.dispose?.();
+    geometryMesh.material?.dispose?.();
+    geometryMesh = null;
+  }
+
+  if (geometryLines) {
+    geometryLines.geometry?.dispose?.();
+    geometryLines.material?.dispose?.();
+    geometryLines = null;
+  }
+
+  if (geometryRenderer) {
+    geometryRenderer.dispose();
+    if (geometryRenderer.domElement?.parentNode) {
+      geometryRenderer.domElement.parentNode.removeChild(
+        geometryRenderer.domElement,
+      );
+    }
+  }
+
+  geometryRenderer = null;
+  geometryScene = null;
+  geometryCamera = null;
+  geometryGroup = null;
+  updateGeometryPlaceholder(true);
+}
+
+function handleGeometryAutorotateToggle(e) {
+  if (geometryGroup) {
+    geometryGroup.userData.autoRotate = !!e.target.checked;
+  }
+}
+
+function updateGeometryVisualization() {
+  const kindSelect = document.getElementById("geometry-kind");
+  const itemSelect = document.getElementById("geometry-item");
+  if (!kindSelect || !itemSelect) return;
+
+  const kind = kindSelect.value;
+  const itemIndex = parseInt(itemSelect.value);
+  if (Number.isNaN(itemIndex)) {
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  const db = currentData?.database;
+  const list =
+    kind === "frame"
+      ? db?.frames || []
+      : kind === "box"
+        ? db?.box_types || []
+        : [];
+  const item = list[itemIndex];
+  const geometry = item?.case_geometry;
+
+  if (!hasGeometryData(geometry)) {
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  if (typeof THREE === "undefined") {
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  const sceneReady = initGeometryScene();
+  if (!sceneReady) {
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  handleGeometryResize();
+  updateGeometryPlaceholder(false);
+
+  const showFaces =
+    document.getElementById("geometry-show-faces")?.checked ?? true;
+  const showEdges =
+    document.getElementById("geometry-show-edges")?.checked ?? true;
+
+  const geometryData = buildCaseGeometryData(geometry, {
+    showFaces,
+    showEdges,
+  });
+
+  if (!geometryData || (!geometryData.mesh && !geometryData.lines)) {
+    updateGeometryPlaceholder(true);
+    updateGeometryMeta(null);
+    return;
+  }
+
+  if (geometryMesh) {
+    geometryGroup?.remove(geometryMesh);
+    geometryMesh.geometry?.dispose?.();
+    geometryMesh.material?.dispose?.();
+    geometryMesh = null;
+  }
+  if (geometryLines) {
+    geometryGroup?.remove(geometryLines);
+    geometryLines.geometry?.dispose?.();
+    geometryLines.material?.dispose?.();
+    geometryLines = null;
+  }
+
+  geometryGroup.rotation.set(0, 0, 0);
+
+  if (geometryData.mesh) {
+    const material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      flatShading: true,
+      metalness: 0.05,
+      roughness: 0.75,
+      side: THREE.DoubleSide,
+    });
+    geometryMesh = new THREE.Mesh(geometryData.mesh, material);
+    geometryGroup.add(geometryMesh);
+  }
+
+  if (geometryData.lines) {
+    const lineMaterial = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+    });
+    geometryLines = new THREE.LineSegments(geometryData.lines, lineMaterial);
+    geometryGroup.add(geometryLines);
+  }
+
+  if (geometryData.bounds && geometryCamera && geometryGroup) {
+    const bounds = geometryData.bounds;
+    const center = {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+      z: (bounds.minZ + bounds.maxZ) / 2,
+    };
+    geometryGroup.position.set(-center.x, -center.y, -center.z);
+
+    const size = Math.max(
+      bounds.maxX - bounds.minX,
+      bounds.maxY - bounds.minY,
+      bounds.maxZ - bounds.minZ,
+    );
+    const radius = Math.max(size * 0.65, 0.2);
+    const fov = (geometryCamera.fov * Math.PI) / 180;
+    const distance = radius / Math.sin(fov / 2);
+    geometryCamera.position.set(0, radius * 0.35, distance * 1.15);
+    geometryCamera.lookAt(0, 0, 0);
+  }
+
+  updateGeometryMeta({
+    name: item?.label || item?.key || "",
+    vertexCount: geometry?.vertices?.length || 0,
+    edgeCount: geometry?.edges?.length || 0,
+    faceCount: geometry?.faces?.length || 0,
+    symmetry: geometry?.is_symmetric
+      ? `Symmetric @ X=${formatNumber(geometry?.symmetry_axis, 3)}`
+      : "Asymmetric",
+  });
+}
+
+function buildCaseGeometryData(geometry, options) {
+  if (!geometry) return null;
+
+  const scale = 1 / 1000;
+  const bounds = {
+    minX: Infinity,
+    minY: Infinity,
+    minZ: Infinity,
+    maxX: -Infinity,
+    maxY: -Infinity,
+    maxZ: -Infinity,
+  };
+  let hasBounds = false;
+
+  const addBounds = (point) => {
+    if (!point) return;
+    hasBounds = true;
+    bounds.minX = Math.min(bounds.minX, point.x);
+    bounds.minY = Math.min(bounds.minY, point.y);
+    bounds.minZ = Math.min(bounds.minZ, point.z);
+    bounds.maxX = Math.max(bounds.maxX, point.x);
+    bounds.maxY = Math.max(bounds.maxY, point.y);
+    bounds.maxZ = Math.max(bounds.maxZ, point.z);
+  };
+
+  let lineGeometry = null;
+  if (options?.showEdges) {
+    const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
+    const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
+    const edgePairs =
+      edges.length > 0
+        ? edges.map((edge) => ({
+            v1: edge.v1,
+            v2: edge.v2,
+            color: edge.color,
+          }))
+        : buildSequentialEdgePairs(vertices.length).map(([v1, v2]) => ({
+            v1,
+            v2,
+            color: null,
+          }));
+
+    const positions = [];
+    const colors = [];
+    const color = new THREE.Color();
+
+    edgePairs.forEach((edge) => {
+      const p1 = resolveGeometryVertex(geometry, vertices, edge.v1, scale);
+      const p2 = resolveGeometryVertex(geometry, vertices, edge.v2, scale);
+      if (!p1 || !p2) return;
+      positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      addBounds(p1);
+      addBounds(p2);
+      const edgeColor = colorFromInt(edge.color, 0x475569, color);
+      colors.push(
+        edgeColor.r,
+        edgeColor.g,
+        edgeColor.b,
+        edgeColor.r,
+        edgeColor.g,
+        edgeColor.b,
+      );
+    });
+
+    if (positions.length > 0) {
+      lineGeometry = new THREE.BufferGeometry();
+      lineGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      lineGeometry.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(colors, 3),
+      );
+    }
+  }
+
+  let meshGeometry = null;
+  if (options?.showFaces && Array.isArray(geometry.faces)) {
+    const faces = geometry.faces;
+    const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
+    const positions = [];
+    const colors = [];
+    const color = new THREE.Color();
+
+    faces.forEach((face) => {
+      const indices = Array.isArray(face.vertices) ? face.vertices : [];
+      if (indices.length < 3) return;
+      const faceColor = colorFromInt(face.color, 0x60a5fa, color);
+      for (let i = 1; i + 1 < indices.length; i += 1) {
+        const p0 = resolveGeometryVertex(geometry, vertices, indices[0], scale);
+        const p1 = resolveGeometryVertex(
+          geometry,
+          vertices,
+          indices[i],
+          scale,
+        );
+        const p2 = resolveGeometryVertex(
+          geometry,
+          vertices,
+          indices[i + 1],
+          scale,
+        );
+        if (!p0 || !p1 || !p2) continue;
+        positions.push(
+          p0.x,
+          p0.y,
+          p0.z,
+          p1.x,
+          p1.y,
+          p1.z,
+          p2.x,
+          p2.y,
+          p2.z,
+        );
+        addBounds(p0);
+        addBounds(p1);
+        addBounds(p2);
+        for (let c = 0; c < 3; c += 1) {
+          colors.push(faceColor.r, faceColor.g, faceColor.b);
+        }
+      }
+    });
+
+    if (positions.length > 0) {
+      meshGeometry = new THREE.BufferGeometry();
+      meshGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      meshGeometry.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(colors, 3),
+      );
+      meshGeometry.computeVertexNormals();
+    }
+  }
+
+  if (!hasBounds) {
+    return null;
+  }
+
+  return {
+    bounds,
+    lines: lineGeometry,
+    mesh: meshGeometry,
+  };
+}
+
+function colorFromInt(value, fallback, target) {
+  const color = target || new THREE.Color();
+  const fallbackColor = new THREE.Color(fallback ?? 0x64748b);
+  if (!Number.isFinite(value)) {
+    color.copy(fallbackColor);
+    return color;
+  }
+  const raw = value >>> 0;
+  const r = (raw >> 16) & 0xff;
+  const g = (raw >> 8) & 0xff;
+  const b = raw & 0xff;
+  color.setRGB(r / 255, g / 255, b / 255);
+  return color;
+}
+
+function updateGeometryMeta(stats) {
+  const meta = document.getElementById("geometry-meta");
+  if (!meta) return;
+  if (!stats) {
+    meta.innerHTML = '<span class="chip">No geometry data</span>';
+    return;
+  }
+
+  const chips = [];
+  if (stats.name) {
+    chips.push(`<span class="chip">${escapeHtml(stats.name)}</span>`);
+  }
+  chips.push(
+    `<span class="chip">Vertices ${stats.vertexCount}</span>`,
+    `<span class="chip">Edges ${stats.edgeCount}</span>`,
+    `<span class="chip">Faces ${stats.faceCount}</span>`,
+    `<span class="chip">${stats.symmetry}</span>`,
+  );
+
+  meta.innerHTML = chips.join("");
 }
 
 function getPhaseSeries(mode, frequencies, phase, unwrapped) {
