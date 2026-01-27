@@ -1,0 +1,74 @@
+"GLL"
+"Format", "3D"
+"FormatVersion", "1.0"
+
+"System", "Example Line Array", "sysExampleLineArray", "LA"
+"SystemVersion", "1"
+"Company", "ExampleCo"
+"InfoText", "Line array example for docs/nNot a compiled file"
+
+"Layout"
+"Logo1", "logos/logo_left.png"
+"Logo2", "logos/logo_right.png"
+"BackgroundColor", 0.8, 0.8, 0.8
+
+"Data"
+
+";","Box type definition"
+"BoxTypes", 1
+"BoxType", "Array Cabinet", "bxArrayCab"
+"Sources", 1
+"Source", "Full Range", "srcFullRange", 0, 0, 0, 0, 0, 0, "SD_FullRange"
+"Input Configurations", 1
+"Input Configuration", "Default", "icDefault"
+"Inputs", 1
+"Input", "In1"
+"Rated Impedance", 8
+"Links", 1
+"Link", "srcFullRange", "FG_Default"
+"GeometryFiles", 1
+"GeometryFile", "geometry/box.xed"
+"ReferencePoint", 0, 0, 0
+"NextPivot", 0, 0, 0
+"CenterOfMass", 0, 0, 0
+"Weight", 18.0
+
+";","Frame definition"
+"Frames", 1
+"Frame", "Top Frame", "frTop", "Flown"
+"GeometryFiles", 1
+"GeometryFile", "geometry/frame.xed"
+"NextPivot", 0, 0, 0
+"CenterOfMass", 0, 0, 0
+"Weight", 6.0
+"PinPoints", 2
+"PinPoint", "Front", 0, 0, 0
+"PinPoint", "Rear", 0, 0, 0
+
+";","Connectors and angles"
+"Connectors", 1
+"Connector", "bxArrayCab", "bxArrayCab"
+"Angles", 3
+"Angle", -2.0
+"Angle", -1.0
+"Angle", 0.0
+
+";","Limits"
+"Limits", 1
+"Limit", "MaxBoxes", "", "bxArrayCab", 16
+
+";","Warnings"
+"Warnings", 1
+"Warning", "MaxBoxes", 12, "", "Approaching max hang"
+
+";","Source data"
+"SourceDefinitions", 1
+"SourceDefinition", "SD_FullRange"
+"File", ""
+
+";","Filter group for the input"
+"FilterGroups", 1
+"FilterGroup", "Flat", "FG_Default"
+"FilterDefinitions", 1
+"FilterDefinition", "Flat", "FD_Flat"
+"File", "filters/flat.xgfb"

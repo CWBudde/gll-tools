@@ -1,0 +1,54 @@
+"GLL"
+"Format", "3D"
+"FormatVersion", "1.0"
+
+"System", "Example Cluster", "sysExampleCluster", "CL"
+"SystemVersion", "1"
+"Company", "ExampleCo"
+"InfoText", "Cluster example for docs/nNot a compiled file"
+
+"Layout"
+"Logo1", "logos/logo_left.png"
+"Logo2", "logos/logo_right.png"
+"BackgroundColor", 0.8, 0.8, 0.8
+
+"Data"
+
+";","Box type definition"
+"BoxTypes", 1
+"BoxType", "Cluster Cabinet", "bxClusterCab"
+"Sources", 1
+"Source", "Full Range", "srcFullRange", 0, 0, 0, 0, 0, 0, "SD_FullRange"
+"Input Configurations", 1
+"Input Configuration", "Default", "icDefault"
+"Inputs", 1
+"Input", "In1"
+"Rated Impedance", 8
+"Links", 1
+"Link", "srcFullRange", "FG_Default"
+"GeometryFiles", 1
+"GeometryFile", "geometry/box.xed"
+"ReferencePoint", 0, 0, 0
+"NextPivot", 0, 0, 0
+"CenterOfMass", 0, 0, 0
+"Weight", 20.0
+
+";","Fixed setups for a cluster system"
+"Setups", 1
+"Setup", "3-Box Cluster", "setupCluster3"
+"Boxes", 3
+"Box", "Box 1", 0, 0, 0, 0, 0, 0, "bxClusterCab"
+"Box", "Box 2", 0, 0, 0, 20, 0, 0, "bxClusterCab"
+"Box", "Box 3", 0, 0, 0, -20, 0, 0, "bxClusterCab"
+
+";","Source data"
+"SourceDefinitions", 1
+"SourceDefinition", "SD_FullRange"
+"File", ""
+
+";","Filter group for the input"
+"FilterGroups", 1
+"FilterGroup", "Flat", "FG_Default"
+"FilterDefinitions", 1
+"FilterDefinition", "Flat", "FD_Flat"
+"File", "filters/flat.xgfb"

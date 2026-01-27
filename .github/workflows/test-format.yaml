@@ -1,0 +1,42 @@
+name: test-format
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup just
+        uses: extractions/setup-just@v2
+
+      - name: Install Go formatters
+        run: |
+          go install mvdan.cc/gofumpt@latest
+          go install github.com/daixiang0/gci@latest
+
+      - name: Install shell formatters
+        run: |
+          go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
+      - name: Install Prettier
+        run: |
+          npm install -g prettier
+
+      - name: Run treefmt check
+        uses: isbecker/treefmt-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fail-on-change: true
+          allow-missing-formatter: true

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GLL Viewer - GLL File Inspector</title>
+    <link rel="icon" type="image/png" href="favicon.png" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:url"
+      content="https://meko-christian.github.io/gll-tools/"
+    />
+    <meta property="og:title" content="GLL Viewer - GLL File Inspector" />
+    <meta
+      property="og:description"
+      content="Online GLL (Generic Loudspeaker Library) file inspector. Parse metadata, extract resources, and analyze acoustic response data in your browser."
+    />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta
+      property="twitter:url"
+      content="https://meko-christian.github.io/gll-tools/"
+    />
+    <meta property="twitter:title" content="GLL Viewer - GLL File Inspector" />
+    <meta
+      property="twitter:description"
+      content="Online GLL (Generic Loudspeaker Library) file inspector. Parse metadata, extract resources, and analyze acoustic response data in your browser."
+    />
+
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>GLL Viewer</h1>
+        <p class="subtitle">
+          Inspect GLL (Generic Loudspeaker Library) files in your browser
+        </p>
+      </header>
+
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-zone-content">
+          <svg
+            class="drop-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          <p>Drop a <strong>.gll</strong> file here</p>
+          <p class="drop-hint">or click to select</p>
+          <input type="file" id="file-input" accept=".gll" hidden />
+        </div>
+      </div>
+
+      <div id="loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p>Parsing GLL file...</p>
+      </div>
+
+      <div id="error" class="error hidden">
+        <p id="error-message"></p>
+      </div>
+
+      <div id="results" class="results hidden">
+        <div class="file-header">
+          <h2 id="file-name"></h2>
+          <button id="clear-btn" class="btn-clear">Clear</button>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="overview">Overview</button>
+          <button class="tab" data-tab="sources">Sources</button>
+          <button class="tab" data-tab="responses">Responses</button>
+          <button class="tab" data-tab="config">Config</button>
+          <button class="tab" data-tab="resources">Resources</button>
+        </div>
+
+        <div id="tab-overview" class="tab-content active">
+          <div class="card">
+            <h3>System Information</h3>
+            <table class="info-table" id="system-info"></table>
+          </div>
+          <div class="card">
+            <h3>Metadata</h3>
+            <table class="info-table" id="metadata-info"></table>
+          </div>
+          <div class="card">
+            <h3>File Header</h3>
+            <table class="info-table" id="header-info"></table>
+          </div>
+        </div>
+
+        <div id="tab-sources" class="tab-content">
+          <div class="card">
+            <h3>Acoustic Sources</h3>
+            <div id="sources-list"></div>
+          </div>
+        </div>
+
+        <div id="tab-responses" class="tab-content">
+          <div class="global-source-bar">
+            <div class="global-source-card">
+              <label for="global-source">Source:</label>
+              <select id="global-source"></select>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Frequency Responses</h3>
+            <div class="response-controls">
+              <div class="response-controls-row">
+                <label class="source-selector">
+                  Source:
+                  <select id="response-source"></select>
+                </label>
+                <label>
+                  Phase:
+                  <select id="response-phase-mode">
+                    <option value="unwrapped" selected>Unwrapped</option>
+                    <option value="wrapped">Wrapped</option>
+                    <option value="group-delay">Group delay</option>
+                  </select>
+                </label>
+                <label class="response-toggle">
+                  <input id="response-use-onaxis" type="checkbox" />
+                  Normalized
+                </label>
+              </div>
+              <div class="response-controls-row">
+                <label>
+                  Response:
+                  <select id="response-index"></select>
+                </label>
+                <label class="response-slider">
+                  Azimuth:
+                  <input
+                    id="response-azimuth-slider"
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value="0"
+                  />
+                  <span id="response-azimuth-value" class="angle-value">-</span>
+                </label>
+                <label class="response-slider">
+                  Elevation:
+                  <input
+                    id="response-elevation-slider"
+                    type="range"
+                    min="0"
+                    max="180"
+                    step="1"
+                    value="0"
+                  />
+                  <span id="response-elevation-value" class="angle-value"
+                    >-</span
+                  >
+                </label>
+              </div>
+            </div>
+            <div id="response-chart-container">
+              <canvas id="response-chart"></canvas>
+            </div>
+            <div id="response-meta" class="response-meta"></div>
+          </div>
+          <div class="card">
+            <h3>Polar Plot</h3>
+            <div class="polar-controls">
+              <label>
+                Plane:
+                <select id="polar-plane">
+                  <option value="horizontal" selected>
+                    Horizontal (Azimuth)
+                  </option>
+                  <option value="vertical">Vertical (Elevation)</option>
+                </select>
+              </label>
+              <label>
+                Frequency:
+                <select id="polar-frequency"></select>
+              </label>
+              <label class="polar-slider">
+                Frequency:
+                <input
+                  id="polar-frequency-slider"
+                  type="range"
+                  min="0"
+                  max="1000"
+                  step="1"
+                  value="0"
+                />
+                <span id="polar-frequency-value" class="frequency-value"
+                  >-</span
+                >
+              </label>
+            </div>
+            <div id="polar-chart-container">
+              <canvas id="polar-chart"></canvas>
+            </div>
+            <div id="polar-meta" class="response-meta"></div>
+          </div>
+          <div class="card">
+            <h3>3D Balloon</h3>
+            <div class="balloon-controls">
+              <label class="source-selector">
+                Source:
+                <select id="balloon-source"></select>
+              </label>
+              <label>
+                Frequency:
+                <select id="balloon-frequency"></select>
+              </label>
+              <label class="balloon-slider">
+                Frequency:
+                <input
+                  id="balloon-frequency-slider"
+                  type="range"
+                  min="0"
+                  max="1000"
+                  step="1"
+                  value="0"
+                />
+                <span id="balloon-frequency-value" class="frequency-value"
+                  >-</span
+                >
+              </label>
+              <label class="balloon-slider">
+                Range (dB):
+                <input
+                  id="balloon-range"
+                  type="range"
+                  min="20"
+                  max="80"
+                  step="5"
+                  value="40"
+                />
+                <span id="balloon-range-value" class="frequency-value">40</span>
+              </label>
+              <label class="balloon-slider">
+                Scale:
+                <input
+                  id="balloon-scale"
+                  type="range"
+                  min="0.6"
+                  max="1.6"
+                  step="0.1"
+                  value="1"
+                />
+                <span id="balloon-scale-value" class="frequency-value"
+                  >1.0×</span
+                >
+              </label>
+              <label class="balloon-toggle">
+                <input id="balloon-wireframe" type="checkbox" />
+                Wireframe
+              </label>
+              <label class="balloon-toggle">
+                <input id="balloon-autorotate" type="checkbox" checked />
+                Auto-rotate
+              </label>
+            </div>
+            <div id="balloon-viewer" class="balloon-viewer">
+              <div id="balloon-placeholder" class="empty-state">
+                No 3D balloon data available
+              </div>
+              <div class="balloon-legend">
+                <div class="balloon-legend-title">SPL (dB)</div>
+                <div class="balloon-legend-bar"></div>
+                <div class="balloon-legend-labels">
+                  <span>Low</span>
+                  <span>High</span>
+                </div>
+              </div>
+            </div>
+            <div id="balloon-meta" class="response-meta"></div>
+          </div>
+        </div>
+
+        <div id="tab-config" class="tab-content">
+          <div class="card card-collapsible" data-card="box-types">
+            <h3 class="card-header" onclick="toggleCard('box-types')">
+              <span class="card-toggle">▼</span>
+              <span>Box Types</span>
+              <span class="card-count" id="box-types-count"></span>
+            </h3>
+            <div class="card-body" id="box-types-list"></div>
+          </div>
+          <div class="card card-collapsible" data-card="frames">
+            <h3 class="card-header" onclick="toggleCard('frames')">
+              <span class="card-toggle">▼</span>
+              <span>Frames</span>
+              <span class="card-count" id="frames-count"></span>
+            </h3>
+            <div class="card-body" id="frames-list"></div>
+          </div>
+          <div class="card card-collapsible" data-card="filter-groups">
+            <h3 class="card-header" onclick="toggleCard('filter-groups')">
+              <span class="card-toggle">▼</span>
+              <span>Filter Groups</span>
+              <span class="card-count" id="filter-groups-count"></span>
+            </h3>
+            <div class="card-body" id="filter-groups-list"></div>
+          </div>
+          <div class="card card-collapsible" data-card="limits">
+            <h3 class="card-header" onclick="toggleCard('limits')">
+              <span class="card-toggle">▼</span>
+              <span>Limits</span>
+              <span class="card-count" id="limits-count"></span>
+            </h3>
+            <div class="card-body" id="limits-list"></div>
+          </div>
+          <div class="card card-collapsible" data-card="warnings">
+            <h3 class="card-header" onclick="toggleCard('warnings')">
+              <span class="card-toggle">▼</span>
+              <span>Warnings</span>
+              <span class="card-count" id="warnings-count"></span>
+            </h3>
+            <div class="card-body" id="warnings-list"></div>
+          </div>
+        </div>
+
+        <div id="tab-resources" class="tab-content">
+          <div class="card">
+            <h3>Documentation &amp; Drawings</h3>
+            <p class="section-hint">
+              Technical drawings, spec sheets, and manuals embedded in the GLL
+              file
+            </p>
+            <div id="include-files-list"></div>
+          </div>
+          <div class="card">
+            <h3>Data Files</h3>
+            <p class="section-hint">
+              Embedded images, 3D geometry, and configuration files
+            </p>
+            <div id="data-files-list"></div>
+          </div>
+          <div class="card">
+            <h3>Other Resources</h3>
+            <p class="section-hint">
+              Additional embedded content (fonts, compressed data)
+            </p>
+            <div id="resources-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <footer>
+        <p>
+          <a href="https://github.com/MeKo-Christian/gll-tools" target="_blank"
+            >gll-tools</a
+          >
+          &mdash; Open source GLL parser written in Go
+        </p>
+        <p class="disclaimer">
+          GLL is a proprietary format by AFMG. This tool is for educational and
+          interoperability purposes.
+        </p>
+      </footer>
+    </div>
+
+    <script src="wasm_exec.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

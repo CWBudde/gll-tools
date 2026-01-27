@@ -1,0 +1,72 @@
+# treefmt configuration for gll-tools
+# Multi-language code formatting
+
+[global]
+excludes = [
+    # Git and version control
+    "**/.gitignore",
+    "**/.git/**",
+
+    # Go module files (managed by go tooling)
+    "go.sum",
+    "go.mod",
+
+    # Documentation and text files
+    "**/*.txt",
+    "CHANGELOG.md",
+    "LICENSE",
+
+    # Binary and data files
+    "**/*.gll",
+    "**/*.pdf",
+    "**/*.png",
+    "**/*.jpg",
+    "**/*.jpeg",
+
+    # Build artifacts
+    "bin/**",
+    "dist/**",
+
+    # Extracted resources
+    "extracted/**",
+]
+
+# Go formatter - simple and strict
+[formatter.gofumpt]
+command = "gofumpt"
+options = ["-w"]
+includes = ["*.go"]
+
+# Go import organizer - runs after gofumpt
+[formatter.gci]
+command = "gci"
+options = ["write"]
+includes = ["*.go"]
+priority = 1
+
+# Shell script checker
+[formatter.shellcheck]
+command = "shellcheck"
+includes = ["*.sh"]
+
+# Shell script formatter - runs after shellcheck
+[formatter.shfmt]
+command = "shfmt"
+options = ["-s", "-w"]
+includes = ["*.sh"]
+priority = 1
+
+# Markdown, YAML, JSON formatter
+[formatter.prettier]
+command = "prettier"
+options = ["-w"]
+includes = [
+    "*.md",
+    "*.yaml",
+    "*.yml",
+    "*.json",
+]
+excludes = [
+    # Exclude potentially sensitive or auto-generated files
+    "**/*.sops.*",
+]

@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          # Build for Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=${{ steps.get_version.outputs.VERSION }}" -o gllinfo-linux-amd64 ./cmd/gllinfo
+
+          # Build for macOS ARM64 (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${{ steps.get_version.outputs.VERSION }}" -o gllinfo-darwin-arm64 ./cmd/gllinfo
+
+          # Build for Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=${{ steps.get_version.outputs.VERSION }}" -o gllinfo-windows-amd64.exe ./cmd/gllinfo
+
+      - name: Create archives
+        run: |
+          # Linux
+          tar -czf gllinfo-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz gllinfo-linux-amd64 README.md
+
+          # macOS
+          tar -czf gllinfo-${{ steps.get_version.outputs.VERSION }}-darwin-arm64.tar.gz gllinfo-darwin-arm64 README.md
+
+          # Windows (using zip)
+          zip gllinfo-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip gllinfo-windows-amd64.exe README.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            gllinfo-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
+            gllinfo-${{ steps.get_version.outputs.VERSION }}-darwin-arm64.tar.gz
+            gllinfo-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
