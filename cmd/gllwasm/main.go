@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"syscall/js"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/gll"
+	"github.com/cwbudde/gll-tools/internal/filters"
+	"github.com/cwbudde/gll-tools/internal/mime"
+	"github.com/cwbudde/gll-tools/pkg/gll"
 )
 
 // WASMResult is the JSON structure returned to JavaScript.
@@ -47,6 +49,8 @@ type WASMDatabase struct {
 	Limits            []gll.Limit            `json:"limits,omitempty"`
 	Warnings          []gll.Warning          `json:"warnings,omitempty"`
 	FilterGroups      []gll.FilterGroup      `json:"filter_groups,omitempty"`
+	ClusterSetups     []gll.ClusterSetupItem `json:"cluster_setups,omitempty"`
+	Connectors        []gll.Connector        `json:"connectors,omitempty"`
 	SourceDefinitions []WASMSourceDefinition `json:"source_definitions,omitempty"`
 }
 
@@ -89,6 +93,9 @@ func main() {
 	// Register the computeArrayResponse function
 	js.Global().Set("computeArrayResponse", js.FuncOf(computeArrayResponse))
 
+	// Register the computeFilterResponse function
+	js.Global().Set("computeFilterResponse", js.FuncOf(computeFilterResponse))
+
 	// Keep the program running
 	select {}
 }
@@ -125,13 +132,15 @@ func parseGLL(_ js.Value, args []js.Value) any {
 	// Convert database if present
 	if file.Database != nil {
 		wasmData.Database = &WASMDatabase{
-			DataFiles:    buildWASMDataFiles(data, file.Database.DataFiles),
-			IncludeFiles: buildWASMIncludeFiles(data, file.Database.IncludeFiles),
-			BoxTypes:     file.Database.BoxTypes,
-			Frames:       file.Database.Frames,
-			Limits:       file.Database.Limits,
-			Warnings:     file.Database.Warnings,
-			FilterGroups: file.Database.FilterGroups,
+			DataFiles:     buildWASMDataFiles(data, file.Database.DataFiles),
+			IncludeFiles:  buildWASMIncludeFiles(data, file.Database.IncludeFiles),
+			BoxTypes:      file.Database.BoxTypes,
+			Frames:        file.Database.Frames,
+			Limits:        file.Database.Limits,
+			Warnings:      file.Database.Warnings,
+			FilterGroups:  file.Database.FilterGroups,
+			ClusterSetups: file.Database.ClusterSetups,
+			Connectors:    file.Database.Connectors,
 		}
 
 		// Convert source definitions and load responses
@@ -242,7 +251,7 @@ func buildWASMDataFiles(data []byte, dataFiles []gll.DataFile) []WASMDataFile {
 			start := int(df.Offset)
 			end := start + int(df.Size)
 			if start >= 0 && end > start && end <= len(data) {
-				mimeType := guessMimeType(df.Filename)
+				mimeType := mime.GuessMimeType(df.Filename)
 				item.DataURI = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data[start:end])
 			}
 		}
@@ -272,7 +281,7 @@ func buildWASMIncludeFiles(data []byte, includeFiles []gll.IncludeFile) []WASMIn
 			start := int(inc.Offset)
 			end := start + int(inc.Size)
 			if start >= 0 && end > start && end <= len(data) {
-				mimeType := guessMimeType(inc.Filename)
+				mimeType := mime.GuessMimeType(inc.Filename)
 				item.DataURI = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data[start:end])
 			}
 		}
@@ -314,10 +323,10 @@ type Vector3Input struct {
 
 // AirPropsInput is air properties for the calculation.
 type AirPropsInput struct {
-	Temperature  float64 `json:"temperature"`   // Celsius
-	Humidity     float64 `json:"humidity"`      // 0-1
-	Speed        float64 `json:"speed"`         // m/s (optional, calculated if 0)
-	AirAttenOn   bool    `json:"air_atten_on"`  // Enable air absorption
+	Temperature float64 `json:"temperature"`  // Celsius
+	Humidity    float64 `json:"humidity"`     // 0-1
+	Speed       float64 `json:"speed"`        // m/s (optional, calculated if 0)
+	AirAttenOn  bool    `json:"air_atten_on"` // Enable air absorption
 }
 
 // ArrayResponseResult is the output of computeArrayResponse.
@@ -465,28 +474,44 @@ func marshalArrayResult(result ArrayResponseResult) string {
 	return string(jsonBytes)
 }
 
-func guessMimeType(filename string) string {
-	lower := filename
-	if len(lower) > 0 {
-		// Simple lowercase for extension check
-		for i := len(lower) - 1; i >= 0; i-- {
-			if lower[i] == '.' {
-				ext := lower[i:]
-				switch {
-				case ext == ".pdf" || ext == ".PDF":
-					return "application/pdf"
-				case ext == ".png" || ext == ".PNG":
-					return "image/png"
-				case ext == ".jpg" || ext == ".jpeg" || ext == ".JPG" || ext == ".JPEG":
-					return "image/jpeg"
-				case ext == ".gif" || ext == ".GIF":
-					return "image/gif"
-				case ext == ".xed" || ext == ".XED":
-					return "application/octet-stream"
-				}
-				break
-			}
-		}
+// computeFilterResponse calculates a filter response for a filter definition.
+// Input: gll_data (Uint8Array) and config (JSON string).
+func computeFilterResponse(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return marshalFilterResult(filters.FilterResponseResult{
+			Success: false,
+			Error:   "requires 2 arguments: gll_data (Uint8Array) and config (JSON string)",
+		})
 	}
-	return "application/octet-stream"
+
+	jsArray := args[0]
+	length := jsArray.Get("length").Int()
+	data := make([]byte, length)
+	js.CopyBytesToGo(data, jsArray)
+
+	reader := bytes.NewReader(data)
+	file, err := gll.Parse(reader)
+	if err != nil {
+		return marshalFilterResult(filters.FilterResponseResult{
+			Success: false,
+			Error:   "failed to parse GLL: " + err.Error(),
+		})
+	}
+
+	configJSON := args[1].String()
+	var req filters.FilterResponseRequest
+	if err := json.Unmarshal([]byte(configJSON), &req); err != nil {
+		return marshalFilterResult(filters.FilterResponseResult{
+			Success: false,
+			Error:   "failed to parse config: " + err.Error(),
+		})
+	}
+
+	result := filters.BuildFilterResponse(file, req)
+	return marshalFilterResult(result)
+}
+
+func marshalFilterResult(result filters.FilterResponseResult) string {
+	jsonBytes, _ := json.Marshal(result)
+	return string(jsonBytes)
 }

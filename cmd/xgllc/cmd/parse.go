@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/xgll"
+	"github.com/cwbudde/gll-tools/pkg/xgll"
 	"github.com/spf13/cobra"
 )
 

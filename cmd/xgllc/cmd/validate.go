@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/xgll"
+	"github.com/cwbudde/gll-tools/pkg/xgll"
 	"github.com/spf13/cobra"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // SourceFilterLink maps a source to its filter group

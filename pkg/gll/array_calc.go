@@ -1,11 +1,10 @@
 // Package gll provides GLL file parsing and array response calculations.
-//
-// This file implements the array response calculation algorithm as reverse-engineered
-// from the EASE GLL Viewer. See docs/response.md Section 10 for detailed documentation.
 package gll
 
 import (
 	"math"
+
+	"github.com/cwbudde/gll-tools/internal/acoustics"
 )
 
 // AirProperties holds air parameters for acoustic calculations
@@ -17,10 +16,11 @@ type AirProperties struct {
 
 // DefaultAirProperties returns standard air conditions (20°C, 50% humidity)
 func DefaultAirProperties() AirProperties {
+	temp, humidity, speed := acoustics.DefaultAirProperties()
 	return AirProperties{
-		Temperature: 20.0,
-		Humidity:    0.5,
-		Speed:       343.0, // m/s at 20°C
+		Temperature: temp,
+		Humidity:    humidity,
+		Speed:       speed,
 	}
 }
 
@@ -29,7 +29,7 @@ func DefaultAirProperties() AirProperties {
 func (ap AirProperties) GetAirLossPerMeter(freq float64) float64 {
 	// Simplified air absorption model
 	// Real implementation would use full ISO 9613-1 equations
-	return 0.001 * math.Pow(freq/1000.0, 1.5) * (1.0 - ap.Humidity*0.5)
+	return acoustics.AirLossPerMeter(freq, ap.Humidity)
 }
 
 // CopyDeep creates a deep copy of the TransferFunction
@@ -46,80 +46,43 @@ func (tf *TransferFunction) CopyDeep() *TransferFunction {
 }
 
 // ToComplex converts Level/Phase representation to Real/Imaginary
-func (tf *TransferFunction) ToComplex() (real, imag []float64) {
-	n := len(tf.Level)
-	real = make([]float64, n)
-	imag = make([]float64, n)
-
-	for i := 0; i < n; i++ {
-		// Convert dB to linear magnitude
-		magnitude := math.Pow(10, tf.Level[i]/20.0)
-		// Convert to complex components
-		real[i] = magnitude * math.Cos(tf.Phase[i])
-		imag[i] = magnitude * math.Sin(tf.Phase[i])
-	}
-	return real, imag
+func (tf *TransferFunction) ToComplex() (realValues, imagValues []float64) {
+	return acoustics.ToComplex(tf.Level, tf.Phase)
 }
 
 // FromComplex converts Real/Imaginary back to Level/Phase
-func (tf *TransferFunction) FromComplex(real, imag []float64) {
-	n := len(real)
-	tf.Level = make([]float64, n)
-	tf.Phase = make([]float64, n)
-
-	for i := 0; i < n; i++ {
-		magnitude := math.Sqrt(real[i]*real[i] + imag[i]*imag[i])
-		if magnitude > 0 {
-			tf.Level[i] = 20.0 * math.Log10(magnitude)
-		} else {
-			tf.Level[i] = -200.0 // Very small value for zero magnitude
-		}
-		tf.Phase[i] = math.Atan2(imag[i], real[i])
-	}
+func (tf *TransferFunction) FromComplex(realValues, imagValues []float64) {
+	level, phase := acoustics.FromComplex(realValues, imagValues)
+	tf.Level = level
+	tf.Phase = phase
 }
 
 // Add performs coherent complex summation with another TransferFunction.
 // This preserves phase relationships for accurate interference modeling.
 func (tf *TransferFunction) Add(other *TransferFunction) {
-	// Convert both to complex representation
-	real1, imag1 := tf.ToComplex()
-	real2, imag2 := other.ToComplex()
-
-	// Sum in complex domain
-	for i := range real1 {
-		real1[i] += real2[i]
-		imag1[i] += imag2[i]
-	}
-
-	// Convert back to Level/Phase
-	tf.FromComplex(real1, imag1)
+	acoustics.AddComplexInPlace(tf.Level, tf.Phase, other.Level, other.Phase)
 }
 
 // Multiply applies a filter (complex multiplication).
 // In Level/Phase domain: add levels, add phases.
 func (tf *TransferFunction) Multiply(filter *TransferFunction) {
-	for i := range tf.Level {
-		tf.Level[i] += filter.Level[i]
-		tf.Phase[i] += filter.Phase[i]
-	}
+	acoustics.MultiplyLevelPhase(tf.Level, tf.Phase, filter.Level, filter.Phase)
 }
 
 // AddGain adds a constant gain in dB to all frequency bands
 func (tf *TransferFunction) AddGain(gainDB float64) {
-	for i := range tf.Level {
-		tf.Level[i] += gainDB
-	}
+	acoustics.AddGain(tf.Level, gainDB)
 }
 
 // AddDelay modifies phase based on frequency to simulate time delay.
 // delay is in seconds.
 func (tf *TransferFunction) AddDelay(delay float64) {
 	tf.Delay += delay
-	for i := range tf.Phase {
-		freq := tf.Definition.GetFrequency(i)
-		// phase += 2π × frequency × delay
-		tf.Phase[i] += 2.0 * math.Pi * freq * delay
+	freqs := make([]float64, len(tf.Phase))
+	for i := range freqs {
+		freqs[i] = tf.Definition.GetFrequency(i)
 	}
+	acoustics.AddDelay(tf.Phase, freqs, delay)
 }
 
 // ArrayElement represents a single element in a line array configuration
@@ -248,7 +211,7 @@ func computeElementResponseAt(
 	}
 
 	// Calculate arrival time based on distance from element to receiver
-	distance := vectorLength(vectorSub(receiver, elem.Position))
+	distance := acoustics.Distance(receiver.X, receiver.Y, receiver.Z, elem.Position.X, elem.Position.Y, elem.Position.Z)
 	arrivalTime := distance / airProps.Speed
 
 	return boxSpectrum, arrivalTime
@@ -268,17 +231,17 @@ func getSourceResponseAt(
 	}
 
 	// Calculate vector from source to receiver
-	vec := vectorSub(receiver, sourcePos)
+	vecX, vecY, vecZ := acoustics.Sub(receiver.X, receiver.Y, receiver.Z, sourcePos.X, sourcePos.Y, sourcePos.Z)
 
 	// Calculate distance and propagation factor
-	distance := vectorLength(vec)
+	distance := acoustics.Length(vecX, vecY, vecZ)
 	if distance < 0.01 {
 		distance = 0.01 // Minimum distance
 	}
 	propagationFactor := 1.0 / distance
 
 	// Convert to spherical angles (theta = elevation, phi = azimuth)
-	theta, phi := getThetaPhi(vec, sourceAngles)
+	theta, phi := acoustics.ThetaPhi(vecX, vecY, vecZ, sourceAngles.X, sourceAngles.Y, sourceAngles.Z)
 
 	// Get response at that angle from balloon data (with interpolation)
 	response := srcDef.BalloonData.GetResponseAtAngle(theta, phi)
@@ -314,12 +277,12 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 	}
 
 	// Apply symmetry mapping
-	phiDeg = bd.mapMeridianBySymmetry(phiDeg)
+	phiDeg = acoustics.MapMeridianBySymmetry(phiDeg, int(bd.AngularResolution.Symmetry))
 
 	// Calculate grid indices
 	merStep := bd.AngularResolution.MeridianStep
 	parStep := bd.AngularResolution.ParallelStep
-	merCount := bd.getMeridianCount()
+	merCount := acoustics.MeridianCount(bd.AngularResolution.MeridianStep, int(bd.AngularResolution.Symmetry))
 
 	// Bilinear interpolation indices
 	merIdx := phiDeg / merStep
@@ -331,23 +294,16 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 	parIdx1 := int(math.Ceil(parIdx))
 
 	// Clamp parallel indices
-	parCount := bd.getParallelCount()
-	if parIdx0 >= parCount {
-		parIdx0 = parCount - 1
-	}
-	if parIdx1 >= parCount {
-		parIdx1 = parCount - 1
-	}
+	parCount := acoustics.ParallelCount(bd.AngularResolution.ParallelStep, bd.AngularResolution.FrontHalfOnly)
+	parIdx0 = acoustics.ClampParallelIndex(parIdx0, parCount)
+	parIdx1 = acoustics.ClampParallelIndex(parIdx1, parCount)
 
 	// Get interpolation weights
-	merFrac := merIdx - float64(merIdx0)
-	parFrac := parIdx - float64(parIdx0)
-
-	// Get 4 corner responses
-	idx00 := parIdx0*merCount + merIdx0
-	idx01 := parIdx0*merCount + merIdx1
-	idx10 := parIdx1*merCount + merIdx0
-	idx11 := parIdx1*merCount + merIdx1
+	// Get 4 corner responses using meridian-major indexing with pole dedup.
+	idx00 := acoustics.ResponseIndex(merIdx0, parIdx0, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx01 := acoustics.ResponseIndex(merIdx1, parIdx0, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx10 := acoustics.ResponseIndex(merIdx0, parIdx1, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx11 := acoustics.ResponseIndex(merIdx1, parIdx1, parCount, bd.AngularResolution.FrontHalfOnly)
 
 	// Clamp indices to available responses
 	maxIdx := len(bd.Responses) - 1
@@ -380,10 +336,7 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 		Phase:      make([]float64, len(r00.Phase)),
 	}
 
-	w00 := (1.0 - merFrac) * (1.0 - parFrac)
-	w01 := merFrac * (1.0 - parFrac)
-	w10 := (1.0 - merFrac) * parFrac
-	w11 := merFrac * parFrac
+	w00, w01, w10, w11 := acoustics.BilinearWeights(merIdx, parIdx)
 
 	for i := range result.Level {
 		level00, level01, level10, level11 := 0.0, 0.0, 0.0, 0.0
@@ -407,116 +360,4 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 	}
 
 	return result
-}
-
-// mapMeridianBySymmetry maps meridian angle based on balloon symmetry type
-func (bd *BalloonData) mapMeridianBySymmetry(merDeg float64) float64 {
-	switch bd.AngularResolution.Symmetry {
-	case 0: // Axial - all meridians map to 0
-		return 0
-	case 1: // Quarter - fold 360° into 0-90°
-		if merDeg >= 270 {
-			return 360 - merDeg
-		} else if merDeg >= 180 {
-			return merDeg - 180
-		} else if merDeg >= 90 {
-			return 180 - merDeg
-		}
-		return merDeg
-	case 2: // Vertical - fold 180-360° into 0-180°
-		if merDeg >= 180 {
-			return 360 - merDeg
-		}
-		return merDeg
-	case 3: // Horizontal - offset by 90°, then mirror
-		merDeg -= 90
-		if merDeg < 0 {
-			return -merDeg
-		} else if merDeg >= 180 {
-			return 360 - merDeg
-		}
-		return merDeg
-	default: // None - no mapping
-		return merDeg
-	}
-}
-
-func (bd *BalloonData) getMeridianCount() int {
-	step := bd.AngularResolution.MeridianStep
-	if step <= 0 {
-		return 1
-	}
-	switch bd.AngularResolution.Symmetry {
-	case 0: // Axial
-		return 1
-	case 1: // Quarter
-		return int(90/step) + 1
-	case 2, 3: // Vertical, Horizontal
-		return int(180/step) + 1
-	default: // None
-		return int(360 / step)
-	}
-}
-
-func (bd *BalloonData) getParallelCount() int {
-	step := bd.AngularResolution.ParallelStep
-	if step <= 0 {
-		return 1
-	}
-	if bd.AngularResolution.FrontHalfOnly {
-		return int(90/step) + 1
-	}
-	return int(180/step) + 1
-}
-
-// getThetaPhi converts a direction vector to spherical angles relative to source orientation
-func getThetaPhi(vec Vector3D, sourceAngles Vector3D) (theta, phi float64) {
-	// Rotate vector by inverse of source angles
-	rotated := rotateVector(vec, -sourceAngles.X, -sourceAngles.Y, -sourceAngles.Z)
-
-	// Convert to spherical coordinates
-	r := vectorLength(rotated)
-	if r < 1e-10 {
-		return 0, 0
-	}
-
-	// theta (elevation): angle from XY plane
-	theta = math.Asin(rotated.Z / r)
-
-	// phi (azimuth): angle in XY plane from X axis
-	phi = math.Atan2(rotated.Y, rotated.X)
-
-	return theta, phi
-}
-
-// Helper functions for vector math
-
-func vectorSub(a, b Vector3D) Vector3D {
-	return Vector3D{X: a.X - b.X, Y: a.Y - b.Y, Z: a.Z - b.Z}
-}
-
-func vectorLength(v Vector3D) float64 {
-	return math.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
-}
-
-func rotateVector(v Vector3D, rx, ry, rz float64) Vector3D {
-	// Rotation around Z axis (azimuth)
-	cosZ, sinZ := math.Cos(rz), math.Sin(rz)
-	x1 := v.X*cosZ - v.Y*sinZ
-	y1 := v.X*sinZ + v.Y*cosZ
-	z1 := v.Z
-
-	// Rotation around Y axis (elevation)
-	cosY, sinY := math.Cos(ry), math.Sin(ry)
-	x2 := x1*cosY + z1*sinY
-	y2 := y1
-	z2 := -x1*sinY + z1*cosY
-
-	// Rotation around X axis (roll)
-	cosX, sinX := math.Cos(rx), math.Sin(rx)
-	x3 := x2
-	y3 := y2*cosX - z2*sinX
-	z3 := y2*sinX + z2*cosX
-
-	return Vector3D{X: x3, Y: y3, Z: z3}
 }

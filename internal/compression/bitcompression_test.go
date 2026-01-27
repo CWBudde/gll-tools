@@ -1,4 +1,4 @@
-package gll
+package compression
 
 import (
 	"testing"

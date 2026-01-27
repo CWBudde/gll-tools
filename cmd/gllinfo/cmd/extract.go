@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/gll"
+	"github.com/cwbudde/gll-tools/pkg/gll"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

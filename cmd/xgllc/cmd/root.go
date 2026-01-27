@@ -26,6 +26,7 @@ func init() {
 	rootCmd.AddCommand(parseCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(convertCmd)
+	rootCmd.AddCommand(fromGLLCmd)
 }
 
 func ensureFileExists(path string) error {

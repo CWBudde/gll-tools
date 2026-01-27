@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/compression"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // LimitType represents the type of mechanical/electrical limit
@@ -184,7 +185,7 @@ type IIRFilterParams struct {
 type FIRFilterData struct {
 	IsTimeResponse bool      `json:"is_time_response"` // true=time domain, false=frequency domain
 	IsComplex      bool      `json:"is_complex"`       // true=complex data
-	IsEven         bool      `json:"is_even"`          // true=even-symmetric (FFT optimization)
+	IsEven         bool      `json:"is_even"`          // true=even-symmetric (-> FFT optimization)
 	DataIRM        []float64 `json:"data_irm"`         // Real part (time) or magnitude (freq)
 	DataDIP        []float64 `json:"data_dip"`         // Imaginary part (time) or phase (freq)
 	SampleRate     float64   `json:"sample_rate"`      // Sample rate in Hz
@@ -1382,24 +1383,9 @@ func parseFilterLogSpectrumLP(br *gll.ByteReader, maxOffset int64) (*TransferFun
 		return nil, fmt.Errorf("reading sub-version: %w", err)
 	}
 
-	spectrum := &TransferFunctionLP{}
-
 	// Read LogSpectrumDefinition
-	spectrum.BandsPerOctave, err = br.ReadInt32()
+	spectrum, err := readFilterSpectrumDefinitionLP(br, endOffset)
 	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return spectrum, nil
-	}
-
-	spectrum.LowestFrequency, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return spectrum, nil
-	}
-
-	spectrum.NumberOfBands, err = br.ReadInt32()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
 		return spectrum, nil
 	}
 
@@ -1410,39 +1396,20 @@ func parseFilterLogSpectrumLP(br *gll.ByteReader, maxOffset int64) (*TransferFun
 		return spectrum, nil
 	}
 
+	// Validate numBands
 	numBands := spectrum.NumberOfBands
 	if numBands <= 0 || numBands > 10000 {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return spectrum, nil
 	}
 
-	if compressionType == 0 {
-		// Uncompressed: int16 arrays
-		levelCount, _ := br.ReadInt32()
-		if levelCount > 0 && levelCount <= numBands {
-			spectrum.Level = make([]float64, levelCount)
-			for i := int32(0); i < levelCount; i++ {
-				val, err := br.ReadInt16()
-				if err != nil {
-					break
-				}
-				spectrum.Level[i] = float64(val) * 0.01 // Scale to dB
-			}
-		}
-
-		phaseCount, _ := br.ReadInt32()
-		if phaseCount > 0 && phaseCount <= numBands {
-			spectrum.Phase = make([]float64, phaseCount)
-			for i := int32(0); i < phaseCount; i++ {
-				val, err := br.ReadInt16()
-				if err != nil {
-					break
-				}
-				spectrum.Phase[i] = float64(val) * 0.001 // Scale to radians
-			}
-		}
+	// Dispatch based on compression type
+	switch compressionType {
+	case 0:
+		spectrum.Level, spectrum.Phase = readUncompressedResponseData(br, numBands)
+	case 1:
+		spectrum.Level, spectrum.Phase = readCompressedResponseData(br, numBands, endOffset)
 	}
-	// Compressed format (compressionType=1) uses BitCompression - skip for now
 
 	// Read Delay
 	spectrum.Delay, _ = br.ReadDouble()
@@ -1450,6 +1417,128 @@ func parseFilterLogSpectrumLP(br *gll.ByteReader, maxOffset int64) (*TransferFun
 	_, _ = br.Seek(endOffset, io.SeekStart)
 
 	return spectrum, nil
+}
+
+// readFilterSpectrumDefinitionLP reads LogSpectrumDefinition fields into TransferFunctionLP.
+// On error, seeks to endOffset and returns partial data (graceful degradation).
+func readFilterSpectrumDefinitionLP(br *gll.ByteReader, endOffset int64) (*TransferFunctionLP, error) {
+	def, err := parseLogSpectrumDefinition(br)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return &TransferFunctionLP{}, nil
+	}
+
+	return &TransferFunctionLP{
+		BandsPerOctave:  def.BandsPerOctave,
+		LowestFrequency: def.StartFreq,
+		NumberOfBands:   def.PointCount,
+	}, nil
+}
+
+// readUncompressedResponseData reads uncompressed int16 arrays for level and phase.
+// Scales values: level by 0.01 (dB), phase by 0.001 (radians).
+// Returns partial data on read errors (graceful degradation).
+func readUncompressedResponseData(br *gll.ByteReader, numBands int32) (levels, phases []float64) {
+	// Read level data
+	levelCount, _ := br.ReadInt32()
+	if levelCount > 0 && levelCount <= numBands {
+		levels = make([]float64, levelCount)
+		for i := int32(0); i < levelCount; i++ {
+			val, err := br.ReadInt16()
+			if err != nil {
+				break
+			}
+			levels[i] = float64(val) * levelScaleFactor
+		}
+	}
+
+	// Read phase data
+	phaseCount, _ := br.ReadInt32()
+	if phaseCount > 0 && phaseCount <= numBands {
+		phases = make([]float64, phaseCount)
+		for i := int32(0); i < phaseCount; i++ {
+			val, err := br.ReadInt16()
+			if err != nil {
+				break
+			}
+			phases[i] = float64(val) * phaseScaleFactor
+		}
+	}
+
+	return levels, phases
+}
+
+// readCompressedResponseData reads BitCompressed arrays for level and phase.
+// Decompresses using compression.DecompressByteArray, then scales values.
+// On error, seeks to endOffset and returns partial data (graceful degradation).
+func readCompressedResponseData(br *gll.ByteReader, numBands int32, endOffset int64) (levels, phases []float64) {
+	// Read level data
+	levelCount, err := br.ReadInt32()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, nil
+	}
+
+	levelCompressedLen, err := br.ReadInt32()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, nil
+	}
+
+	levelBytes := int(levelCompressedLen) * 2
+	if levelBytes < 0 || levelBytes > int(numBands)*8 {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, nil
+	}
+
+	levelCompressed, err := br.ReadBytes(levelBytes)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, nil
+	}
+
+	if levelCount > 0 && levelCount <= numBands {
+		values := compression.DecompressByteArray(levelCompressed, int(levelCount), true, 8)
+		levels = make([]float64, len(values))
+		for i, value := range values {
+			levels[i] = float64(value) * levelScaleFactor
+		}
+	}
+
+	// Read phase data
+	phaseCount, err := br.ReadInt32()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return levels, nil
+	}
+
+	phaseCompressedLen, err := br.ReadInt32()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return levels, nil
+	}
+
+	phaseBytes := int(phaseCompressedLen) * 2
+	if phaseBytes < 0 || phaseBytes > int(numBands)*8 {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return levels, nil
+	}
+
+	phaseCompressed, err := br.ReadBytes(phaseBytes)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return levels, nil
+	}
+
+	if phaseCount > 0 && phaseCount <= numBands {
+		values := compression.DecompressByteArray(phaseCompressed, int(phaseCount), true, 8)
+		phases = make([]float64, len(values))
+		for i, value := range values {
+			phases[i] = float64(value) * phaseScaleFactor
+		}
+	}
+
+	return levels, phases
 }
 
 // parseFilterTransferFunctionLP parses the TransferFunctionLsPs format (vcheck=1)
@@ -1487,30 +1576,35 @@ func parseFilterTransferFunctionLP(br *gll.ByteReader, maxOffset int64) (*Transf
 		return nil, fmt.Errorf("reading sub-version: %w", err)
 	}
 
-	spectrum := &TransferFunctionLP{}
+	definition, err := parseLogSpectrumDefinition(br)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, err
+	}
 
-	// Read LogSpectrumDefinition
-	spectrum.BandsPerOctave, err = br.ReadInt32()
+	spectrum := &TransferFunctionLP{
+		BandsPerOctave:  definition.BandsPerOctave,
+		LowestFrequency: definition.StartFreq,
+		NumberOfBands:   definition.PointCount,
+	}
+
+	levelData, phaseData, err := parseComplexSequence(br)
 	if err != nil {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return spectrum, nil
 	}
 
-	spectrum.LowestFrequency, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return spectrum, nil
+	spectrum.Level = make([]float64, len(levelData))
+	for i, value := range levelData {
+		spectrum.Level[i] = float64(value) * levelScaleFactor
 	}
 
-	spectrum.NumberOfBands, err = br.ReadInt32()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return spectrum, nil
+	spectrum.Phase = make([]float64, len(phaseData))
+	for i, value := range phaseData {
+		spectrum.Phase[i] = float64(value) * phaseScaleFactor
 	}
 
-	// Skip ComplexSequence block - it uses the same Record format as balloon data
-	// For simplicity, we skip the raw data and just get the definition
-	// Full parsing would require reusing the bitcompression code from source.go
+	spectrum.Delay, _ = br.ReadDouble()
 
 	_, _ = br.Seek(endOffset, io.SeekStart)
 

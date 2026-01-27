@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	internalgll "github.com/MeKo-Christian/gll-tools/internal/gll"
-	gllbin "github.com/MeKo-Christian/gll-tools/pkg/gll"
+	internalgll "github.com/cwbudde/gll-tools/internal/gll"
+	gllbin "github.com/cwbudde/gll-tools/pkg/gll"
 )
 
 type gllEncoder struct {
@@ -27,13 +27,25 @@ func (e *gllEncoder) writeFile(file *gllbin.File) error {
 		return err
 	}
 
-	genSystem, err := e.encodeGenSystem(file.GenSystem)
-	if err != nil {
-		return err
+	if len(file.GenSystem.RawBlock) > 0 {
+		if _, err := e.w.Write(file.GenSystem.RawBlock); err != nil {
+			return fmt.Errorf("write gensystem raw: %w", err)
+		}
+	} else {
+		genSystem, err := e.encodeGenSystem(file)
+		if err != nil {
+			return err
+		}
+
+		if _, err := e.w.Write(genSystem); err != nil {
+			return fmt.Errorf("write gensystem: %w", err)
+		}
 	}
 
-	if _, err := e.w.Write(genSystem); err != nil {
-		return fmt.Errorf("write gensystem: %w", err)
+	if len(file.RawTail) > 0 {
+		if _, err := e.w.Write(file.RawTail); err != nil {
+			return fmt.Errorf("write tail: %w", err)
+		}
 	}
 
 	return nil
@@ -72,15 +84,26 @@ func (e *gllEncoder) writeHeader(header gllbin.Header) error {
 	}
 
 	if version >= 6 {
-		if err := binary.Write(e.w, binary.LittleEndian, int32(0)); err != nil {
+		hashLen := int32(0)
+		if hasHash(header.HashID) {
+			hashLen = int32(len(header.HashID))
+		}
+		if err := binary.Write(e.w, binary.LittleEndian, hashLen); err != nil {
 			return fmt.Errorf("write hash length: %w", err)
+		}
+
+		if hashLen > 0 {
+			if _, err := e.w.Write(header.HashID[:]); err != nil {
+				return fmt.Errorf("write hash: %w", err)
+			}
 		}
 	}
 
 	return nil
 }
 
-func (e *gllEncoder) encodeGenSystem(sys gllbin.GenSystem) ([]byte, error) {
+func (e *gllEncoder) encodeGenSystem(file *gllbin.File) ([]byte, error) {
+	sys := file.GenSystem
 	var payload bytes.Buffer
 
 	if err := writeString(&payload, sys.Label); err != nil {
@@ -127,7 +150,7 @@ func (e *gllEncoder) encodeGenSystem(sys gllbin.GenSystem) ([]byte, error) {
 		return nil, fmt.Errorf("write background color: %w", err)
 	}
 
-	db, err := e.encodeDatabase()
+	db, err := e.encodeDatabase(file.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -136,10 +159,28 @@ func (e *gllEncoder) encodeGenSystem(sys gllbin.GenSystem) ([]byte, error) {
 		return nil, fmt.Errorf("write database: %w", err)
 	}
 
-	return encodeBlock(0, payload.Bytes()), nil
+	if sys.FlagsPresent {
+		flags := int32(0)
+		if sys.AllowUserDefinedClusterSetup {
+			flags |= 0x01
+		}
+		if sys.EnableForSubArrays {
+			flags |= 0x02
+		}
+
+		if err := binary.Write(&payload, binary.LittleEndian, flags); err != nil {
+			return nil, fmt.Errorf("write gensystem flags: %w", err)
+		}
+	}
+
+	return encodeBlock(sys.SubVersion, payload.Bytes()), nil
 }
 
-func (e *gllEncoder) encodeDatabase() ([]byte, error) {
+func (e *gllEncoder) encodeDatabase(db *gllbin.Database) ([]byte, error) {
+	if db != nil && len(db.RawBlock) > 0 {
+		return db.RawBlock, nil
+	}
+
 	var payload bytes.Buffer
 
 	if err := binary.Write(&payload, binary.LittleEndian, int32(0)); err != nil {
@@ -180,7 +221,12 @@ func (e *gllEncoder) encodeDatabase() ([]byte, error) {
 		return nil, fmt.Errorf("write source count: %w", err)
 	}
 
-	return encodeBlock(3, payload.Bytes()), nil
+	subVersion := int16(3)
+	if db != nil && db.SubVersion != 0 {
+		subVersion = db.SubVersion
+	}
+
+	return encodeBlock(subVersion, payload.Bytes()), nil
 }
 
 func encodeBlock(subVersion int16, content []byte) []byte {

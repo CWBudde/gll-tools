@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/compression"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // TransferFunction represents a frequency-dependent response (level + phase)
@@ -14,12 +15,6 @@ type TransferFunction struct {
 	Phase      []float64             `json:"phase"` // Radians
 	Delay      float64               `json:"delay"` // Group delay in seconds
 }
-
-// Scale factors for short data
-const (
-	levelScaleFactor = 0.01  // int16 * 0.01 = dB
-	phaseScaleFactor = 0.001 // int16 * 0.001 = radians
-)
 
 // parseCLogSpectrumLP parses a CLogSpectrumLP (legacy format, version 0).
 // Format: blockSize + vcheck(0-1) + sver + LogSpectrumDef + compressionType + data + delay
@@ -137,7 +132,7 @@ func parseCLogSpectrumLP(br *gll.ByteReader) (*TransferFunction, error) {
 			}
 		}
 
-		levelData := gll.DecompressByteArray(compressedLevelBytes, int(levelCount), true, 8)
+		levelData := compression.DecompressByteArray(compressedLevelBytes, int(levelCount), true, 8)
 
 		tf.Level = make([]float64, levelCount)
 		for i, v := range levelData {
@@ -164,7 +159,7 @@ func parseCLogSpectrumLP(br *gll.ByteReader) (*TransferFunction, error) {
 			}
 		}
 
-		phaseData := gll.DecompressByteArray(compressedPhaseBytes, int(phaseCount), true, 8)
+		phaseData := compression.DecompressByteArray(compressedPhaseBytes, int(phaseCount), true, 8)
 
 		tf.Phase = make([]float64, phaseCount)
 		for i, v := range phaseData {

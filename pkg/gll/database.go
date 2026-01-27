@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // Database contains all component data from a GLL file
@@ -24,6 +24,7 @@ type Database struct {
 	AuthorFiles       []DataFile             `json:"author_files,omitempty"` // Uses same format as DataFile
 	Transformers      []Transformer          `json:"transformers,omitempty"`
 	SubVersion        int16                  `json:"sub_version,omitempty"` // Database sub_version for conditional parsing
+	RawBlock          []byte                 `json:"raw_block,omitempty"`
 }
 
 // LabeledValueD represents a named double value (e.g., connector angles)
@@ -84,9 +85,11 @@ type ClusterBox struct {
 
 // GenSystemPreset represents a system preset configuration
 type GenSystemPreset struct {
-	Label  string `json:"label"`
-	Key    string `json:"key"`
-	Config string `json:"config,omitempty"` // JSON-encoded config (complex structure)
+	Label      string `json:"label"`
+	Key        string `json:"key"`
+	Config     string `json:"config,omitempty"`      // JSON-encoded config (complex structure)
+	ConfigSize int    `json:"config_size,omitempty"` // Raw config byte size (unparsed)
+	ConfigRaw  []byte `json:"config_raw,omitempty"`  // Raw GenSystemConfig bytes (base64 in JSON)
 }
 
 // Transformer represents a power transformer configuration
@@ -121,6 +124,8 @@ func parseDatabase(br *gll.ByteReader, file *File) error {
 	}
 
 	startOffset := br.Offset()
+	blockStart := startOffset - 4
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 	endOffset := startOffset + int64(blockSize) - 4
 
 	// Read version check
@@ -141,6 +146,9 @@ func parseDatabase(br *gll.ByteReader, file *File) error {
 	}
 
 	file.Database = &Database{}
+	if len(rawBlock) > 0 {
+		file.Database.RawBlock = rawBlock
+	}
 
 	// Database has additional header fields (8 bytes observed in sub-version 3)
 	// These appear to be flags or reserved fields
@@ -1278,8 +1286,19 @@ func parseGenSystemPreset(br *gll.ByteReader) (*GenSystemPreset, error) {
 		return nil, fmt.Errorf("reading key: %w", err)
 	}
 
-	// Skip GenSystemConfig - it's complex and we only need Label/Key
-	// The block wrapper handles skipping to the end
+	// Skip GenSystemConfig - it's complex; capture raw size/bytes for diagnostics
+	if remaining := int(endOffset - br.Offset()); remaining > 0 {
+		preset.ConfigSize = remaining
+		raw, err := br.ReadBytes(remaining)
+		if err != nil {
+			_, _ = br.Seek(endOffset, io.SeekStart)
+			return nil, fmt.Errorf("reading config raw bytes: %w", err)
+		}
+		preset.ConfigRaw = raw
+		// ReadBytes already advances offset; avoid seeking again here.
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return preset, nil
+	}
 
 	_, _ = br.Seek(endOffset, io.SeekStart)
 

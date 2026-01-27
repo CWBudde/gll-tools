@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/MeKo-Christian/gll-tools/cmd/gllinfo/cmd"
+	"github.com/cwbudde/gll-tools/cmd/gllinfo/cmd"
 )
 
 func main() {

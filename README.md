@@ -2,33 +2,29 @@
 
 Go library and CLI tools for reading EASE GLL (Generic Loudspeaker Library) files on Linux.
 
+**[Try it online](https://cwbudde.github.io/gll-tools/)** - WebAssembly demo running in your browser
+
 ## Overview
 
 GLL files are a proprietary format used by AFMG's EASE acoustic simulation software to describe loudspeaker systems. This project aims to reverse-engineer the format and provide open-source tools for extracting information from these files.
 
-## Project Status
-
-**Phase 4: Header Parsing & Resource Extraction** - Core functionality implemented.
-
-See [PLAN.md](PLAN.md) for the development roadmap.
-
 ## Features
 
-- ✅ Parse GLL file headers and metadata
-- ✅ Extract manufacturer/product information
-- ✅ Extract embedded resources (images, fonts, PDFs)
-- ✅ Decompress zlib-compressed resources
-- ✅ Parse database structures (box types, source definitions)
-- ✅ JSON output format
-- 🚧 Extract directivity data (in progress)
-- 🚧 Extract frequency response data (in progress)
-- ⏳ Export to open formats (CLF, FRD, CSV) (planned)
+- Parse GLL file headers and metadata
+- Extract manufacturer/product information
+- Extract embedded resources (images, fonts, PDFs)
+- Decompress zlib-compressed resources
+- Parse database structures (box types, source definitions)
+- JSON output format
+- Extract directivity data
+- Extract frequency response data
+- Export to open formats (CLF, FRD, CSV)
 
 ## Installation
 
 ```bash
-go install github.com/MeKo-Christian/gll-tools/cmd/gllinfo@latest
-go install github.com/MeKo-Christian/gll-tools/cmd/xgllc@latest
+go install github.com/cwbudde/gll-tools/cmd/gllinfo@latest
+go install github.com/cwbudde/gll-tools/cmd/xgllc@latest
 ```
 
 ## Usage
@@ -157,7 +153,6 @@ Website:      www.dbaudio.com
 
 ## Documentation
 
-- [PLAN.md](PLAN.md) - Development roadmap and task list
 - [docs/format.md](docs/format.md) - GLL file format specification
 - [docs/research.md](docs/research.md) - Background research
 - [docs/api.md](docs/api.md) - API documentation
@@ -166,7 +161,7 @@ Website:      www.dbaudio.com
 
 ```bash
 # Clone the repository
-git clone https://github.com/MeKo-Christian/gll-tools.git
+git clone https://github.com/cwbudde/gll-tools.git
 cd gll-tools
 
 # Build the CLI tool

@@ -3,10 +3,11 @@ package cmd
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/gll"
+	"github.com/cwbudde/gll-tools/pkg/gll"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +62,7 @@ func runAcoustic(cmd *cobra.Command, args []string) error {
 	}
 
 	sources := file.Database.SourceDefinitions
+	placementsByDef := collectSourcePlacements(file.Database)
 
 	// If specific source requested
 	if sourceIndex >= 0 {
@@ -73,7 +75,7 @@ func runAcoustic(cmd *cobra.Command, args []string) error {
 			return exportResponsesCSV(f, sources[sourceIndex], exportCSV)
 		}
 
-		return displaySource(f, sources[sourceIndex], loadResponses, maxResponses)
+		return displaySource(f, sources[sourceIndex], placementsByDef, loadResponses, maxResponses)
 	}
 
 	// CSV export requires a specific source
@@ -96,6 +98,9 @@ func runAcoustic(cmd *cobra.Command, args []string) error {
 		fmt.Printf("    Company: %s\n", def.CompanyLabel)
 		fmt.Printf("    Bandwidth: %.0f - %.0f Hz\n", def.NominalBandwidthFrom, def.NominalBandwidthTo)
 		fmt.Printf("    Data Type: %s\n", def.DataType)
+		if placements := placementsByDef[src.Key]; len(placements) > 0 {
+			fmt.Printf("    Placements: %d\n", len(placements))
+		}
 
 		if def.BalloonData != nil {
 			balloon := def.BalloonData
@@ -117,7 +122,7 @@ func runAcoustic(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func displaySource(f *os.File, src gll.SourceDefinitionItem, loadResp bool, maxResp int) error {
+func displaySource(f *os.File, src gll.SourceDefinitionItem, placementsByDef map[string][]sourcePlacement, loadResp bool, maxResp int) error {
 	if src.Definition == nil {
 		return fmt.Errorf("source has no definition")
 	}
@@ -130,6 +135,25 @@ func displaySource(f *os.File, src gll.SourceDefinitionItem, loadResp bool, maxR
 	fmt.Printf("Bandwidth: %.0f - %.0f Hz\n", def.NominalBandwidthFrom, def.NominalBandwidthTo)
 	fmt.Printf("Data Type: %s\n", def.DataType)
 	fmt.Println()
+
+	if placements := placementsByDef[src.Key]; len(placements) > 0 {
+		fmt.Println("Placements:")
+		for _, placement := range placements {
+			fmt.Printf("  Box: %s (%s)\n", placement.BoxLabel, placement.BoxKey)
+			if placement.Source.Label != "" || placement.Source.Key != "" {
+				fmt.Printf("  Source: %s (%s)\n", placement.Source.Label, placement.Source.Key)
+			}
+			fmt.Printf("  Position: %.1f, %.1f, %.1f mm\n",
+				placement.Source.Position.X,
+				placement.Source.Position.Y,
+				placement.Source.Position.Z)
+			fmt.Printf("  Angles: H=%.2f°, V=%.2f°, R=%.2f°\n",
+				radToDeg(placement.Source.Angles.X),
+				radToDeg(placement.Source.Angles.Y),
+				radToDeg(placement.Source.Angles.Z))
+			fmt.Println()
+		}
+	}
 
 	if def.BalloonData != nil {
 		balloon := def.BalloonData
@@ -235,6 +259,38 @@ func displayResponses(balloon *gll.BalloonData, maxResp int) {
 		fmt.Printf("\n  ... and %d more responses (use --max-responses to see more)\n",
 			len(balloon.Responses)-displayCount)
 	}
+}
+
+type sourcePlacement struct {
+	BoxLabel string
+	BoxKey   string
+	Source   gll.BoxSource
+}
+
+func collectSourcePlacements(db *gll.Database) map[string][]sourcePlacement {
+	placements := make(map[string][]sourcePlacement)
+	if db == nil {
+		return placements
+	}
+
+	for _, box := range db.BoxTypes {
+		for _, src := range box.SourcePlacements {
+			if src.SourceDefKey == "" {
+				continue
+			}
+			placements[src.SourceDefKey] = append(placements[src.SourceDefKey], sourcePlacement{
+				BoxLabel: box.Label,
+				BoxKey:   box.Key,
+				Source:   src,
+			})
+		}
+	}
+
+	return placements
+}
+
+func radToDeg(rad float64) float64 {
+	return rad * 180 / math.Pi
 }
 
 func symmetryName(sym int32) string {

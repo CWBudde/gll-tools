@@ -1,29 +1,55 @@
 // GLL Viewer - WebAssembly Application
+import * as THREE from "three";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+import {
+  buildFrequencyPoints,
+  buildLogFrequencyScale,
+  buildZoomPluginOptions,
+  getPhaseSeries,
+  unwrapPhase,
+} from "./modules/charting.js";
+import { resetFilterChart } from "./modules/filters.js";
+import { createVisualizationController } from "./modules/visualization.js";
+import { createGeometryController } from "./modules/geometry.js";
+import {
+  downloadTextFile,
+  downloadBinaryFile,
+  sanitizeFilename,
+} from "./utils.js";
+import {
+  buildXedContent,
+  buildStlBinary,
+  buildObjContent,
+  hasGeometryData,
+  resolveGeometryVertex,
+  buildSequentialEdgePairs,
+  buildFrdContent,
+  buildCsvFilterContent,
+  buildXgfbContent,
+} from "./modules/exporters.js";
+
+if (window) {
+  window.THREE = Object.assign({}, THREE, { OrbitControls });
+}
 
 let wasmReady = false;
 let currentData = null;
+let currentFileBytes = null;
 let chart = null;
-let polarChart = null;
-let balloonRenderer = null;
-let balloonScene = null;
-let balloonCamera = null;
-let balloonGroup = null;
-let balloonMesh = null;
-let balloonFrameId = null;
-let balloonResizeBound = false;
-let balloonPointerState = null;
-let geometryRenderer = null;
-let geometryScene = null;
-let geometryCamera = null;
-let geometryGroup = null;
-let geometryMesh = null;
-let geometryLines = null;
-let geometryFrameId = null;
-let geometryResizeBound = false;
-let geometryPointerState = null;
-const polarSliderMax = 1000;
+let sourceResponseCharts = new Map();
+let filterGroupResponseCharts = new Map();
+let sourceResponseChartInitialized = new Set();
+let filterGroupChartInitialized = new Set();
+let combinedChart = null;
+let combinedChartInitialized = false;
 let responseChartInitialized = false;
-let polarChartInitialized = false;
+let combinedListenersBound = false;
+let activeConfig = null; // { elements: [{ box_type_key, position: {x,y,z}, angles: {x,y,z}, gain }] }
+
+// Theme management
+const THEME_KEY = "gll-viewer-theme";
+const THEME_MODES = ["auto", "light", "dark"];
+let currentThemeMode = "auto";
 
 // DOM Elements (initialized in DOMContentLoaded)
 let dropZone = null;
@@ -34,6 +60,23 @@ let errorMessage = null;
 let results = null;
 let fileName = null;
 let clearBtn = null;
+
+const visualization = createVisualizationController({
+  getCurrentData: () => currentData,
+  formatFrequency,
+  formatAngle,
+  computePolarSlices,
+  getBalloonGrid,
+  getResponseWithSymmetry,
+  escapeHtml,
+});
+const geometry = createGeometryController({
+  getCurrentData: () => currentData,
+  formatNumber,
+  hasGeometryData,
+  resolveGeometryVertex,
+  buildSequentialEdgePairs,
+});
 
 // Initialize WASM
 async function initWasm() {
@@ -58,8 +101,99 @@ function initDOMElements() {
   clearBtn = document.getElementById("clear-btn");
 }
 
+// Theme functions
+function getSystemTheme() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function applyTheme(mode) {
+  const theme = mode === "auto" ? getSystemTheme() : mode;
+  if (theme === "dark") {
+    document.documentElement.setAttribute("data-theme", "dark");
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  geometry?.updateTheme?.();
+}
+
+function updateThemeToggleButton() {
+  const themeToggle = document.getElementById("theme-toggle");
+  const themeLabel = themeToggle?.querySelector(".theme-toggle-label");
+  const themeIcon = themeToggle?.querySelector(".theme-toggle-icon");
+
+  if (!themeLabel || !themeIcon) return;
+
+  const labels = { auto: "Auto", light: "Light", dark: "Dark" };
+  themeLabel.textContent = labels[currentThemeMode];
+
+  // Update icon based on current mode
+  if (currentThemeMode === "auto") {
+    themeIcon.innerHTML = `
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    `;
+  } else if (currentThemeMode === "light") {
+    themeIcon.innerHTML = `
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    `;
+  } else {
+    themeIcon.innerHTML = `
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+    `;
+  }
+}
+
+function cycleTheme() {
+  const currentIndex = THEME_MODES.indexOf(currentThemeMode);
+  const nextIndex = (currentIndex + 1) % THEME_MODES.length;
+  currentThemeMode = THEME_MODES[nextIndex];
+
+  applyTheme(currentThemeMode);
+  updateThemeToggleButton();
+  localStorage.setItem(THEME_KEY, currentThemeMode);
+}
+
+function initTheme() {
+  // Load saved theme preference
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme && THEME_MODES.includes(savedTheme)) {
+    currentThemeMode = savedTheme;
+  }
+
+  // Apply theme
+  applyTheme(currentThemeMode);
+  updateThemeToggleButton();
+
+  // Listen for system theme changes
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => {
+      if (currentThemeMode === "auto") {
+        applyTheme("auto");
+      }
+    });
+}
+
 // Initialize
 document.addEventListener("DOMContentLoaded", async () => {
+  initTheme();
   initDOMElements();
   await initWasm();
   setupEventListeners();
@@ -67,6 +201,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function setupEventListeners() {
+  // Theme toggle
+  const themeToggle = document.getElementById("theme-toggle");
+  if (themeToggle) {
+    themeToggle.addEventListener("click", cycleTheme);
+  }
+
   // Drop zone events
   dropZone.addEventListener("click", () => fileInput.click());
   dropZone.addEventListener("dragover", handleDragOver);
@@ -112,69 +252,67 @@ function setupEventListeners() {
   if (responseEl) {
     responseEl.addEventListener("input", handleResponseAngleInput);
   }
-  const polarPlane = document.getElementById("polar-plane");
-  if (polarPlane) {
-    polarPlane.addEventListener("change", updatePolarChart);
+  const globalSlider = document.getElementById("global-frequency-slider");
+  if (globalSlider) {
+    globalSlider.addEventListener(
+      "input",
+      visualization.handleGlobalSliderInput,
+    );
+  }
+  const globalNormalize = document.getElementById("global-normalize");
+  if (globalNormalize) {
+    globalNormalize.addEventListener("change", () => {
+      visualization.updatePolarChart();
+      visualization.updateBalloonVisualization();
+    });
   }
   const polarFrequency = document.getElementById("polar-frequency");
   if (polarFrequency) {
-    polarFrequency.addEventListener("change", updatePolarChart);
-  }
-  const polarSlider = document.getElementById("polar-frequency-slider");
-  if (polarSlider) {
-    polarSlider.addEventListener("input", handlePolarSliderInput);
+    polarFrequency.addEventListener("change", visualization.updatePolarChart);
   }
   const balloonSource = document.getElementById("balloon-source");
   if (balloonSource) {
-    balloonSource.addEventListener("change", updateBalloonOptions);
+    balloonSource.addEventListener(
+      "change",
+      visualization.updateBalloonOptions,
+    );
   }
   const balloonFrequency = document.getElementById("balloon-frequency");
   if (balloonFrequency) {
-    balloonFrequency.addEventListener("change", updateBalloonVisualization);
-  }
-  const balloonSlider = document.getElementById("balloon-frequency-slider");
-  if (balloonSlider) {
-    balloonSlider.addEventListener("input", handleBalloonSliderInput);
+    balloonFrequency.addEventListener(
+      "change",
+      visualization.updateBalloonVisualization,
+    );
   }
   const balloonRange = document.getElementById("balloon-range");
   if (balloonRange) {
-    balloonRange.addEventListener("input", handleBalloonRangeInput);
+    balloonRange.addEventListener(
+      "input",
+      visualization.handleBalloonRangeInput,
+    );
   }
   const balloonScale = document.getElementById("balloon-scale");
   if (balloonScale) {
-    balloonScale.addEventListener("input", handleBalloonScaleInput);
+    balloonScale.addEventListener(
+      "input",
+      visualization.handleBalloonScaleInput,
+    );
   }
   const balloonWireframe = document.getElementById("balloon-wireframe");
   if (balloonWireframe) {
-    balloonWireframe.addEventListener("change", updateBalloonVisualization);
+    balloonWireframe.addEventListener(
+      "change",
+      visualization.updateBalloonVisualization,
+    );
   }
   const balloonAutorotate = document.getElementById("balloon-autorotate");
   if (balloonAutorotate) {
-    balloonAutorotate.addEventListener("change", handleBalloonAutorotateToggle);
-  }
-  const geometryKind = document.getElementById("geometry-kind");
-  if (geometryKind) {
-    geometryKind.addEventListener("change", updateGeometryItemOptions);
-  }
-  const geometryItem = document.getElementById("geometry-item");
-  if (geometryItem) {
-    geometryItem.addEventListener("change", updateGeometryVisualization);
-  }
-  const geometryShowFaces = document.getElementById("geometry-show-faces");
-  if (geometryShowFaces) {
-    geometryShowFaces.addEventListener("change", updateGeometryVisualization);
-  }
-  const geometryShowEdges = document.getElementById("geometry-show-edges");
-  if (geometryShowEdges) {
-    geometryShowEdges.addEventListener("change", updateGeometryVisualization);
-  }
-  const geometryAutorotate = document.getElementById("geometry-autorotate");
-  if (geometryAutorotate) {
-    geometryAutorotate.addEventListener(
+    balloonAutorotate.addEventListener(
       "change",
-      handleGeometryAutorotateToggle,
+      visualization.handleBalloonAutorotateToggle,
     );
   }
+  window.addEventListener("resize", () => geometry.handleGeometryResize());
 }
 
 function handleDragOver(e) {
@@ -219,6 +357,7 @@ async function processFile(file) {
   try {
     const arrayBuffer = await file.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
+    currentFileBytes = uint8Array;
 
     // Call WASM parser
     const resultJson = parseGLL(uint8Array);
@@ -232,6 +371,7 @@ async function processFile(file) {
     fileName.textContent = file.name;
     displayResults();
   } catch (err) {
+    currentFileBytes = null;
     showError("Failed to parse file: " + err.message);
   }
 }
@@ -252,18 +392,27 @@ function showError(msg) {
 
 function clearResults() {
   currentData = null;
+  currentFileBytes = null;
   if (chart) {
     chart.destroy();
     chart = null;
   }
-  if (polarChart) {
-    polarChart.destroy();
-    polarChart = null;
+  if (combinedChart) {
+    combinedChart.destroy();
+    combinedChart = null;
   }
-  destroyBalloonScene();
-  destroyGeometryScene();
+  sourceResponseCharts.forEach((localChart) => localChart.destroy());
+  sourceResponseCharts = new Map();
+  filterGroupResponseCharts.forEach((localChart) => localChart.destroy());
+  filterGroupResponseCharts = new Map();
+  sourceResponseChartInitialized = new Set();
+  filterGroupChartInitialized = new Set();
+  resetFilterChart();
+  visualization.resetVisualization();
+  geometry.resetGeometry();
   responseChartInitialized = false;
-  polarChartInitialized = false;
+  combinedChartInitialized = false;
+  activeConfig = null;
   results.classList.add("hidden");
   loading.classList.add("hidden");
   error.classList.add("hidden");
@@ -280,9 +429,10 @@ function displayResults() {
   displayOverview();
   displaySources();
   displayConfig();
+  displayConfigurations();
   displayResources();
   setupGlobalSourceControls();
-  setupResponseControls();
+  setupCombinedResponseControls();
   setupPolarControls();
   setupBalloonControls();
   setupGeometryControls();
@@ -297,7 +447,8 @@ function handleGlobalSourceChange(e) {
     return;
   }
   syncSourceSelectors(value);
-  updateResponseOptions();
+  visualization.updatePolarOptions();
+  visualization.updateBalloonOptions();
 }
 
 function setupGlobalSourceControls() {
@@ -325,24 +476,10 @@ function setupGlobalSourceControls() {
         `<option value="${i}">${escapeHtml(src.definition?.label || src.key)}</option>`,
     )
     .join("");
-
-  const responseSelect = document.getElementById("response-source");
-  const defaultIndex = parseInt(responseSelect?.value);
-  if (
-    !Number.isNaN(defaultIndex) &&
-    defaultIndex < sourcesWithResponses.length
-  ) {
-    globalSelect.value = String(defaultIndex);
-  }
-
   syncSourceSelectors(globalSelect.value);
 }
 
 function syncSourceSelectors(value) {
-  const responseSelect = document.getElementById("response-source");
-  if (responseSelect) {
-    responseSelect.value = String(value);
-  }
   const balloonSelect = document.getElementById("balloon-source");
   if (balloonSelect) {
     balloonSelect.value = String(value);
@@ -360,12 +497,18 @@ function switchTab(tabName) {
     content.classList.toggle("active", content.id === `tab-${tabName}`);
   });
 
-  // Initialize chart when switching to responses tab
-  if (tabName === "responses" && currentData) {
-    updateResponseChart();
-    updatePolarChart();
-    updateBalloonVisualization();
-    handleBalloonResize();
+  // Initialize chart when switching to visualization tab
+  if (tabName === "visualization" && currentData) {
+    updateCombinedResponseChart();
+    visualization.updatePolarChart();
+    visualization.updateBalloonVisualization();
+    visualization.handleBalloonResize();
+  }
+  if (tabName === "geometry" && currentData) {
+    requestAnimationFrame(() => {
+      geometry.initInlineViewers();
+      geometry.handleGeometryResize();
+    });
   }
 }
 
@@ -413,6 +556,9 @@ function displayOverview() {
 function displaySources() {
   const sourcesList = document.getElementById("sources-list");
   const sources = currentData.database?.source_definitions || [];
+  const placementsByDef = buildSourcePlacementsMap(
+    currentData.database?.box_types || [],
+  );
 
   if (sources.length === 0) {
     sourcesList.innerHTML =
@@ -421,16 +567,138 @@ function displaySources() {
   }
 
   sourcesList.innerHTML = sources
-    .map((src) => {
+    .map((src, sourceIndex) => {
       const def = src.definition || {};
       const balloon = def.balloon_data;
+      const placements = placementsByDef.get(src.key) || [];
+      const responseCount = src.responses?.length || 0;
+      const placementHtml = placements.length
+        ? `
+                    <div class="source-detail">
+                        <strong>Placements:</strong>
+                        <div class="source-placement-list">
+                            ${placements
+                              .map((placement) => {
+                                const source = placement.source || {};
+                                const boxLabel =
+                                  placement.box?.label || "Unknown";
+                                const boxKey = placement.box?.key || "";
+                                const sourceLabel = source.label || "Source";
+                                const sourceKey = source.key || "";
+                                return `
+                                    <div class="source-placement">
+                                        <div class="source-placement-header">
+                                            Box: ${escapeHtml(boxLabel)}${boxKey ? ` (${escapeHtml(boxKey)})` : ""}
+                                        </div>
+                                        <div class="source-placement-detail">
+                                            Source: ${escapeHtml(sourceLabel)}${sourceKey ? ` (${escapeHtml(sourceKey)})` : ""}
+                                        </div>
+                                        <div class="source-placement-detail">
+                                            Position: ${formatPosition(source.position)} mm
+                                        </div>
+                                        <div class="source-placement-detail">
+                                            Angles: H ${formatAngleDegrees(source.angles?.x)}, V ${formatAngleDegrees(source.angles?.y)}, R ${formatAngleDegrees(source.angles?.z)}
+                                        </div>
+                                    </div>
+                                `;
+                              })
+                              .join("")}
+                        </div>
+                    </div>
+                `
+        : "";
+      const responseOptions = responseCount
+        ? Array.from({ length: responseCount }, (_, i) => {
+            const angle = computeResponseAngles(src, i);
+            const angleLabel = angle
+              ? ` • Az ${formatAngle(angle.meridianDeg)}° / Off ${formatAngle(angle.parallelDeg)}°`
+              : "";
+            return `<option value="${i}">Response ${i + 1}${angleLabel}</option>`;
+          }).join("")
+        : "";
+      const responseSection = responseCount
+        ? `
+              <div class="source-response">
+                <div class="response-controls source-response-controls">
+                  <div class="response-controls-row">
+                    <label>
+                      Response:
+                      <select id="source-response-index-${sourceIndex}">
+                        ${responseOptions}
+                      </select>
+                    </label>
+                    <label>
+                      Phase:
+                      <select id="source-response-phase-${sourceIndex}">
+                        <option value="unwrapped" selected>Unwrapped</option>
+                        <option value="wrapped">Wrapped</option>
+                        <option value="group-delay">Group delay</option>
+                      </select>
+                    </label>
+                    <label class="response-toggle">
+                      <input
+                        id="source-response-normalized-${sourceIndex}"
+                        type="checkbox"
+                      />
+                      Normalized
+                    </label>
+                  </div>
+                  <div class="response-controls-row">
+                    <label class="response-slider">
+                      Azimuth:
+                      <input
+                        id="source-response-azimuth-${sourceIndex}"
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="1"
+                        value="0"
+                      />
+                      <span
+                        id="source-response-azimuth-value-${sourceIndex}"
+                        class="angle-value"
+                        >-</span
+                      >
+                    </label>
+                    <label class="response-slider">
+                      Off-axis:
+                      <input
+                        id="source-response-elevation-${sourceIndex}"
+                        type="range"
+                        min="0"
+                        max="180"
+                        step="1"
+                        value="0"
+                      />
+                      <span
+                        id="source-response-elevation-value-${sourceIndex}"
+                        class="angle-value"
+                        >-</span
+                      >
+                    </label>
+                  </div>
+                </div>
+                <div class="source-response-chart">
+                  <canvas id="source-response-chart-${sourceIndex}"></canvas>
+                </div>
+                <div
+                  id="source-response-meta-${sourceIndex}"
+                  class="response-meta"
+                ></div>
+              </div>
+            `
+        : '<div class="empty-state">No frequency response data available</div>';
       return `
-            <div class="source-card">
-                <div class="source-header">
-                    <span class="source-label">${escapeHtml(def.label || "Unknown")}</span>
+            <div class="source-card source-collapsible" data-source-idx="${sourceIndex}">
+                <div class="source-header source-header-toggle" onclick="toggleSource(${sourceIndex})">
+                    <div class="source-title">
+                      <span class="source-toggle">▶</span>
+                      <span class="source-label">${escapeHtml(def.label || "Unknown")}</span>
+                    </div>
                     <span class="source-key">${escapeHtml(src.key)}</span>
                 </div>
-                <div class="source-details">
+                <div class="source-content" style="display: none;">
+                  <div class="source-details">
                     <div class="source-detail">
                         <strong>Bandwidth:</strong>
                         ${formatFrequency(def.nominal_bandwidth_from)} - ${formatFrequency(def.nominal_bandwidth_to)}
@@ -444,7 +712,7 @@ function displaySources() {
                         ? `
                     <div class="source-detail">
                         <strong>Responses:</strong>
-                        ${balloon.response_count || 0}
+                        ${responseCount}
                     </div>
                     <div class="source-detail">
                         <strong>Resolution:</strong>
@@ -453,11 +721,365 @@ function displaySources() {
                     `
                         : ""
                     }
+                    ${placementHtml}
+                  </div>
+                  ${responseSection}
                 </div>
             </div>
         `;
     })
     .join("");
+
+  wireSourceResponseControls();
+}
+
+function wireSourceResponseControls() {
+  const cards = document.querySelectorAll(".source-card[data-source-idx]");
+  cards.forEach((card) => {
+    const sourceIndex = Number(card.dataset.sourceIdx);
+    const elements = getSourceResponseElements(sourceIndex);
+    if (!elements.indexSelect) {
+      return;
+    }
+
+    elements.indexSelect.addEventListener("change", () =>
+      renderSourceResponseChart(sourceIndex),
+    );
+    elements.phaseSelect?.addEventListener("change", () =>
+      renderSourceResponseChart(sourceIndex),
+    );
+    elements.normalizedToggle?.addEventListener("change", () =>
+      renderSourceResponseChart(sourceIndex),
+    );
+    elements.azSlider?.addEventListener("input", () =>
+      handleSourceResponseAngleInput(sourceIndex),
+    );
+    elements.elSlider?.addEventListener("input", () =>
+      handleSourceResponseAngleInput(sourceIndex),
+    );
+  });
+}
+
+function getSourceResponseElements(sourceIndex) {
+  return {
+    indexSelect: document.getElementById(
+      `source-response-index-${sourceIndex}`,
+    ),
+    phaseSelect: document.getElementById(
+      `source-response-phase-${sourceIndex}`,
+    ),
+    normalizedToggle: document.getElementById(
+      `source-response-normalized-${sourceIndex}`,
+    ),
+    azSlider: document.getElementById(`source-response-azimuth-${sourceIndex}`),
+    elSlider: document.getElementById(
+      `source-response-elevation-${sourceIndex}`,
+    ),
+    azValue: document.getElementById(
+      `source-response-azimuth-value-${sourceIndex}`,
+    ),
+    elValue: document.getElementById(
+      `source-response-elevation-value-${sourceIndex}`,
+    ),
+    chartCanvas: document.getElementById(
+      `source-response-chart-${sourceIndex}`,
+    ),
+    meta: document.getElementById(`source-response-meta-${sourceIndex}`),
+  };
+}
+
+function renderSourceResponseChart(sourceIndex) {
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) {
+    return;
+  }
+
+  const elements = getSourceResponseElements(sourceIndex);
+  const responseIndex = parseInt(elements.indexSelect?.value);
+  if (Number.isNaN(responseIndex)) {
+    return;
+  }
+
+  const response = source?.responses?.[responseIndex];
+  if (!response || !elements.chartCanvas) {
+    return;
+  }
+
+  updateSourceResponseAngleControls(source, responseIndex, elements);
+  updateSourceResponseMeta(elements.meta, source, responseIndex);
+
+  const onAxis = source?.definition?.on_axis_spectrum;
+  if (elements.normalizedToggle) {
+    const hasOnAxis =
+      !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
+    elements.normalizedToggle.disabled = !hasOnAxis;
+    if (!hasOnAxis) {
+      elements.normalizedToggle.checked = false;
+    }
+  }
+  const onAxisFreqs = buildLogFrequencies(
+    onAxis?.definition,
+    onAxis?.level?.length,
+  );
+  const useNormalized = !!elements.normalizedToggle?.checked;
+  const canCombineOnAxis =
+    !useNormalized &&
+    onAxis &&
+    Array.isArray(onAxis.level) &&
+    Array.isArray(onAxisFreqs) &&
+    response.frequencies.length === onAxisFreqs.length &&
+    response.level.length === onAxis.level.length &&
+    frequenciesMatch(response.frequencies, onAxisFreqs);
+  const levelSeries = canCombineOnAxis
+    ? response.level.map((value, i) => value + onAxis.level[i])
+    : response.level;
+
+  const phaseMode = elements.phaseSelect?.value || "unwrapped";
+  const rawPhase = response.phase || [];
+  const onAxisPhase = onAxis?.phase || [];
+  const canCombinePhase =
+    canCombineOnAxis &&
+    Array.isArray(onAxisPhase) &&
+    rawPhase.length > 0 &&
+    rawPhase.length === onAxisPhase.length;
+  const combinedPhase = canCombinePhase
+    ? rawPhase.map((value, i) => value + onAxisPhase[i])
+    : rawPhase;
+  const responseDelay = Number.isFinite(response.delay) ? response.delay : 0;
+  const onAxisDelay =
+    canCombinePhase && Number.isFinite(onAxis?.delay) ? onAxis.delay : 0;
+  const combinedDelay = responseDelay + onAxisDelay;
+  const delayAdjustedPhase = applyDelayToPhase(
+    combinedPhase,
+    response.frequencies,
+    combinedDelay,
+  );
+  const unwrappedPhase = unwrapPhase(delayAdjustedPhase);
+  const phaseSeries = getPhaseSeries(
+    phaseMode,
+    response.frequencies,
+    delayAdjustedPhase,
+    unwrappedPhase,
+  );
+  const phaseLabel = canCombinePhase
+    ? `${phaseSeries.label} (on-axis + directivity)`
+    : phaseSeries.label;
+
+  const frequencyData = buildFrequencyPoints(response.frequencies, levelSeries);
+  const phaseData = buildFrequencyPoints(
+    response.frequencies,
+    phaseSeries.values,
+  );
+  if (!frequencyData) {
+    return;
+  }
+
+  const ctx = elements.chartCanvas.getContext("2d");
+  const existingChart = sourceResponseCharts.get(sourceIndex);
+  if (existingChart) {
+    existingChart.destroy();
+  }
+
+  const shouldAnimate = !sourceResponseChartInitialized.has(sourceIndex);
+
+  const localChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: canCombineOnAxis
+            ? "Level (dB, on-axis + directivity)"
+            : "Level (dB)",
+          data: frequencyData.points,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37, 99, 235, 0.1)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          yAxisID: "y",
+        },
+        {
+          label: phaseLabel,
+          data: phaseData ? phaseData.points : [],
+          borderColor: "#dc2626",
+          backgroundColor: "transparent",
+          tension: 0.3,
+          pointRadius: 0,
+          yAxisID: "y1",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: shouldAnimate ? { duration: 700 } : false,
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      scales: {
+        x: buildLogFrequencyScale(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+          "Frequency",
+        ),
+        y: {
+          type: "linear",
+          display: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Level (dB)",
+          },
+        },
+        y1: {
+          type: "linear",
+          display: true,
+          position: "right",
+          title: {
+            display: true,
+            text: phaseSeries.axisTitle,
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+        },
+      },
+      plugins: {
+        legend: {
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const value = items?.[0]?.parsed?.x;
+              return value ? formatFrequency(value) : "";
+            },
+          },
+        },
+        zoom: buildZoomPluginOptions(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+        ),
+      },
+    },
+  });
+
+  sourceResponseCharts.set(sourceIndex, localChart);
+  sourceResponseChartInitialized.add(sourceIndex);
+}
+
+function updateSourceResponseAngleControls(source, responseIndex, elements) {
+  const azSlider = elements.azSlider;
+  const elSlider = elements.elSlider;
+  const azValue = elements.azValue;
+  const elValue = elements.elValue;
+
+  if (!azSlider || !elSlider || !azValue || !elValue) {
+    return;
+  }
+
+  const ang = source?.definition?.balloon_data?.angular_resolution;
+  const grid = source ? getBalloonGrid(source) : null;
+
+  if (!ang || !grid || !grid.meridianCount || !grid.parallelCount) {
+    azSlider.disabled = true;
+    elSlider.disabled = true;
+    azSlider.value = "0";
+    elSlider.value = "0";
+    azValue.textContent = "-";
+    elValue.textContent = "-";
+    return;
+  }
+
+  const azMax = (grid.meridianCount - 1) * ang.meridian_step;
+  const elMax = (grid.parallelCount - 1) * ang.parallel_step;
+
+  azSlider.disabled = false;
+  elSlider.disabled = false;
+  azSlider.min = "0";
+  azSlider.max = String(azMax);
+  azSlider.step = String(ang.meridian_step);
+  elSlider.min = "0";
+  elSlider.max = String(elMax);
+  elSlider.step = String(ang.parallel_step);
+
+  if (responseIndex === null || responseIndex === undefined) {
+    return;
+  }
+
+  const angle = computeResponseAngles(source, responseIndex);
+  if (!angle) {
+    azValue.textContent = "-";
+    elValue.textContent = "-";
+    return;
+  }
+
+  azSlider.value = String(angle.meridianDeg);
+  elSlider.value = String(angle.parallelDeg);
+  azValue.textContent = `${formatAngle(angle.meridianDeg)}°`;
+  elValue.textContent = `${formatAngle(angle.parallelDeg)}°`;
+}
+
+function updateSourceResponseMeta(meta, source, responseIndex) {
+  if (!meta) return;
+  meta.innerHTML = buildResponseMetaHtml(source, responseIndex);
+}
+
+function handleSourceResponseAngleInput(sourceIndex) {
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) {
+    return;
+  }
+  const ang = source?.definition?.balloon_data?.angular_resolution;
+  const grid = getBalloonGrid(source);
+  if (!ang || !grid) {
+    return;
+  }
+
+  const elements = getSourceResponseElements(sourceIndex);
+  const azSlider = elements.azSlider;
+  const elSlider = elements.elSlider;
+  if (!azSlider || !elSlider) {
+    return;
+  }
+
+  const azimuthDeg = normalizeAzimuthForGrid(
+    Number(azSlider.value),
+    ang,
+  );
+  const elevationDeg = Number(elSlider.value);
+  const meridianIdx = Math.round(azimuthDeg / ang.meridian_step);
+  const parallelIdx = Math.round(elevationDeg / ang.parallel_step);
+  const responseIndex = getResponseIndex(grid, meridianIdx, null, ang, {
+    parallelIdx,
+  });
+  if (responseIndex === null) {
+    return;
+  }
+
+  const indexSelect = elements.indexSelect;
+  if (!indexSelect) {
+    return;
+  }
+
+  setResponseSelectValue(indexSelect, source, responseIndex);
+  renderSourceResponseChart(sourceIndex);
+}
+
+function buildSourcePlacementsMap(boxTypes) {
+  const map = new Map();
+  boxTypes.forEach((box) => {
+    const placements = box?.source_placements || [];
+    placements.forEach((placement) => {
+      const defKey = placement?.source_def_key;
+      if (!defKey) return;
+      const list = map.get(defKey) || [];
+      list.push({ box, source: placement });
+      map.set(defKey, list);
+    });
+  });
+  return map;
 }
 
 function displayConfig() {
@@ -474,10 +1096,12 @@ function displayConfig() {
       .map(
         (box, index) => `
             <div class="config-item">
-                <div class="config-item-header">${escapeHtml(box.label)}</div>
-                <div class="config-item-detail">Key: ${escapeHtml(box.key)}</div>
+                <div class="config-item-header-row">
+                    <div class="config-item-header">${escapeHtml(box.label)}</div>
+                    ${formatGeometryActions("box", index, box.case_geometry, box.label || box.key)}
+                </div>
                 ${formatGeometryDetail(box.case_geometry)}
-                ${formatGeometryActions("box", index, box.case_geometry)}
+                ${formatInlineGeometryViewer("box", index, box.case_geometry)}
             </div>
         `,
       )
@@ -494,10 +1118,17 @@ function displayConfig() {
       .map(
         (frame, index) => `
             <div class="config-item">
-                <div class="config-item-header">${escapeHtml(frame.label)}</div>
-                <div class="config-item-detail">Key: ${escapeHtml(frame.key)}</div>
+                <div class="config-item-header-row">
+                    <div class="config-item-header">${escapeHtml(frame.label)}</div>
+                    ${formatGeometryActions(
+                      "frame",
+                      index,
+                      frame.case_geometry,
+                      frame.label || frame.key,
+                    )}
+                </div>
                 ${formatGeometryDetail(frame.case_geometry)}
-                ${formatGeometryActions("frame", index, frame.case_geometry)}
+                ${formatInlineGeometryViewer("frame", index, frame.case_geometry)}
             </div>
         `,
       )
@@ -525,6 +1156,56 @@ function displayConfig() {
                 </div>
                 <div class="filter-group-content" style="display: none;">
                     <div class="filter-group-key">Key: ${escapeHtml(fg.key)}</div>
+                    <div class="filter-group-response">
+                      <div class="filter-response-controls">
+                        <label>
+                          Filter:
+                          <select id="filter-group-response-filter-${fgIdx}">
+                            ${
+                              fg.filters?.length
+                                ? fg.filters
+                                    .map(
+                                      (filter, i) =>
+                                        `<option value="${i}">${escapeHtml(filter.label || filter.key || `Filter ${i + 1}`)}</option>`,
+                                    )
+                                    .join("")
+                                : '<option value="">No filters</option>'
+                            }
+                          </select>
+                        </label>
+                        <label>
+                          Phase:
+                          <select id="filter-group-response-phase-${fgIdx}">
+                            <option value="unwrapped" selected>Unwrapped</option>
+                            <option value="wrapped">Wrapped</option>
+                            <option value="group-delay">Group delay</option>
+                          </select>
+                        </label>
+                        <div class="dropdown-container filter-export-dropdown">
+                          <button class="btn-download btn-filter-export" data-group-idx="${fgIdx}">
+                            Export <span class="dropdown-icon">▼</span>
+                          </button>
+                          <div class="dropdown-menu">
+                            <button class="dropdown-item" data-format="frd">Combined .frd</button>
+                            <button class="dropdown-item" data-format="csv">Combined .csv</button>
+                            <button class="dropdown-item" data-format="xgfb">Filter Bank .xgfb</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="filter-response-chart-container">
+                        <div
+                          id="filter-group-response-placeholder-${fgIdx}"
+                          class="filter-response-placeholder"
+                        >
+                          No filter response data loaded
+                        </div>
+                        <canvas id="filter-group-response-chart-${fgIdx}"></canvas>
+                      </div>
+                      <div
+                        id="filter-group-response-meta-${fgIdx}"
+                        class="response-meta"
+                      ></div>
+                    </div>
                     ${
                       fg.filters?.length
                         ? fg.filters
@@ -546,6 +1227,8 @@ function displayConfig() {
       )
       .join("");
   }
+  wireFilterGroupResponses();
+  wireFilterExportDropdowns();
 
   // Limits
   const limitsList = document.getElementById("limits-list");
@@ -594,16 +1277,746 @@ function displayConfig() {
   wireGeometryDownloads();
 
   // Update card counts
-  document.getElementById("box-types-count").textContent =
-    boxTypes.length > 0 ? boxTypes.length : "";
-  document.getElementById("frames-count").textContent =
-    frames.length > 0 ? frames.length : "";
-  document.getElementById("filter-groups-count").textContent =
-    filterGroups.length > 0 ? filterGroups.length : "";
   document.getElementById("limits-count").textContent =
     limits.length > 0 ? limits.length : "";
   document.getElementById("warnings-count").textContent =
     warnings.length > 0 ? warnings.length : "";
+}
+
+function displayConfigurations() {
+  const db = currentData?.database;
+  const clusterSetups = db?.cluster_setups || [];
+  const boxTypes = db?.box_types || [];
+  const systemType = currentData?.gen_system?.type;
+
+  // Cluster Setups
+  const clusterList = document.getElementById("cluster-setups-list");
+  if (clusterList) {
+    if (clusterSetups.length === 0) {
+      clusterList.innerHTML =
+        '<div class="empty-state">No cluster setups defined</div>';
+    } else {
+      clusterList.innerHTML = clusterSetups
+        .map(
+          (cs, idx) => `
+          <div class="cluster-setup-item" data-cluster-index="${idx}">
+            <div class="cluster-setup-header">
+              <h4>${escapeHtml(cs.label || cs.key)}</h4>
+              <button class="btn-use-config" onclick="loadClusterSetupToEditor(${idx})">Load into Editor</button>
+            </div>
+            ${cs.setup?.description ? `<div style="color:var(--text-muted);font-size:0.8125rem;margin-bottom:0.5rem">${escapeHtml(cs.setup.description)}</div>` : ""}
+            <div class="cluster-setup-boxes">
+              <table>
+                <thead><tr>
+                  <th>Label</th><th>Box Type</th>
+                  <th>X (mm)</th><th>Y (mm)</th><th>Z (mm)</th>
+                  <th>H (&deg;)</th><th>V (&deg;)</th><th>R (&deg;)</th>
+                </tr></thead>
+                <tbody>
+                  ${(cs.setup?.boxes || [])
+                    .map(
+                      (box) => `<tr>
+                    <td>${escapeHtml(box.label || "")}</td>
+                    <td>${escapeHtml(box.box_type_key || "")}</td>
+                    <td>${formatNumber(box.position?.x || 0)}</td>
+                    <td>${formatNumber(box.position?.y || 0)}</td>
+                    <td>${formatNumber(box.position?.z || 0)}</td>
+                    <td>${formatNumber(toDeg(box.angles?.x || 0))}</td>
+                    <td>${formatNumber(toDeg(box.angles?.y || 0))}</td>
+                    <td>${formatNumber(toDeg(box.angles?.z || 0))}</td>
+                  </tr>`,
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>`,
+        )
+        .join("");
+    }
+  }
+
+  // Connectors
+  displayConnectors(db);
+
+  // Configuration editor setup
+  setupConfigEditor();
+
+  // Auto-select default configuration
+  autoSelectDefaultConfig();
+}
+
+function displayConnectors(db) {
+  const connectors = db?.connectors || [];
+  const connectorsEl = document.getElementById("connectors-list");
+  if (!connectorsEl) return;
+
+  if (connectors.length === 0) {
+    connectorsEl.innerHTML =
+      '<div class="empty-state">No connectors defined</div>';
+    return;
+  }
+
+  // Group connectors by frame
+  const byFrame = new Map();
+  for (const c of connectors) {
+    const frame = c.frame || "(no frame)";
+    if (!byFrame.has(frame)) byFrame.set(frame, []);
+    byFrame.get(frame).push(c);
+  }
+
+  let html = "";
+  for (const [frame, conns] of byFrame) {
+    html += `<div class="connector-frame-group">`;
+    html += `<h4 class="connector-frame-label">${escapeHtml(frame)}</h4>`;
+    html += `<table><thead><tr>
+      <th>Upper Box</th><th>Lower Box</th><th>Splay Angles</th>
+    </tr></thead><tbody>`;
+    for (const c of conns) {
+      const angles = (c.angles || [])
+        .map((a) => `${a.value.toFixed(1)}\u00B0`)
+        .join(", ");
+      html += `<tr>
+        <td>${escapeHtml(c.upper_box)}</td>
+        <td>${escapeHtml(c.lower_box)}</td>
+        <td class="connector-angles">${angles || "\u2014"}</td>
+      </tr>`;
+    }
+    html += "</tbody></table></div>";
+  }
+
+  connectorsEl.innerHTML = html;
+}
+
+function toDeg(rad) {
+  return (rad * 180) / Math.PI;
+}
+
+function toRad(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+function setupConfigEditor() {
+  const addBtn = document.getElementById("config-add-element");
+  const clearBtn = document.getElementById("config-clear");
+  const applyBtn = document.getElementById("config-apply");
+
+  if (addBtn) {
+    addBtn.onclick = () => addConfigEditorRow();
+  }
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      document.getElementById("config-editor-body").innerHTML = "";
+      activeConfig = null;
+    };
+  }
+  if (applyBtn) {
+    applyBtn.onclick = () => applyConfigFromEditor();
+  }
+}
+
+function getBoxTypeOptions() {
+  const boxTypes = currentData?.database?.box_types || [];
+  return boxTypes
+    .map(
+      (bt) =>
+        `<option value="${escapeHtml(bt.key)}">${escapeHtml(bt.label || bt.key)}</option>`,
+    )
+    .join("");
+}
+
+function addConfigEditorRow(boxTypeKey, pos, angles, gain) {
+  const tbody = document.getElementById("config-editor-body");
+  if (!tbody) return;
+  const boxTypes = currentData?.database?.box_types || [];
+  const row = document.createElement("tr");
+  const options = boxTypes
+    .map(
+      (bt) =>
+        `<option value="${escapeHtml(bt.key)}"${bt.key === boxTypeKey ? " selected" : ""}>${escapeHtml(bt.label || bt.key)}</option>`,
+    )
+    .join("");
+  row.innerHTML = `
+    <td><select class="cfg-box-type">${options}</select></td>
+    <td><input type="number" class="cfg-x" value="${pos?.x ?? 0}" step="1"></td>
+    <td><input type="number" class="cfg-y" value="${pos?.y ?? 0}" step="1"></td>
+    <td><input type="number" class="cfg-z" value="${pos?.z ?? 0}" step="1"></td>
+    <td><input type="number" class="cfg-h" value="${formatNumber(toDeg(angles?.x ?? 0))}" step="0.5"></td>
+    <td><input type="number" class="cfg-v" value="${formatNumber(toDeg(angles?.y ?? 0))}" step="0.5"></td>
+    <td><input type="number" class="cfg-r" value="${formatNumber(toDeg(angles?.z ?? 0))}" step="0.5"></td>
+    <td><input type="number" class="cfg-gain" value="${gain ?? 0}" step="0.5"></td>
+    <td><button class="btn-remove" onclick="this.closest('tr').remove()">X</button></td>
+  `;
+  tbody.appendChild(row);
+}
+
+// Load a cluster setup into the editor
+window.loadClusterSetupToEditor = function (clusterIndex) {
+  const clusterSetups = currentData?.database?.cluster_setups || [];
+  const cs = clusterSetups[clusterIndex];
+  if (!cs) return;
+
+  const tbody = document.getElementById("config-editor-body");
+  if (tbody) tbody.innerHTML = "";
+
+  for (const box of cs.setup?.boxes || []) {
+    addConfigEditorRow(box.box_type_key, box.position, box.angles, 0);
+  }
+};
+
+function applyConfigFromEditor() {
+  const tbody = document.getElementById("config-editor-body");
+  if (!tbody) return;
+
+  const rows = tbody.querySelectorAll("tr");
+  const elements = [];
+  for (const row of rows) {
+    const boxTypeKey = row.querySelector(".cfg-box-type")?.value;
+    const x = parseFloat(row.querySelector(".cfg-x")?.value) || 0;
+    const y = parseFloat(row.querySelector(".cfg-y")?.value) || 0;
+    const z = parseFloat(row.querySelector(".cfg-z")?.value) || 0;
+    const h = parseFloat(row.querySelector(".cfg-h")?.value) || 0;
+    const v = parseFloat(row.querySelector(".cfg-v")?.value) || 0;
+    const r = parseFloat(row.querySelector(".cfg-r")?.value) || 0;
+    const gain = parseFloat(row.querySelector(".cfg-gain")?.value) || 0;
+    if (boxTypeKey) {
+      elements.push({
+        box_type_key: boxTypeKey,
+        position: { x, y, z },
+        angles: { x: toRad(h), y: toRad(v), z: toRad(r) },
+        gain,
+      });
+    }
+  }
+
+  if (elements.length === 0) {
+    activeConfig = null;
+  } else {
+    activeConfig = { elements };
+  }
+
+  updateCombinedResponseChart();
+}
+
+function autoSelectDefaultConfig() {
+  const db = currentData?.database;
+  const systemType = currentData?.gen_system?.type;
+
+  // type 1 = Cluster, type 0 = LineArray, type 2 = Loudspeaker
+  if (systemType === 1) {
+    // Cluster: use first cluster setup
+    const clusterSetups = db?.cluster_setups || [];
+    if (clusterSetups.length > 0) {
+      const cs = clusterSetups[0];
+      const elements = (cs.setup?.boxes || []).map((box) => ({
+        box_type_key: box.box_type_key,
+        position: box.position || { x: 0, y: 0, z: 0 },
+        angles: box.angles || { x: 0, y: 0, z: 0 },
+        gain: 0,
+      }));
+      if (elements.length > 0) {
+        activeConfig = { elements };
+        // Also populate editor
+        window.loadClusterSetupToEditor(0);
+      }
+    }
+  }
+  // For Loudspeaker (type 2), the existing box-type dropdown works fine
+  // For LineArray (type 0), full support needs Frame/Connector parsing (not yet implemented)
+}
+
+function buildElementsFromConfig(config) {
+  if (!config?.elements?.length) return [];
+
+  const boxTypes = currentData?.database?.box_types || [];
+  const allElements = [];
+
+  for (const elem of config.elements) {
+    const boxType = boxTypes.find((bt) => bt.key === elem.box_type_key);
+    if (!boxType) continue;
+
+    const placements = boxType.source_placements || [];
+    if (placements.length > 0) {
+      for (const placement of placements) {
+        const sourceKey = placement?.source_def_key;
+        if (!sourceKey) continue;
+        const pPos = placement.position || {};
+        const pAngles = placement.angles || {};
+        // Combine box-level config position with source placement position
+        allElements.push({
+          source_key: sourceKey,
+          position: {
+            x:
+              (Number(elem.position?.x) || 0) / 1000 +
+              (Number(pPos.x) || 0) / 1000,
+            y:
+              (Number(elem.position?.y) || 0) / 1000 +
+              (Number(pPos.y) || 0) / 1000,
+            z:
+              (Number(elem.position?.z) || 0) / 1000 +
+              (Number(pPos.z) || 0) / 1000,
+          },
+          angles: {
+            x: (Number(elem.angles?.x) || 0) + toRadiansMaybe(pAngles.x),
+            y: (Number(elem.angles?.y) || 0) + toRadiansMaybe(pAngles.y),
+            z: (Number(elem.angles?.z) || 0) + toRadiansMaybe(pAngles.z),
+          },
+          gain: elem.gain || 0,
+        });
+      }
+    } else {
+      // Fallback: use box sources directly
+      const sources = boxType.sources || [];
+      for (const key of sources) {
+        allElements.push({
+          source_key: key,
+          position: {
+            x: (Number(elem.position?.x) || 0) / 1000,
+            y: (Number(elem.position?.y) || 0) / 1000,
+            z: (Number(elem.position?.z) || 0) / 1000,
+          },
+          angles: {
+            x: Number(elem.angles?.x) || 0,
+            y: Number(elem.angles?.y) || 0,
+            z: Number(elem.angles?.z) || 0,
+          },
+          gain: elem.gain || 0,
+        });
+      }
+    }
+  }
+
+  return allElements;
+}
+
+function wireFilterGroupResponses() {
+  const groups = currentData?.database?.filter_groups || [];
+  groups.forEach((group, groupIndex) => {
+    const elements = getFilterGroupResponseElements(groupIndex);
+    if (!elements.filterSelect) {
+      return;
+    }
+
+    const hasFilters = !!group?.filters?.length;
+    elements.filterSelect.disabled = !hasFilters;
+    elements.phaseSelect.disabled = !hasFilters;
+
+    elements.filterSelect.addEventListener("change", () =>
+      renderFilterGroupResponse(groupIndex),
+    );
+    elements.phaseSelect.addEventListener("change", () =>
+      renderFilterGroupResponse(groupIndex),
+    );
+  });
+}
+
+function wireFilterExportDropdowns() {
+  document.querySelectorAll(".btn-filter-export").forEach((button) => {
+    if (button.dataset.bound === "true") return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const container = button.closest(".dropdown-container");
+      const wasOpen = container.classList.contains("show");
+      document.querySelectorAll(".dropdown-container.show").forEach((other) => {
+        other.classList.remove("show");
+      });
+      if (!wasOpen) container.classList.add("show");
+    });
+  });
+
+  document
+    .querySelectorAll(".filter-export-dropdown .dropdown-item")
+    .forEach((item) => {
+      if (item.dataset.bound === "true") return;
+      item.dataset.bound = "true";
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const format = item.dataset.format;
+        const button = item
+          .closest(".dropdown-container")
+          .querySelector(".btn-filter-export");
+        const groupIdx = Number(button.dataset.groupIdx);
+        const filterSelect = document.getElementById(
+          `filter-group-response-filter-${groupIdx}`,
+        );
+        const filterIdx = filterSelect ? parseInt(filterSelect.value) : 0;
+
+        const groups = currentData?.database?.filter_groups || [];
+        const group = groups[groupIdx];
+        if (!group) return;
+
+        const filterDef = group.filters?.[filterIdx];
+        const gllName = sanitizeFilename(
+          currentData?.gen_system?.model ||
+            currentData?.gen_system?.manufacturer ||
+            "gll",
+        );
+        const groupLabel = sanitizeFilename(
+          group.label || group.key || `group-${groupIdx}`,
+        );
+        const filterLabel = sanitizeFilename(
+          filterDef?.label || filterDef?.key || `filter-${filterIdx}`,
+        );
+        const basename = `${gllName}_${groupLabel}_${filterLabel}`;
+
+        if (format === "xgfb") {
+          if (!filterDef) return;
+          const content = buildXgfbContent(filterDef);
+          if (content) downloadTextFile(`${basename}.xgfb`, content);
+        } else {
+          const response = computeCombinedFilterResponse(groupIdx, filterIdx);
+          if (response.error || !response.frequencies?.length) return;
+          if (format === "frd") {
+            const content = buildFrdContent(
+              response.frequencies,
+              response.level,
+              response.phase,
+            );
+            downloadTextFile(`${basename}.frd`, content);
+          } else if (format === "csv") {
+            const content = buildCsvFilterContent(
+              response.frequencies,
+              response.level,
+              response.phase,
+            );
+            downloadTextFile(`${basename}.csv`, content);
+          }
+        }
+
+        item.closest(".dropdown-container").classList.remove("show");
+      });
+    });
+}
+
+function getFilterGroupResponseElements(groupIndex) {
+  return {
+    filterSelect: document.getElementById(
+      `filter-group-response-filter-${groupIndex}`,
+    ),
+    phaseSelect: document.getElementById(
+      `filter-group-response-phase-${groupIndex}`,
+    ),
+    placeholder: document.getElementById(
+      `filter-group-response-placeholder-${groupIndex}`,
+    ),
+    chartCanvas: document.getElementById(
+      `filter-group-response-chart-${groupIndex}`,
+    ),
+    meta: document.getElementById(`filter-group-response-meta-${groupIndex}`),
+  };
+}
+
+function renderFilterGroupResponse(groupIndex) {
+  const data = currentData;
+  const bytes = currentFileBytes;
+  const groups = data?.database?.filter_groups || [];
+  const group = groups[groupIndex];
+
+  const elements = getFilterGroupResponseElements(groupIndex);
+  if (!elements.filterSelect || !elements.chartCanvas) {
+    return;
+  }
+
+  const filterIndex = parseInt(elements.filterSelect.value);
+  if (!group || Number.isNaN(filterIndex)) {
+    updateFilterGroupResponseMeta(
+      groupIndex,
+      "No filter response data available",
+    );
+    setFilterGroupResponsePlaceholder(
+      groupIndex,
+      "No filter response data available",
+    );
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  if (!bytes || typeof computeFilterResponse !== "function") {
+    updateFilterGroupResponseMeta(
+      groupIndex,
+      "Filter response helper not available",
+    );
+    setFilterGroupResponsePlaceholder(
+      groupIndex,
+      "Filter response helper not available",
+    );
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  const payload = JSON.stringify({
+    group_index: groupIndex,
+    filter_index: filterIndex,
+  });
+  let response;
+  try {
+    const responseJSON = computeFilterResponse(bytes, payload);
+    response = JSON.parse(responseJSON);
+  } catch (err) {
+    updateFilterGroupResponseMeta(
+      groupIndex,
+      "Failed to compute filter response",
+    );
+    setFilterGroupResponsePlaceholder(
+      groupIndex,
+      "Failed to compute filter response",
+    );
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  if (!response.success) {
+    const message = response.error || "Failed to compute filter response";
+    updateFilterGroupResponseMeta(groupIndex, message);
+    setFilterGroupResponsePlaceholder(groupIndex, message);
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  if (!response.frequencies?.length || !response.level?.length) {
+    const message = response.message || "No filter response data available";
+    updateFilterGroupResponseMeta(
+      groupIndex,
+      message,
+      buildFilterGroupMetaChips(group, group?.filters?.[filterIndex], response),
+    );
+    setFilterGroupResponsePlaceholder(groupIndex, message);
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  if (elements.phaseSelect) {
+    const hasPhase = Array.isArray(response.phase) && response.phase.length > 0;
+    elements.phaseSelect.disabled = !hasPhase;
+    if (!hasPhase) {
+      elements.phaseSelect.value = "unwrapped";
+    }
+  }
+
+  const frequencyData = buildFrequencyPoints(
+    response.frequencies,
+    response.level,
+  );
+  if (!frequencyData) {
+    updateFilterGroupResponseMeta(
+      groupIndex,
+      "No filter response data available",
+    );
+    setFilterGroupResponsePlaceholder(
+      groupIndex,
+      "No filter response data available",
+    );
+    destroyFilterGroupChart(groupIndex);
+    return;
+  }
+
+  setFilterGroupResponsePlaceholder(groupIndex, "");
+  const datasets = [
+    {
+      label: "Level (dB)",
+      data: frequencyData.points,
+      borderColor: "#0ea5e9",
+      backgroundColor: "rgba(14, 165, 233, 0.12)",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      yAxisID: "y",
+    },
+  ];
+
+  let phaseAxisTitle = "Phase (rad)";
+  if (response.phase && response.phase.length === response.level.length) {
+    const phaseMode = elements.phaseSelect?.value || "unwrapped";
+    const phaseSeries = getPhaseSeries(
+      phaseMode,
+      response.frequencies,
+      response.phase,
+      unwrapPhase(response.phase),
+    );
+    phaseAxisTitle = phaseSeries.axisTitle;
+    const phaseData = buildFrequencyPoints(
+      response.frequencies,
+      phaseSeries.values,
+    );
+    if (phaseData) {
+      datasets.push({
+        label: phaseSeries.label,
+        data: phaseData.points,
+        borderColor: "#f97316",
+        backgroundColor: "transparent",
+        tension: 0.3,
+        pointRadius: 0,
+        yAxisID: "y1",
+      });
+    }
+  }
+
+  const scales = {
+    x: buildLogFrequencyScale(
+      frequencyData.minFrequency,
+      frequencyData.maxFrequency,
+      "Frequency",
+    ),
+    y: {
+      type: "linear",
+      display: true,
+      position: "left",
+      title: {
+        display: true,
+        text: "Level (dB)",
+      },
+    },
+  };
+
+  if (response.phase) {
+    scales.y1 = {
+      type: "linear",
+      display: true,
+      position: "right",
+      title: {
+        display: true,
+        text: phaseAxisTitle,
+      },
+      grid: {
+        drawOnChartArea: false,
+      },
+    };
+  }
+
+  const ctx = elements.chartCanvas.getContext("2d");
+  destroyFilterGroupChart(groupIndex);
+  const localChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: filterGroupChartInitialized.has(groupIndex)
+        ? false
+        : { duration: 700 },
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      scales,
+      plugins: {
+        legend: {
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const value = items?.[0]?.parsed?.x;
+              return value ? formatFrequency(value) : "";
+            },
+          },
+        },
+        zoom: buildZoomPluginOptions(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+        ),
+      },
+    },
+  });
+
+  filterGroupResponseCharts.set(groupIndex, localChart);
+  filterGroupChartInitialized.add(groupIndex);
+  updateFilterGroupResponseMeta(
+    groupIndex,
+    response.message,
+    buildFilterGroupMetaChips(group, group?.filters?.[filterIndex], response),
+  );
+}
+
+function destroyFilterGroupChart(groupIndex) {
+  const existingChart = filterGroupResponseCharts.get(groupIndex);
+  if (existingChart) {
+    existingChart.destroy();
+    filterGroupResponseCharts.delete(groupIndex);
+  }
+}
+
+function buildFilterGroupMetaChips(group, filterDef, response) {
+  const chips = [];
+  if (group) {
+    chips.push(
+      `<span class="chip">${escapeHtml(group.label || group.key || "Filter Group")}</span>`,
+    );
+  }
+  if (filterDef) {
+    chips.push(
+      `<span class="chip">${escapeHtml(filterDef.label || filterDef.key || "Filter")}</span>`,
+    );
+  }
+  if (Number.isFinite(response.used_filters)) {
+    const kind = response.filter_kind || "LogSpectrum";
+    chips.push(
+      `<span class="chip">${escapeHtml(kind)} ${response.used_filters}</span>`,
+    );
+  }
+  if (Number.isFinite(response.sample_rate)) {
+    chips.push(
+      `<span class="chip">SR ${response.sample_rate.toFixed(0)} Hz</span>`,
+    );
+  }
+  if (Number.isFinite(response.point_count)) {
+    chips.push(`<span class="chip">${response.point_count} points</span>`);
+  }
+  if (response.is_complex) {
+    chips.push('<span class="chip">Complex</span>');
+  }
+  if (
+    Number.isFinite(response.skipped_filters) &&
+    response.skipped_filters > 0
+  ) {
+    chips.push(`<span class="chip">Skipped ${response.skipped_filters}</span>`);
+  }
+  if (
+    Number.isFinite(response.mismatched_filters) &&
+    response.mismatched_filters > 0
+  ) {
+    chips.push(
+      `<span class="chip">Mismatched ${response.mismatched_filters}</span>`,
+    );
+  }
+  if (response.bypassed) {
+    chips.push('<span class="chip">Bypassed</span>');
+  }
+  return chips;
+}
+
+function updateFilterGroupResponseMeta(groupIndex, message, chips = null) {
+  const meta = document.getElementById(
+    `filter-group-response-meta-${groupIndex}`,
+  );
+  if (!meta) return;
+
+  const parts = Array.isArray(chips) && chips.length > 0 ? chips.slice() : [];
+  if (message) {
+    parts.push(`<span class="chip">${escapeHtml(message)}</span>`);
+  }
+  if (parts.length === 0) {
+    meta.innerHTML =
+      '<span class="chip">No filter response data available</span>';
+    return;
+  }
+  meta.innerHTML = parts.join("");
+}
+
+function setFilterGroupResponsePlaceholder(groupIndex, message) {
+  const placeholder = document.getElementById(
+    `filter-group-response-placeholder-${groupIndex}`,
+  );
+  if (!placeholder) return;
+  if (message) {
+    placeholder.textContent = message;
+    placeholder.style.display = "flex";
+    return;
+  }
+  placeholder.style.display = "none";
 }
 
 function formatGeometryDetail(geometry) {
@@ -625,147 +2038,178 @@ function formatGeometryDetail(geometry) {
     `;
 }
 
-function formatGeometryActions(kind, index, geometry) {
+function formatGeometryActions(kind, index, geometry, label) {
   if (!hasGeometryData(geometry)) {
     return "";
   }
+  const filename = sanitizeFilename(label || `${kind}-${index + 1}`);
   return `
         <div class="config-item-actions">
-            <button class="btn-download btn-xed" data-geom-type="${kind}" data-geom-index="${index}">
-                Download .xed
-            </button>
+            <div class="dropdown-container">
+                <button class="btn-download btn-geom-export" data-geom-type="${kind}" data-geom-index="${index}" data-geom-filename="${escapeHtml(filename)}">
+                    Download <span class="dropdown-icon">▼</span>
+                </button>
+                <div class="dropdown-menu">
+                    <button class="dropdown-item" data-format="xed">${escapeHtml(filename)}.xed</button>
+                    <button class="dropdown-item" data-format="stl">${escapeHtml(filename)}.stl</button>
+                    <button class="dropdown-item" data-format="obj">${escapeHtml(filename)}.obj</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function formatInlineGeometryViewer(kind, index, caseGeometry) {
+  if (!hasGeometryData(caseGeometry)) {
+    return "";
+  }
+  const id = `geometry-inline-${kind}-${index}`;
+  return `
+        <div class="inline-geometry-viewer" id="${id}" data-geom-kind="${kind}" data-geom-index="${index}">
+            <div class="inline-geometry-controls">
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-faces" checked /> Faces
+                </label>
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-edges" checked /> Edges
+                </label>
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-autorotate" checked /> Auto-rotate
+                </label>
+            </div>
+            <div class="inline-geometry-canvas"></div>
         </div>
     `;
 }
 
 function wireGeometryDownloads() {
-  document.querySelectorAll(".btn-xed").forEach((button) => {
+  // Wire dropdown toggle buttons
+  document.querySelectorAll(".btn-geom-export").forEach((button) => {
     if (button.dataset.bound === "true") {
       return;
     }
     button.dataset.bound = "true";
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const container = button.closest(".dropdown-container");
+      const wasOpen = container.classList.contains("show");
+
+      // Close all other dropdowns
+      document.querySelectorAll(".dropdown-container.show").forEach((other) => {
+        other.classList.remove("show");
+      });
+
+      // Toggle current dropdown
+      if (!wasOpen) {
+        container.classList.add("show");
+      }
+    });
+  });
+
+  // Wire dropdown menu items
+  document.querySelectorAll(".dropdown-item").forEach((item) => {
+    if (item.dataset.bound === "true") {
+      return;
+    }
+    item.dataset.bound = "true";
+    item.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const format = item.dataset.format;
+      const button = item
+        .closest(".dropdown-container")
+        .querySelector(".btn-geom-export");
       const kind = button.dataset.geomType;
       const index = Number(button.dataset.geomIndex);
+      const datasetFilename = button.dataset.geomFilename;
       const db = currentData?.database;
-      const item =
+      const dataItem =
         kind === "frame" ? db?.frames?.[index] : db?.box_types?.[index];
-      const geometry = item?.case_geometry;
+      const geometry = dataItem?.case_geometry;
+
       if (!hasGeometryData(geometry)) {
         return;
       }
-      const label = item?.label || item?.key || `${kind}-${index + 1}`;
-      const content = buildXedContent(geometry, { units: "m", precision: 6 });
-      downloadTextFile(`${sanitizeFilename(label)}.xed`, content);
+
+      const label = dataItem?.label || dataItem?.key || `${kind}-${index + 1}`;
+      const filename = datasetFilename || sanitizeFilename(label);
+
+      // Generate and download based on format
+      if (format === "xed") {
+        const content = buildXedContent(geometry, { units: "m", precision: 6 });
+        downloadTextFile(`${filename}.xed`, content);
+      } else if (format === "stl") {
+        const buffer = buildStlBinary(geometry, {});
+        if (buffer.length > 0) {
+          downloadBinaryFile(`${filename}.stl`, buffer);
+        }
+      } else if (format === "obj") {
+        const content = buildObjContent(geometry, {});
+        if (content) {
+          downloadTextFile(`${filename}.obj`, content);
+        }
+      }
+
+      // Close dropdown
+      item.closest(".dropdown-container").classList.remove("show");
     });
   });
-}
 
-function hasGeometryData(geometry) {
-  if (!geometry) return false;
-  const hasEdges = Array.isArray(geometry.edges) && geometry.edges.length > 0;
-  const hasVertices =
-    Array.isArray(geometry.vertices) && geometry.vertices.length > 1;
-  return hasEdges || hasVertices;
-}
-
-function buildXedContent(geometry, options) {
-  const units = (options?.units || "m").toLowerCase();
-  const precision = Number.isFinite(options?.precision) ? options.precision : 6;
-  const headerUnits = units === "ft" ? "ft" : "m";
-  const scale = units === "ft" ? 1 / (0.3048 * 1000) : 1 / 1000;
-
-  const lines = ["FILE XED", "VERSION 4.0", `UNITS ${headerUnits}`];
-
-  const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
-  const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
-  const edgePairs =
-    edges.length > 0
-      ? edges.map((edge) => [edge.v1, edge.v2])
-      : buildSequentialEdgePairs(vertices.length);
-
-  for (const [v1, v2] of edgePairs) {
-    const p1 = resolveGeometryVertex(geometry, vertices, v1, scale);
-    const p2 = resolveGeometryVertex(geometry, vertices, v2, scale);
-    if (!p1 || !p2) {
-      continue;
-    }
-    lines.push(formatXedLine(p1, precision));
-    lines.push(formatXedLine(p2, precision));
-  }
-
-  return lines.join("\n") + "\n";
-}
-
-function buildSequentialEdgePairs(vertexCount) {
-  const pairs = [];
-  for (let i = 0; i + 1 < vertexCount; i += 2) {
-    pairs.push([i + 1, i + 2]);
-  }
-  return pairs;
-}
-
-function resolveGeometryVertex(geometry, vertices, index, scale) {
-  if (!index || !Number.isFinite(index)) {
-    return null;
-  }
-  const rawIndex = Math.trunc(index);
-  const absIndex = Math.abs(rawIndex);
-  if (absIndex < 1 || absIndex > vertices.length) {
-    return null;
-  }
-  const vertex = vertices[absIndex - 1];
-  if (!vertex) {
-    return null;
-  }
-  let x = Number(vertex.x);
-  let y = Number(vertex.y);
-  let z = Number(vertex.z);
-  if (![x, y, z].every(Number.isFinite)) {
-    return null;
-  }
-  if (rawIndex < 0 && geometry.is_symmetric) {
-    const axis = Number(geometry.symmetry_axis) || 0;
-    x = 2 * axis - x;
-  }
-  return {
-    x: x * scale,
-    y: y * scale,
-    z: z * scale,
-  };
-}
-
-function formatXedLine(point, precision) {
-  return `${formatXedNumber(point.x, precision)} ${formatXedNumber(point.y, precision)} ${formatXedNumber(point.z, precision)}`;
-}
-
-function formatXedNumber(value, precision) {
-  const rounded = Number(value).toFixed(precision);
-  return rounded.replace(/\.?0+$/, "");
-}
-
-function downloadTextFile(filename, content) {
-  const blob = new Blob([content], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  downloadFile(filename, url);
-  URL.revokeObjectURL(url);
-}
-
-function sanitizeFilename(name) {
-  return (
-    String(name)
-      .replace(/\\s+/g, "_")
-      .replace(/[^a-zA-Z0-9_-]/g, "")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .toLowerCase() || "geometry"
-  );
+  // Close dropdowns when clicking outside
+  document.addEventListener("click", () => {
+    document
+      .querySelectorAll(".dropdown-container.show")
+      .forEach((container) => {
+        container.classList.remove("show");
+      });
+  });
 }
 
 function displayResources() {
   // Include Files (PDFs, documentation, technical drawings)
+  const resourcesTab = document.querySelector('.tab[data-tab="resources"]');
+  const resourcesContent = document.getElementById("tab-resources");
   const includeFilesList = document.getElementById("include-files-list");
   const includeFiles = currentData.database?.include_files || [];
+  const dataFiles = currentData.database?.data_files || [];
+  const resources = currentData.resources || [];
+  const dataFileNames = new Set(
+    (dataFiles || []).map((f) => cleanFilename(f.filename).toLowerCase()),
+  );
+  const filteredResources = resources.filter((res) => {
+    if (res.type === "PNG" && res.name) {
+      return !dataFileNames.has(cleanFilename(res.name).toLowerCase());
+    }
+    if (res.type === "ZLIB") {
+      const label = String(res.name || "").toLowerCase();
+      if (label.startsWith("pdf-") || label.startsWith("font-")) {
+        return false;
+      }
+    }
+    return true;
+  });
+  const hasResources =
+    includeFiles.length > 0 ||
+    dataFiles.length > 0 ||
+    filteredResources.length > 0;
+  if (resourcesTab && resourcesContent) {
+    resourcesTab.classList.toggle("hidden", !hasResources);
+    resourcesContent.classList.toggle("hidden", !hasResources);
+    if (!hasResources && resourcesTab.classList.contains("active")) {
+      switchTab("overview");
+    }
+  }
+
+  if (!hasResources) {
+    includeFilesList.innerHTML =
+      '<div class="empty-state">No documentation files found</div>';
+    const dataFilesList = document.getElementById("data-files-list");
+    if (dataFilesList) {
+      dataFilesList.innerHTML =
+        '<div class="empty-state">No data files found</div>';
+    }
+    return;
+  }
+
   if (includeFiles.length === 0) {
     includeFilesList.innerHTML =
       '<div class="empty-state">No documentation files found</div>';
@@ -803,7 +2247,6 @@ function displayResources() {
 
   // Data Files (images, geometry)
   const dataFilesList = document.getElementById("data-files-list");
-  const dataFiles = currentData.database?.data_files || [];
   if (dataFiles.length === 0) {
     dataFilesList.innerHTML =
       '<div class="empty-state">No data files found</div>';
@@ -845,28 +2288,15 @@ function displayResources() {
       .join("");
   }
 
-  // Other Embedded Resources (fonts, compressed data)
+  const resourcesCard = document.getElementById("other-resources-card");
   const resourcesList = document.getElementById("resources-list");
-  const resources = currentData.resources || [];
-  // Filter out PNGs that are also in data_files to avoid duplicates
-  const dataFileNames = new Set(
-    (dataFiles || []).map((f) => cleanFilename(f.filename).toLowerCase()),
-  );
-  const filteredResources = resources.filter((res) => {
-    if (res.type === "PNG" && res.name) {
-      return !dataFileNames.has(cleanFilename(res.name).toLowerCase());
-    }
-    return true;
-  });
-
-  if (filteredResources.length === 0) {
-    resourcesList.innerHTML =
-      '<div class="empty-state">No additional resources found</div>';
-  } else {
-    resourcesList.innerHTML = filteredResources
-      .map((res) => {
-        const hasPreview = res.type === "PNG" && res.data_uri;
-        return `
+  if (resourcesCard && resourcesList) {
+    resourcesCard.classList.toggle("hidden", filteredResources.length === 0);
+    if (filteredResources.length > 0) {
+      resourcesList.innerHTML = filteredResources
+        .map((res) => {
+          const hasPreview = res.type === "PNG" && res.data_uri;
+          return `
                 <div class="resource-item ${hasPreview ? "resource-item--image" : ""}">
                     <div class="resource-meta">
                         <span class="resource-name">${escapeHtml(res.name || "Unnamed")}</span>
@@ -886,18 +2316,12 @@ function displayResources() {
                     }
                 </div>
             `;
-      })
-      .join("");
+        })
+        .join("");
+    } else {
+      resourcesList.innerHTML = "";
+    }
   }
-}
-
-function downloadFile(filename, dataUri) {
-  const link = document.createElement("a");
-  link.href = dataUri;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
 }
 
 function cleanFilename(path) {
@@ -943,25 +2367,114 @@ function setupResponseControls() {
 }
 
 function setupPolarControls() {
-  updatePolarOptions();
+  visualization.updatePolarOptions();
 }
 
 function setupBalloonControls() {
   const rangeValue = document.getElementById("balloon-range");
   const scaleValue = document.getElementById("balloon-scale");
   if (rangeValue) {
-    handleBalloonRangeInput({ target: rangeValue });
+    visualization.handleBalloonRangeInput({ target: rangeValue });
   }
   if (scaleValue) {
-    handleBalloonScaleInput({ target: scaleValue });
+    visualization.handleBalloonScaleInput({ target: scaleValue });
   }
-  updateBalloonSourceOptions();
-  updateBalloonOptions();
+  visualization.updateBalloonSourceOptions();
+  visualization.updateBalloonOptions();
 }
 
 function setupGeometryControls() {
-  updateGeometryOptions();
-  updateGeometryVisualization();
+  geometry.resetGeometry();
+  // Inline viewers are initialized when the geometry tab is shown
+}
+
+function setupCombinedResponseControls() {
+  const boxSelect = document.getElementById("combined-box");
+  const groupSelect = document.getElementById("combined-filter-group");
+  const filterSelect = document.getElementById("combined-filter");
+  const gainInput = document.getElementById("combined-gain");
+  const distanceInput = document.getElementById("combined-distance");
+  const phaseSelect = document.getElementById("combined-phase-mode");
+  if (!boxSelect || !groupSelect || !filterSelect) {
+    return;
+  }
+
+  if (!combinedListenersBound) {
+    boxSelect.addEventListener("change", updateCombinedResponseChart);
+    groupSelect.addEventListener("change", updateCombinedFilterOptions);
+    filterSelect.addEventListener("change", updateCombinedResponseChart);
+    gainInput?.addEventListener("input", updateCombinedResponseChart);
+    distanceInput?.addEventListener("input", updateCombinedResponseChart);
+    phaseSelect?.addEventListener("change", updateCombinedResponseChart);
+    combinedListenersBound = true;
+  }
+
+  const boxTypes = currentData?.database?.box_types || [];
+  if (!boxTypes.length) {
+    boxSelect.innerHTML = '<option value="">No box types</option>';
+    boxSelect.disabled = true;
+  } else {
+    boxSelect.disabled = false;
+    boxSelect.innerHTML = boxTypes
+      .map(
+        (box, i) =>
+          `<option value="${i}">${escapeHtml(box.label || box.key || `Box ${i + 1}`)}</option>`,
+      )
+      .join("");
+  }
+
+  const groups = currentData?.database?.filter_groups || [];
+  if (!groups.length) {
+    groupSelect.innerHTML = '<option value="">No filter groups</option>';
+    groupSelect.disabled = true;
+  } else {
+    groupSelect.disabled = false;
+    groupSelect.innerHTML = [
+      '<option value="">None</option>',
+      ...groups.map(
+        (group, i) =>
+          `<option value="${i}">${escapeHtml(group.label || group.key || `Group ${i + 1}`)}</option>`,
+      ),
+    ].join("");
+  }
+
+  updateCombinedFilterOptions();
+}
+
+function updateCombinedFilterOptions() {
+  const groupSelect = document.getElementById("combined-filter-group");
+  const filterSelect = document.getElementById("combined-filter");
+  if (!groupSelect || !filterSelect) {
+    return;
+  }
+
+  const groups = currentData?.database?.filter_groups || [];
+  const groupIndex = parseInt(groupSelect.value);
+  if (Number.isNaN(groupIndex)) {
+    filterSelect.innerHTML = '<option value="">None</option>';
+    filterSelect.disabled = true;
+    updateCombinedResponseChart();
+    return;
+  }
+
+  const group = groups[groupIndex];
+  const filters = group?.filters || [];
+  if (!filters.length) {
+    filterSelect.innerHTML = '<option value="">No filters</option>';
+    filterSelect.disabled = true;
+    updateCombinedResponseChart();
+    return;
+  }
+
+  filterSelect.disabled = false;
+  filterSelect.innerHTML = filters
+    .map(
+      (filter, i) =>
+        `<option value="${i}">${escapeHtml(filter.label || filter.key || `Filter ${i + 1}`)}</option>`,
+    )
+    .join("");
+
+  updateCombinedResponseChart();
 }
 
 function updateResponseOptions() {
@@ -990,14 +2503,15 @@ function updateResponseOptions() {
   indexSelect.innerHTML = Array.from({ length: responseCount }, (_, i) => {
     const angle = computeResponseAngles(source, i);
     const angleLabel = angle
-      ? ` • Az ${formatAngle(angle.meridianDeg)}° / El ${formatAngle(angle.parallelDeg)}°`
+      ? ` • Az ${formatAngle(angle.meridianDeg)}° / Off ${formatAngle(angle.parallelDeg)}°`
       : "";
     return `<option value="${i}">Response ${i + 1}${angleLabel}</option>`;
   }).join("");
 
   if (onAxisToggle) {
     const onAxis = source?.definition?.on_axis_spectrum;
-    const hasOnAxis = !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
+    const hasOnAxis =
+      !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
     onAxisToggle.disabled = !hasOnAxis;
     if (!hasOnAxis) {
       onAxisToggle.checked = false;
@@ -1005,8 +2519,8 @@ function updateResponseOptions() {
   }
 
   updateResponseChart();
-  updatePolarOptions();
-  updateBalloonOptions();
+  visualization.updatePolarOptions();
+  visualization.updateBalloonOptions();
 }
 
 function updateResponseChart() {
@@ -1043,24 +2557,13 @@ function updateResponseChart() {
     chart.destroy();
   }
 
-  const phaseMode =
-    document.getElementById("response-phase-mode")?.value || "unwrapped";
-  const rawPhase = response.phase || [];
-  const unwrappedPhase = unwrapPhase(rawPhase);
-  const phaseSeries = getPhaseSeries(
-    phaseMode,
-    response.frequencies,
-    rawPhase,
-    unwrappedPhase,
-  );
-
   const onAxis = source?.definition?.on_axis_spectrum;
   const onAxisFreqs = buildLogFrequencies(
     onAxis?.definition,
     onAxis?.level?.length,
   );
   const canCombineOnAxis =
-    !!onAxisToggle?.checked &&
+    !onAxisToggle?.checked &&
     onAxis &&
     Array.isArray(onAxis.level) &&
     Array.isArray(onAxisFreqs) &&
@@ -1071,17 +2574,46 @@ function updateResponseChart() {
     ? response.level.map((value, i) => value + onAxis.level[i])
     : response.level;
 
-  const frequencyPoints = response.frequencies.map((f, i) => ({
-    x: f,
-    y: levelSeries[i],
-  }));
-  const phasePoints = response.frequencies.map((f, i) => ({
-    x: f,
-    y: phaseSeries.values[i],
-  }));
+  const phaseMode =
+    document.getElementById("response-phase-mode")?.value || "unwrapped";
+  const rawPhase = response.phase || [];
+  const onAxisPhase = onAxis?.phase || [];
+  const canCombinePhase =
+    canCombineOnAxis &&
+    Array.isArray(onAxisPhase) &&
+    rawPhase.length > 0 &&
+    rawPhase.length === onAxisPhase.length;
+  const combinedPhase = canCombinePhase
+    ? rawPhase.map((value, i) => value + onAxisPhase[i])
+    : rawPhase;
+  const responseDelay = Number.isFinite(response.delay) ? response.delay : 0;
+  const onAxisDelay =
+    canCombinePhase && Number.isFinite(onAxis?.delay) ? onAxis.delay : 0;
+  const combinedDelay = responseDelay + onAxisDelay;
+  const delayAdjustedPhase = applyDelayToPhase(
+    combinedPhase,
+    response.frequencies,
+    combinedDelay,
+  );
+  const unwrappedPhase = unwrapPhase(delayAdjustedPhase);
+  const phaseSeries = getPhaseSeries(
+    phaseMode,
+    response.frequencies,
+    delayAdjustedPhase,
+    unwrappedPhase,
+  );
+  const phaseLabel = canCombinePhase
+    ? `${phaseSeries.label} (on-axis + directivity)`
+    : phaseSeries.label;
 
-  const minFrequency = Math.min(...response.frequencies);
-  const maxFrequency = Math.max(...response.frequencies);
+  const frequencyData = buildFrequencyPoints(response.frequencies, levelSeries);
+  const phaseData = buildFrequencyPoints(
+    response.frequencies,
+    phaseSeries.values,
+  );
+  if (!frequencyData) {
+    return;
+  }
 
   chart = new Chart(ctx, {
     type: "line",
@@ -1091,7 +2623,7 @@ function updateResponseChart() {
           label: canCombineOnAxis
             ? "Level (dB, on-axis + directivity)"
             : "Level (dB)",
-          data: frequencyPoints,
+          data: frequencyData.points,
           borderColor: "#2563eb",
           backgroundColor: "rgba(37, 99, 235, 0.1)",
           fill: true,
@@ -1100,8 +2632,8 @@ function updateResponseChart() {
           yAxisID: "y",
         },
         {
-          label: phaseSeries.label,
-          data: phasePoints,
+          label: phaseLabel,
+          data: phaseData ? phaseData.points : [],
           borderColor: "#dc2626",
           backgroundColor: "transparent",
           tension: 0.3,
@@ -1119,27 +2651,11 @@ function updateResponseChart() {
         intersect: false,
       },
       scales: {
-        x: {
-          type: "logarithmic",
-          title: {
-            display: true,
-            text: "Frequency",
-          },
-          ticks: {
-            autoSkip: false,
-            callback: (value) => {
-              const numericValue = Number(value);
-              return isPowerOfTen(numericValue)
-                ? formatFrequencyShort(numericValue)
-                : "";
-            },
-          },
-          min: minFrequency,
-          max: maxFrequency,
-          afterBuildTicks: (scale) => {
-            scale.ticks = buildLogTicks(scale.min, scale.max);
-          },
-        },
+        x: buildLogFrequencyScale(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+          "Frequency",
+        ),
         y: {
           type: "linear",
           display: true,
@@ -1174,12 +2690,410 @@ function updateResponseChart() {
             },
           },
         },
+        zoom: buildZoomPluginOptions(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+        ),
       },
     },
   });
 
   responseChartInitialized = true;
   document.getElementById("response-meta").classList.remove("empty-state");
+}
+
+function updateCombinedResponseChart() {
+  const boxSelect = document.getElementById("combined-box");
+  const groupSelect = document.getElementById("combined-filter-group");
+  const filterSelect = document.getElementById("combined-filter");
+  const gainInput = document.getElementById("combined-gain");
+  const distanceInput = document.getElementById("combined-distance");
+  const phaseSelect = document.getElementById("combined-phase-mode");
+  const meta = document.getElementById("combined-response-meta");
+  const ctx = document
+    .getElementById("combined-response-chart")
+    ?.getContext("2d");
+
+  if (!boxSelect || !ctx || !meta) {
+    return;
+  }
+
+  if (!currentFileBytes || typeof computeArrayResponse !== "function") {
+    meta.innerHTML =
+      '<span class="chip">Array response helper not available</span>';
+    destroyCombinedChart();
+    return;
+  }
+
+  const boxTypes = currentData?.database?.box_types || [];
+  let elements;
+  let box;
+
+  if (activeConfig) {
+    // Use active configuration from editor/cluster setup
+    elements = buildElementsFromConfig(activeConfig);
+    box = null;
+  } else {
+    const boxIndex = parseInt(boxSelect.value);
+    if (Number.isNaN(boxIndex) || boxIndex >= boxTypes.length) {
+      meta.innerHTML = '<span class="chip">Select a box type</span>';
+      destroyCombinedChart();
+      return;
+    }
+    box = boxTypes[boxIndex];
+    elements = buildCombinedElements(box);
+  }
+
+  if (!elements.length) {
+    meta.innerHTML = '<span class="chip">No source placements found</span>';
+    destroyCombinedChart();
+    return;
+  }
+
+  const gainOffset = parseFloat(gainInput?.value) || 0;
+  const receiverDistance = parseFloat(distanceInput?.value) || 1;
+  const arrayPayload = JSON.stringify({
+    elements,
+    receiver: { x: 0, y: 0, z: Math.max(receiverDistance, 0.1) },
+    air_props: {
+      temperature: 20,
+      humidity: 0.5,
+      speed: 0,
+      air_atten_on: false,
+    },
+  });
+
+  let arrayResponse;
+  try {
+    const responseJSON = computeArrayResponse(currentFileBytes, arrayPayload);
+    arrayResponse = JSON.parse(responseJSON);
+  } catch (err) {
+    meta.innerHTML =
+      '<span class="chip">Failed to compute array response</span>';
+    destroyCombinedChart();
+    return;
+  }
+
+  if (!arrayResponse.success) {
+    meta.innerHTML = `<span class="chip">${escapeHtml(arrayResponse.error || "Failed to compute array response")}</span>`;
+    destroyCombinedChart();
+    return;
+  }
+
+  let combinedLevel = arrayResponse.level?.slice() || [];
+  let combinedPhase = arrayResponse.phase?.slice() || [];
+  let filterMessage = null;
+  let filterLabel = null;
+  let groupLabel = null;
+  const groupIndex = parseInt(groupSelect?.value);
+  const filterIndex = parseInt(filterSelect?.value);
+
+  if (!Number.isNaN(groupIndex) && !filterSelect?.disabled) {
+    const groups = currentData?.database?.filter_groups || [];
+    const group = groups[groupIndex];
+    groupLabel = group?.label || group?.key || "Filter Group";
+    if (!Number.isNaN(filterIndex)) {
+      const filterDef = group?.filters?.[filterIndex];
+      filterLabel = filterDef?.label || filterDef?.key || "Filter";
+    }
+    const filterResponse = computeCombinedFilterResponse(
+      groupIndex,
+      filterIndex,
+    );
+    if (filterResponse?.error) {
+      filterMessage = filterResponse.error;
+    } else if (
+      filterResponse?.frequencies?.length &&
+      frequenciesMatch(arrayResponse.frequencies, filterResponse.frequencies)
+    ) {
+      combinedLevel = combinedLevel.map(
+        (value, i) => value + filterResponse.level[i],
+      );
+      if (
+        Array.isArray(filterResponse.phase) &&
+        filterResponse.phase.length === combinedPhase.length
+      ) {
+        combinedPhase = combinedPhase.map(
+          (value, i) => value + filterResponse.phase[i],
+        );
+      } else {
+        combinedPhase = combinedPhase.length ? combinedPhase : [];
+      }
+    } else {
+      filterMessage = "Filter response grid mismatch";
+    }
+  } else if (!Number.isNaN(groupIndex) && filterSelect?.disabled) {
+    filterMessage = "No filters in group";
+  }
+
+  if (Number.isFinite(gainOffset) && gainOffset !== 0) {
+    combinedLevel = combinedLevel.map((value) => value + gainOffset);
+  }
+
+  if (phaseSelect) {
+    const hasPhase =
+      Array.isArray(combinedPhase) &&
+      combinedPhase.length === combinedLevel.length;
+    phaseSelect.disabled = !hasPhase;
+    if (!hasPhase) {
+      phaseSelect.value = "unwrapped";
+    }
+  }
+
+  const frequencyData = buildFrequencyPoints(
+    arrayResponse.frequencies,
+    combinedLevel,
+  );
+  if (!frequencyData) {
+    meta.innerHTML = '<span class="chip">No combined response data</span>';
+    destroyCombinedChart();
+    return;
+  }
+
+  const phaseMode = phaseSelect?.value || "unwrapped";
+  let phaseSeries = null;
+  if (
+    Array.isArray(combinedPhase) &&
+    combinedPhase.length === combinedLevel.length
+  ) {
+    phaseSeries = getPhaseSeries(
+      phaseMode,
+      arrayResponse.frequencies,
+      combinedPhase,
+      unwrapPhase(combinedPhase),
+    );
+  }
+
+  if (combinedChart) {
+    combinedChart.destroy();
+  }
+
+  combinedChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "Level (dB)",
+          data: frequencyData.points,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37, 99, 235, 0.1)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          yAxisID: "y",
+        },
+        ...(phaseSeries
+          ? [
+              {
+                label: phaseSeries.label,
+                data:
+                  buildFrequencyPoints(
+                    arrayResponse.frequencies,
+                    phaseSeries.values,
+                  )?.points || [],
+                borderColor: "#dc2626",
+                backgroundColor: "transparent",
+                tension: 0.3,
+                pointRadius: 0,
+                yAxisID: "y1",
+              },
+            ]
+          : []),
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: combinedChartInitialized ? false : { duration: 700 },
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      scales: {
+        x: buildLogFrequencyScale(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+          "Frequency",
+        ),
+        y: {
+          type: "linear",
+          display: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Level (dB)",
+          },
+        },
+        y1: phaseSeries
+          ? {
+              type: "linear",
+              display: true,
+              position: "right",
+              title: {
+                display: true,
+                text: phaseSeries.axisTitle,
+              },
+              grid: {
+                drawOnChartArea: false,
+              },
+            }
+          : undefined,
+      },
+      plugins: {
+        legend: {
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const value = items?.[0]?.parsed?.x;
+              return value ? formatFrequency(value) : "";
+            },
+          },
+        },
+        zoom: buildZoomPluginOptions(
+          frequencyData.minFrequency,
+          frequencyData.maxFrequency,
+        ),
+      },
+    },
+  });
+
+  combinedChartInitialized = true;
+  const configBox = activeConfig
+    ? { label: `Config (${activeConfig.elements.length} boxes)` }
+    : box;
+  updateCombinedResponseMeta(
+    meta,
+    configBox,
+    elements.length,
+    gainOffset,
+    receiverDistance,
+    groupLabel,
+    filterLabel,
+    filterMessage,
+  );
+}
+
+function computeCombinedFilterResponse(groupIndex, filterIndex) {
+  if (!currentFileBytes || typeof computeFilterResponse !== "function") {
+    return { error: "Filter response helper not available" };
+  }
+  if (Number.isNaN(filterIndex)) {
+    return { error: "Select a filter" };
+  }
+
+  const payload = JSON.stringify({
+    group_index: groupIndex,
+    filter_index: filterIndex,
+  });
+  try {
+    const responseJSON = computeFilterResponse(currentFileBytes, payload);
+    const response = JSON.parse(responseJSON);
+    if (!response.success) {
+      return { error: response.error || "Failed to compute filter response" };
+    }
+    if (!response.frequencies?.length || !response.level?.length) {
+      return { error: response.message || "No filter response data" };
+    }
+    return response;
+  } catch (err) {
+    return { error: "Failed to compute filter response" };
+  }
+}
+
+function buildCombinedElements(box) {
+  const placements = box?.source_placements || [];
+  if (placements.length > 0) {
+    return placements
+      .map((placement) => {
+        const sourceKey = placement?.source_def_key;
+        if (!sourceKey) {
+          return null;
+        }
+        const pos = placement.position || {};
+        const angles = placement.angles || {};
+        return {
+          source_key: sourceKey,
+          position: {
+            x: (Number(pos.x) || 0) / 1000,
+            y: (Number(pos.y) || 0) / 1000,
+            z: (Number(pos.z) || 0) / 1000,
+          },
+          angles: {
+            x: toRadiansMaybe(angles.x),
+            y: toRadiansMaybe(angles.y),
+            z: toRadiansMaybe(angles.z),
+          },
+          gain: 0,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  const sources = box?.sources || [];
+  return sources.map((key) => ({
+    source_key: key,
+    position: { x: 0, y: 0, z: 0 },
+    angles: { x: 0, y: 0, z: 0 },
+    gain: 0,
+  }));
+}
+
+function updateCombinedResponseMeta(
+  meta,
+  box,
+  elementCount,
+  gainOffset,
+  receiverDistance,
+  groupLabel,
+  filterLabel,
+  filterMessage,
+) {
+  const chips = [];
+  if (box) {
+    chips.push(
+      `<span class="chip">${escapeHtml(box.label || box.key || "Box")}</span>`,
+    );
+  }
+  chips.push(`<span class="chip">${elementCount} sources</span>`);
+  chips.push(
+    `<span class="chip">Receiver ${receiverDistance.toFixed(1)} m</span>`,
+  );
+  if (Number.isFinite(gainOffset) && gainOffset !== 0) {
+    chips.push(`<span class="chip">Gain ${gainOffset.toFixed(1)} dB</span>`);
+  }
+  if (groupLabel) {
+    chips.push(`<span class="chip">${escapeHtml(groupLabel)}</span>`);
+  }
+  if (filterLabel) {
+    chips.push(`<span class="chip">${escapeHtml(filterLabel)}</span>`);
+  }
+  if (filterMessage) {
+    chips.push(`<span class="chip">${escapeHtml(filterMessage)}</span>`);
+  }
+  meta.innerHTML = chips.join("");
+}
+
+function destroyCombinedChart() {
+  if (combinedChart) {
+    combinedChart.destroy();
+    combinedChart = null;
+  }
+}
+
+function applyDelayToPhase(phaseValues, frequencies, delaySeconds) {
+  if (!delaySeconds) {
+    return phaseValues;
+  }
+  if (!Array.isArray(phaseValues) || !Array.isArray(frequencies)) {
+    return phaseValues;
+  }
+  if (phaseValues.length !== frequencies.length) {
+    return phaseValues;
+  }
+  const factor = 2 * Math.PI * delaySeconds;
+  return phaseValues.map((value, i) => value - frequencies[i] * factor);
 }
 
 function handleResponseIndexInput(e) {
@@ -1276,7 +3190,10 @@ function handleResponseAngleInput() {
 
   const azSlider = document.getElementById("response-azimuth-slider");
   const elSlider = document.getElementById("response-elevation-slider");
-  const azimuthDeg = Number(azSlider.value);
+  const azimuthDeg = normalizeAzimuthForGrid(
+    Number(azSlider.value),
+    ang,
+  );
   const elevationDeg = Number(elSlider.value);
   const meridianIdx = Math.round(azimuthDeg / ang.meridian_step);
   const parallelIdx = Math.round(elevationDeg / ang.parallel_step);
@@ -1307,7 +3224,7 @@ function setResponseSelectValue(indexSelect, source, responseIndex) {
   if (!hasOption) {
     const angle = computeResponseAngles(source, responseIndex);
     const angleLabel = angle
-      ? ` • Az ${formatAngle(angle.meridianDeg)}° / El ${formatAngle(angle.parallelDeg)}°`
+      ? ` • Az ${formatAngle(angle.meridianDeg)}° / Off ${formatAngle(angle.parallelDeg)}°`
       : "";
     const option = document.createElement("option");
     option.value = String(responseIndex);
@@ -1317,443 +3234,6 @@ function setResponseSelectValue(indexSelect, source, responseIndex) {
   }
 
   indexSelect.value = String(responseIndex);
-}
-
-function updatePolarOptions() {
-  const sourceSelect = document.getElementById("response-source");
-  const freqSelect = document.getElementById("polar-frequency");
-  const sources = currentData.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-  const previousIndex = parseInt(freqSelect.value);
-
-  const sourceIndex = parseInt(sourceSelect.value);
-  if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-    freqSelect.innerHTML = "";
-    updatePolarSliderState(null);
-    document.getElementById("polar-meta").innerHTML =
-      '<div class="empty-state">No polar data available</div>';
-    return;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = sampleResponse?.frequencies || [];
-
-  freqSelect.innerHTML = frequencies
-    .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
-    .join("");
-
-  const nextIndex =
-    !isNaN(previousIndex) && previousIndex < frequencies.length
-      ? previousIndex
-      : 0;
-  freqSelect.value = String(nextIndex);
-  updatePolarSliderState(frequencies);
-  updatePolarSliderFromIndex(nextIndex, frequencies);
-
-  updatePolarChart();
-}
-
-function updateBalloonSourceOptions() {
-  const sourceSelect = document.getElementById("balloon-source");
-  const sources = currentData?.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-
-  if (!sourcesWithResponses.length) {
-    sourceSelect.innerHTML =
-      '<option value="">No response data available</option>';
-    return;
-  }
-
-  const globalSource = document.getElementById("global-source");
-  const defaultIndex = parseInt(globalSource?.value);
-
-  sourceSelect.innerHTML = sourcesWithResponses
-    .map(
-      (src, i) =>
-        `<option value="${i}">${escapeHtml(src.definition?.label || src.key)}</option>`,
-    )
-    .join("");
-
-  if (
-    !Number.isNaN(defaultIndex) &&
-    defaultIndex < sourcesWithResponses.length
-  ) {
-    sourceSelect.value = String(defaultIndex);
-  }
-}
-
-function updateBalloonOptions() {
-  const sourceSelect = document.getElementById("balloon-source");
-  const freqSelect = document.getElementById("balloon-frequency");
-  const sources = currentData.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-  const previousIndex = parseInt(freqSelect.value);
-
-  const sourceIndex = parseInt(sourceSelect.value);
-  if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-    freqSelect.innerHTML = "";
-    updateBalloonSliderState(null);
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = sampleResponse?.frequencies || [];
-
-  freqSelect.innerHTML = frequencies
-    .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
-    .join("");
-
-  const nextIndex =
-    !isNaN(previousIndex) && previousIndex < frequencies.length
-      ? previousIndex
-      : 0;
-  freqSelect.value = String(nextIndex);
-  updateBalloonSliderState(frequencies);
-  updateBalloonSliderFromIndex(nextIndex, frequencies);
-  updateBalloonVisualization();
-}
-
-function updatePolarChart() {
-  const sourceSelect = document.getElementById("response-source");
-  const freqSelect = document.getElementById("polar-frequency");
-  const planeSelect = document.getElementById("polar-plane");
-  const sources = currentData.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-
-  const sourceIndex = parseInt(sourceSelect.value);
-  const freqIndex = parseInt(freqSelect.value);
-  const plane = planeSelect?.value || "horizontal";
-
-  if (
-    isNaN(sourceIndex) ||
-    isNaN(freqIndex) ||
-    sourceIndex >= sourcesWithResponses.length
-  ) {
-    return;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = sampleResponse?.frequencies || [];
-  const frequency = frequencies[freqIndex];
-
-  const slice = computePolarSlice(source, plane, freqIndex);
-  if (!slice) {
-    return;
-  }
-
-  updatePolarSliderFromIndex(freqIndex, frequencies);
-  updatePolarFrequencyValue(frequency);
-
-  const ctx = document.getElementById("polar-chart").getContext("2d");
-  if (polarChart) {
-    polarChart.destroy();
-  }
-
-  const levelRange = computeLevelRange(slice.levels);
-  const suggestedMax = levelRange.max !== null ? levelRange.max + 3 : undefined;
-  const suggestedMin =
-    levelRange.max !== null ? levelRange.max - 40 : undefined;
-
-  polarChart = new Chart(ctx, {
-    type: "radar",
-    data: {
-      labels: slice.labels,
-      datasets: [
-        {
-          label: `${plane === "horizontal" ? "Azimuth" : "Elevation"} @ ${formatFrequency(frequency)}`,
-          data: slice.levels,
-          borderColor: "#16a34a",
-          backgroundColor: "rgba(22, 163, 74, 0.12)",
-          pointRadius: 0,
-          borderWidth: 2,
-          fill: true,
-          tension: 0.2,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: polarChartInitialized ? false : { duration: 700 },
-      plugins: {
-        legend: {
-          position: "top",
-        },
-        tooltip: {
-          callbacks: {
-            title: (items) => {
-              const label = items?.[0]?.label;
-              return label ? `${slice.axisLabel} ${label}°` : "";
-            },
-            label: (item) => {
-              if (item?.raw === null || item?.raw === undefined) {
-                return "Level: -";
-              }
-              return `Level: ${item.raw.toFixed(1)} dB`;
-            },
-          },
-        },
-      },
-      scales: {
-        r: {
-          suggestedMin,
-          suggestedMax,
-          ticks: {
-            backdropColor: "transparent",
-            color: "#64748b",
-          },
-          grid: {
-            color: "rgba(148, 163, 184, 0.25)",
-          },
-          angleLines: {
-            color: "rgba(148, 163, 184, 0.25)",
-          },
-          pointLabels: {
-            color: "#64748b",
-            font: {
-              size: 10,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  polarChartInitialized = true;
-  updatePolarMeta(slice, plane, frequency);
-}
-
-function handlePolarSliderInput(e) {
-  const sliderValue = Number(e.target.value);
-  const frequencyData = getPolarFrequencyData();
-  if (!frequencyData) {
-    return;
-  }
-
-  const targetFrequency = sliderValueToFrequency(sliderValue, frequencyData);
-  const freqIndex = findNearestFrequencyIndex(
-    frequencyData.frequencies,
-    targetFrequency,
-  );
-  const freqSelect = document.getElementById("polar-frequency");
-  freqSelect.value = String(freqIndex);
-  updatePolarChart();
-}
-
-function handleBalloonSliderInput(e) {
-  const sliderValue = Number(e.target.value);
-  const frequencyData = getBalloonFrequencyData();
-  if (!frequencyData) {
-    return;
-  }
-
-  const targetFrequency = sliderValueToFrequency(sliderValue, frequencyData);
-  const freqIndex = findNearestFrequencyIndex(
-    frequencyData.frequencies,
-    targetFrequency,
-  );
-  const freqSelect = document.getElementById("balloon-frequency");
-  freqSelect.value = String(freqIndex);
-  updateBalloonVisualization();
-}
-
-function handleBalloonRangeInput(e) {
-  const value = Number(e.target.value);
-  const label = document.getElementById("balloon-range-value");
-  label.textContent = Number.isFinite(value) ? String(value) : "-";
-  updateBalloonVisualization();
-}
-
-function handleBalloonScaleInput(e) {
-  const value = Number(e.target.value);
-  const label = document.getElementById("balloon-scale-value");
-  label.textContent = Number.isFinite(value) ? `${value.toFixed(1)}×` : "-";
-  updateBalloonVisualization();
-}
-
-function handleBalloonAutorotateToggle(e) {
-  if (balloonGroup) {
-    balloonGroup.userData.autoRotate = !!e.target.checked;
-  }
-}
-
-function updatePolarSliderState(frequencies) {
-  const slider = document.getElementById("polar-frequency-slider");
-  if (!frequencies || frequencies.length === 0) {
-    slider.disabled = true;
-    slider.value = "0";
-    updatePolarFrequencyValue(null);
-    return;
-  }
-
-  slider.disabled = false;
-  slider.min = "0";
-  slider.max = String(polarSliderMax);
-  slider.step = "1";
-}
-
-function updateBalloonSliderState(frequencies) {
-  const slider = document.getElementById("balloon-frequency-slider");
-  if (!frequencies || frequencies.length === 0) {
-    slider.disabled = true;
-    slider.value = "0";
-    updateBalloonFrequencyValue(null);
-    return;
-  }
-
-  slider.disabled = false;
-  slider.min = "0";
-  slider.max = String(polarSliderMax);
-  slider.step = "1";
-}
-
-function updatePolarSliderFromIndex(freqIndex, frequencies) {
-  const slider = document.getElementById("polar-frequency-slider");
-  const frequencyData = getPolarFrequencyData(frequencies);
-  if (!frequencyData || frequencyData.logRange === 0) {
-    updatePolarSliderState(null);
-    return;
-  }
-
-  const freqValue = frequencyData.frequencies[freqIndex];
-  if (!freqValue || freqValue <= 0) {
-    return;
-  }
-
-  const ratio =
-    (Math.log10(freqValue) - frequencyData.logMin) / frequencyData.logRange;
-  const sliderValue = Math.round(ratio * polarSliderMax);
-  slider.value = String(Math.max(0, Math.min(polarSliderMax, sliderValue)));
-}
-
-function updateBalloonSliderFromIndex(freqIndex, frequencies) {
-  const slider = document.getElementById("balloon-frequency-slider");
-  const frequencyData = getBalloonFrequencyData(frequencies);
-  if (!frequencyData || frequencyData.logRange === 0) {
-    updateBalloonSliderState(null);
-    return;
-  }
-
-  const freqValue = frequencyData.frequencies[freqIndex];
-  if (!freqValue || freqValue <= 0) {
-    return;
-  }
-
-  const ratio =
-    (Math.log10(freqValue) - frequencyData.logMin) / frequencyData.logRange;
-  const sliderValue = Math.round(ratio * polarSliderMax);
-  slider.value = String(Math.max(0, Math.min(polarSliderMax, sliderValue)));
-}
-
-function updatePolarFrequencyValue(frequency) {
-  const value = document.getElementById("polar-frequency-value");
-  value.textContent = frequency ? formatFrequency(frequency) : "-";
-}
-
-function getBalloonFrequencyData(frequenciesOverride) {
-  const sourceSelect = document.getElementById("balloon-source");
-  const sources = currentData?.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-  const sourceIndex = parseInt(sourceSelect?.value);
-  if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-    return null;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = frequenciesOverride || sampleResponse?.frequencies || [];
-  if (!frequencies.length) {
-    return null;
-  }
-
-  const positive = frequencies.filter((f) => typeof f === "number" && f > 0);
-  if (!positive.length) {
-    return null;
-  }
-
-  const minFreq = Math.min(...positive);
-  const maxFreq = Math.max(...positive);
-  const logMin = Math.log10(minFreq);
-  const logMax = Math.log10(maxFreq);
-
-  return {
-    frequencies,
-    logMin,
-    logRange: logMax - logMin,
-  };
-}
-
-function updateBalloonFrequencyValue(frequency) {
-  const value = document.getElementById("balloon-frequency-value");
-  value.textContent = frequency ? formatFrequency(frequency) : "-";
-}
-
-function getPolarFrequencyData(frequenciesOverride) {
-  const sourceSelect = document.getElementById("response-source");
-  const sources = currentData.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-  const sourceIndex = parseInt(sourceSelect.value);
-  if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-    return null;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = frequenciesOverride || sampleResponse?.frequencies || [];
-  if (!frequencies.length) {
-    return null;
-  }
-
-  const positive = frequencies.filter((f) => typeof f === "number" && f > 0);
-  if (!positive.length) {
-    return null;
-  }
-
-  const minFreq = Math.min(...positive);
-  const maxFreq = Math.max(...positive);
-  const logMin = Math.log10(minFreq);
-  const logMax = Math.log10(maxFreq);
-
-  return {
-    frequencies,
-    logMin,
-    logRange: logMax - logMin,
-  };
-}
-
-function sliderValueToFrequency(value, frequencyData) {
-  const ratio = value / polarSliderMax;
-  return Math.pow(10, frequencyData.logMin + frequencyData.logRange * ratio);
-}
-
-function findNearestFrequencyIndex(frequencies, targetFrequency) {
-  let closestIndex = 0;
-  let closestDistance = Infinity;
-  frequencies.forEach((freq, index) => {
-    const distance = Math.abs(freq - targetFrequency);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestIndex = index;
-    }
-  });
-  return closestIndex;
 }
 
 // Helper functions
@@ -1991,18 +3471,43 @@ function formatFrequency(hz) {
   return hz.toFixed(0) + " Hz";
 }
 
-function formatFrequencyShort(hz) {
-  if (!hz || hz === 0) return "-";
-  if (hz >= 1000) {
-    return (hz / 1000).toFixed(1) + "k";
-  }
-  return hz.toFixed(0);
-}
-
 function formatAngle(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   const formatted = Number(value).toFixed(1);
   return formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted;
+}
+
+function normalizeAngleDegrees(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  const absVal = Math.abs(value);
+  if (absVal > Math.PI * 2 + 1e-6) {
+    return value;
+  }
+  return (value * 180) / Math.PI;
+}
+
+function toRadiansMaybe(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 0;
+  const absVal = Math.abs(value);
+  if (absVal > Math.PI * 2 + 1e-6) {
+    return (value * Math.PI) / 180;
+  }
+  return value;
+}
+
+function formatAngleDegrees(value) {
+  const deg = normalizeAngleDegrees(value);
+  if (deg === null) return "-";
+  return `${formatAngle(deg)}°`;
+}
+
+function formatPosition(position) {
+  if (!position) return "-";
+  return [
+    formatNumber(position.x, 1),
+    formatNumber(position.y, 1),
+    formatNumber(position.z, 1),
+  ].join(", ");
 }
 
 function computeResponseAngles(source, responseIndex) {
@@ -2017,8 +3522,11 @@ function computeResponseAngles(source, responseIndex) {
     return null;
   }
 
-  const meridianIdx = responseIndex % grid.meridianCount;
-  const parallelIdx = Math.floor(responseIndex / grid.meridianCount);
+  const indices = responseIndexToBalloonIndices(responseIndex, grid);
+  if (!indices) {
+    return null;
+  }
+  const { meridianIdx, parallelIdx } = indices;
 
   if (parallelIdx >= grid.parallelCount) {
     return null;
@@ -2042,7 +3550,10 @@ function computeResponseAngles(source, responseIndex) {
 function updateResponseMeta(source, responseIndex) {
   const meta = document.getElementById("response-meta");
   if (!meta) return;
+  meta.innerHTML = buildResponseMetaHtml(source, responseIndex);
+}
 
+function buildResponseMetaHtml(source, responseIndex) {
   const responseCount = source?.responses?.length || 0;
   const angle = computeResponseAngles(source, responseIndex);
   const angRes = source?.definition?.balloon_data?.angular_resolution;
@@ -2057,7 +3568,7 @@ function updateResponseMeta(source, responseIndex) {
       `<span class="chip">Azimuth ${formatAngle(angle.meridianDeg)}°</span>`,
     );
     chips.push(
-      `<span class="chip">Elevation ${formatAngle(angle.parallelDeg)}°</span>`,
+      `<span class="chip">Off-axis ${formatAngle(angle.parallelDeg)}°</span>`,
     );
   } else {
     chips.push('<span class="chip">Angle data unavailable</span>');
@@ -2069,112 +3580,130 @@ function updateResponseMeta(source, responseIndex) {
     );
   }
 
-  meta.innerHTML = chips.join("");
+  return chips.join("");
 }
 
-function computePolarSlice(source, plane, freqIndex) {
-  const balloon = source?.definition?.balloon_data;
-  const ang = balloon?.angular_resolution;
+function buildPolarAngles(stepDeg) {
+  const angles = [0];
+  for (let angle = -stepDeg; angle >= -180; angle -= stepDeg) {
+    angles.push(angle);
+  }
+  for (let angle = 180 - stepDeg; angle > 0; angle -= stepDeg) {
+    angles.push(angle);
+  }
+  return angles;
+}
+
+function formatPolarLabel(angleDeg) {
+  const normalized = ((angleDeg + 180) % 360) - 180;
+  if (Math.abs(normalized) === 180) {
+    return "±180°";
+  }
+  if (Math.abs(normalized) < 1e-6) {
+    return "0°";
+  }
+  return `${formatAngle(normalized)}°`;
+}
+
+function computePolarSlices(source, freqIndex) {
   const grid = getBalloonGrid(source);
   if (!grid) {
     return null;
   }
 
-  const responses = source?.responses || [];
-  const labels = [];
-  const levels = [];
   const stepDeg = 10;
+  const angles = buildPolarAngles(stepDeg);
+  const labels = angles.map(formatPolarLabel);
+  const horizontalLevels = [];
+  const verticalLevels = [];
 
-  if (plane === "vertical") {
-    // VERTICAL PLANE: Scan parallel angles (elevation) at fixed meridian (azimuth)
-    // Coordinate system: Meridian = azimuth (0-360°), Parallel = elevation (0-180°)
-    // TiRAY has: 72 meridians (full 360°) × 10 parallels (only 0-45°)
+  const maxParallel = grid.measuredParallelDeg;
+  const canMirrorParallel = grid.symmetry === 2 || grid.symmetry === 3;
+  const onAxis = source?.definition?.on_axis_spectrum;
+  const onAxisFreqs = buildLogFrequencies(
+    onAxis?.definition,
+    onAxis?.level?.length,
+  );
+  const sampleResponse = source?.responses?.[0];
+  const canCombineOnAxis =
+    onAxis &&
+    Array.isArray(onAxis.level) &&
+    Array.isArray(onAxisFreqs) &&
+    sampleResponse &&
+    sampleResponse.frequencies.length === onAxisFreqs.length &&
+    sampleResponse.level.length === onAxis.level.length &&
+    frequenciesMatch(sampleResponse.frequencies, onAxisFreqs);
 
-    const meridianDeg = 0; // Front axis (azimuth = 0°)
-    const maxParallel = grid.measuredParallelDeg;
-    const canMirrorParallel = grid.symmetry === 2 || grid.symmetry === 3;
+  // Both slices are great circles through the front-back axis (parallel 0-180).
+  // GLL coordinate system: meridian = rotation around the firing axis,
+  // parallel = angle from the firing axis (colatitude).
+  // Meridian 0° = "top" of the speaker, 90° = "right", 180° = "bottom", 270° = "left".
+  //
+  // Horizontal slice (Front-Right-Back-Left plane):
+  //   positive chart angles → meridian=90°  (right), parallel = angle
+  //   negative chart angles → meridian=270° (left),  parallel = |angle|
+  //
+  // Vertical slice (Front-Top-Back-Bottom plane):
+  //   positive chart angles → meridian=0°   (top),    parallel = angle
+  //   negative chart angles → meridian=180° (bottom), parallel = |angle|
 
-    // Create full 360° circle by mirroring the limited parallel range when allowed.
-    // Without symmetry, leave the back half open.
-    for (let angle = 0; angle < 360; angle += stepDeg) {
-      let parallelDeg;
+  angles.forEach((angle) => {
+    // Horizontal slice: great circle through front-right-back-left.
+    const hParallelDeg = Math.abs(angle);
+    const hMeridianDeg = angle >= 0 ? 90 : 270;
 
-      if (angle <= 90) {
-        parallelDeg = (angle / 90) * maxParallel;
-      } else if (angle <= 180) {
-        parallelDeg = ((180 - angle) / 90) * maxParallel;
-      } else if (canMirrorParallel) {
-        if (angle <= 270) {
-          parallelDeg = ((angle - 180) / 90) * maxParallel;
-        } else {
-          parallelDeg = ((360 - angle) / 90) * maxParallel;
-        }
-      } else {
-        parallelDeg = null;
-      }
-
-      const response =
-        parallelDeg === null
-          ? null
-          : getResponseWithSymmetry(source, grid, meridianDeg, parallelDeg);
-      const level = response?.level?.[freqIndex];
-
-      labels.push(formatAngle(angle));
-      levels.push(level ?? null);
-    }
-
-    return {
-      labels,
-      levels,
-      axisLabel: canMirrorParallel
-        ? `Vertical (0° = on-axis, ±${maxParallel.toFixed(0)}° max)`
-        : `Vertical (0° = on-axis, 0-${maxParallel.toFixed(0)}° measured)`,
-      meta: {
-        plane: "vertical",
-        frequency: formatFrequency(
-          source.responses?.[0]?.frequencies?.[freqIndex],
-        ),
-        symmetry: grid.symmetry,
-        parallelRange: canMirrorParallel
-          ? `0-${maxParallel}° (mirrored)`
-          : `0-${maxParallel}°`,
-        meridianDeg,
-        stepDeg,
-      },
-    };
-  }
-
-  // HORIZONTAL PLANE: Scan azimuth at parallel=90° (equator/horizontal)
-  // Use on-axis elevation when data does not cover the full 0-180 range.
-  const targetParallelDeg = 0;
-
-  // Scan full 360° using symmetry mirroring (0-350° to avoid duplicate at 360°=0°)
-  for (let az = 0; az < 360; az += stepDeg) {
-    const response = getResponseWithSymmetry(
+    const horizontalResponse = getResponseWithSymmetry(
       source,
       grid,
-      az,
-      targetParallelDeg,
+      hMeridianDeg,
+      hParallelDeg,
     );
-    const level = response?.level?.[freqIndex];
+    const horizontalLevel = horizontalResponse?.level?.[freqIndex];
+    horizontalLevels.push(
+      canCombineOnAxis && Number.isFinite(horizontalLevel)
+        ? horizontalLevel + onAxis.level[freqIndex]
+        : (horizontalLevel ?? null),
+    );
 
-    labels.push(formatAngle(az));
-    levels.push(level ?? null);
-  }
+    // Vertical slice: great circle through front-top-back-bottom.
+    const vParallelDeg = Math.abs(angle);
+    const vMeridianDeg = angle >= 0 ? 0 : 180;
+
+    const verticalResponse = getResponseWithSymmetry(
+      source,
+      grid,
+      vMeridianDeg,
+      vParallelDeg,
+    );
+    const verticalLevel = verticalResponse?.level?.[freqIndex];
+    verticalLevels.push(
+      canCombineOnAxis && Number.isFinite(verticalLevel)
+        ? verticalLevel + onAxis.level[freqIndex]
+        : (verticalLevel ?? null),
+    );
+  });
 
   return {
     labels,
-    levels,
-    axisLabel: "Azimuth (0° = front)",
+    horizontal: {
+      levels: horizontalLevels,
+      // Great circle through front-right-back-left (meridian 90°/270°).
+      meridianDeg: 90,
+    },
+    vertical: {
+      levels: verticalLevels,
+      // Great circle through front-top-back-bottom (meridian 0°/180°).
+      meridianDeg: 0,
+      maxParallel,
+      canMirrorParallel,
+    },
     meta: {
-      plane: "horizontal",
-      frequency: formatFrequency(
-        source.responses?.[0]?.frequencies?.[freqIndex],
-      ),
+      usesOnAxis: !!canCombineOnAxis,
       symmetry: grid.symmetry,
-      measuredRange: `${grid.measuredMeridianDeg}°`,
-      maxAzimuth: grid.measuredMeridianDeg,
-      parallelDeg: targetParallelDeg,
+      symmetryName: grid.symmetryName,
+      frontHalfOnly: grid.frontHalfOnly,
+      measuredMeridianDeg: grid.measuredMeridianDeg,
+      measuredParallelDeg: grid.measuredParallelDeg,
       stepDeg,
     },
   };
@@ -2192,23 +3721,62 @@ function getBalloonGrid(source) {
   const frontHalfOnly = !!ang?.front_half_only;
   const symmetryNames = ["None", "Vertical", "Horizontal", "Quarter", "Axial"];
 
-  // Calculate expected grid dimensions from resolution only.
+  // Full-sphere grid dimensions (for rendering loops).
   const fullMeridianCount = Math.max(1, Math.round(360 / ang.meridian_step));
-  const fullParallelCount =
-    Math.max(1, Math.round(180 / ang.parallel_step) + 1);
+  const fullParallelCount = Math.max(
+    1,
+    Math.round(180 / ang.parallel_step) + 1,
+  );
 
-  // Back-calculate actual dimensions from response count.
+  // Measured (stored) grid dimensions based on symmetry and front_half_only.
+  // See docs/response.md section 5 for derivation.
   const responseCount = source?.responses?.length || 0;
-  let meridianCount = fullMeridianCount;
-  let parallelCount = fullParallelCount;
+  let meridianCount;
+  switch (symmetry) {
+    case 4: // Axial — rotational symmetry, single meridian
+      meridianCount = 1;
+      break;
+    case 3: // Quarter — 0° to 90° measured
+      meridianCount = Math.max(1, Math.round(90 / ang.meridian_step) + 1);
+      break;
+    case 1: // Vertical — 0° to 180° measured
+    case 2: // Horizontal — 0° to 180° measured
+      meridianCount = Math.max(1, Math.round(180 / ang.meridian_step) + 1);
+      break;
+    default: // None — full 360° (no +1, wraps around)
+      meridianCount = fullMeridianCount;
+      break;
+  }
+  let parallelCount = frontHalfOnly
+    ? Math.max(1, Math.round(90 / ang.parallel_step) + 1)
+    : fullParallelCount;
 
-  if (responseCount > 0) {
-    meridianCount = Math.max(1, fullMeridianCount);
-    parallelCount = Math.max(1, Math.ceil(responseCount / meridianCount));
+  // Validate against actual response count (accounting for pole deduplication).
+  // At parallel=0 all meridians collapse to 1 stored point (saves merCount-1).
+  // At parallel=max (if full sphere) same collapse applies.
+  const expectedWithDedup =
+    meridianCount * parallelCount -
+    (meridianCount > 1 ? meridianCount - 1 : 0) -
+    (!frontHalfOnly && meridianCount > 1 ? meridianCount - 1 : 0);
 
-    if (parallelCount > fullParallelCount) {
-      parallelCount = fullParallelCount;
-      meridianCount = Math.max(1, Math.ceil(responseCount / parallelCount));
+  if (
+    responseCount > 0 &&
+    responseCount !== meridianCount * parallelCount &&
+    responseCount !== expectedWithDedup
+  ) {
+    // Fallback: back-calculate from responseCount if symmetry-based calc doesn't match.
+    if (window?.GLL_DEBUG_BALLOON) {
+      console.warn("[Balloon Grid] Symmetry-based grid mismatch", {
+        symmetry,
+        computed: `${meridianCount}×${parallelCount}=${meridianCount * parallelCount}`,
+        withDedup: expectedWithDedup,
+        actual: responseCount,
+      });
+    }
+    // Try using responseCount / meridianCount as parallelCount
+    const altParallel = Math.ceil(responseCount / meridianCount);
+    if (altParallel > 0 && altParallel <= fullParallelCount) {
+      parallelCount = altParallel;
     }
   }
 
@@ -2335,14 +3903,116 @@ function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
     return null;
   }
 
-  // Calculate response index (row-major: parallel * meridianCount + meridian)
-  const responseIndex = parallelIdx * grid.meridianCount + meridianIdx;
+  // Calculate response index using meridian-major order with pole deduplication.
+  // Storage layout:
+  //   mer=0: all parallelCount entries (indices 0 .. parCount-1)
+  //   mer=1..N: skip front pole (par=0) and back pole (par=last, unless frontHalfOnly)
+  // At poles, all meridians collapse to meridian=0's entry.
+  const responseIndex = balloonResponseIndex(
+    meridianIdx,
+    parallelIdx,
+    grid.meridianCount,
+    grid.parallelCount,
+    grid.frontHalfOnly,
+  );
 
-  if (responseIndex >= 0 && responseIndex < responses.length) {
+  if (
+    responseIndex !== null &&
+    responseIndex >= 0 &&
+    responseIndex < responses.length
+  ) {
     return responses[responseIndex];
   }
 
   return null;
+}
+
+// Compute the flat array index for a (meridianIdx, parallelIdx) pair,
+// matching the EASE legacy storage order: meridian-major with pole dedup.
+function balloonResponseIndex(
+  meridianIdx,
+  parallelIdx,
+  meridianCount,
+  parallelCount,
+  frontHalfOnly,
+) {
+  const lastParIdx = parallelCount - 1;
+  const isFrontPole = parallelIdx === 0;
+  const isBackPole = parallelIdx === lastParIdx && !frontHalfOnly;
+
+  // Poles are stored only once (at meridian=0).
+  if (isFrontPole || isBackPole) {
+    // mer=0 stores all parallels sequentially: index = parallelIdx
+    return parallelIdx;
+  }
+
+  if (meridianIdx === 0) {
+    // First meridian stores all parallels (including poles): index = parallelIdx
+    return parallelIdx;
+  }
+
+  // Subsequent meridians skip both poles (or just front pole if frontHalfOnly).
+  // mer=0 contributes parallelCount entries.
+  // Each subsequent meridian contributes (parallelCount - 2) entries (full sphere)
+  // or (parallelCount - 1) entries (front-half only, no back pole to skip).
+  const skippedPerMer = frontHalfOnly ? 1 : 2;
+  const pointsPerMer = parallelCount - skippedPerMer;
+
+  return parallelCount + (meridianIdx - 1) * pointsPerMer + (parallelIdx - 1);
+}
+
+function responseIndexToBalloonIndices(responseIndex, grid) {
+  if (!grid || !grid.meridianCount || !grid.parallelCount) {
+    return null;
+  }
+  if (!Number.isFinite(responseIndex) || responseIndex < 0) {
+    return null;
+  }
+
+  const meridianCount = grid.meridianCount;
+  const parallelCount = grid.parallelCount;
+  const responseCount = grid.responseCount || meridianCount * parallelCount;
+
+  if (responseIndex >= responseCount) {
+    return null;
+  }
+
+  if (responseIndex < parallelCount) {
+    return {
+      meridianIdx: 0,
+      parallelIdx: responseIndex,
+    };
+  }
+
+  const pointsPerMer = parallelCount - (grid.frontHalfOnly ? 1 : 2);
+  if (pointsPerMer <= 0) {
+    return null;
+  }
+
+  const offset = responseIndex - parallelCount;
+  const meridianIdx = Math.floor(offset / pointsPerMer) + 1;
+  const parallelIdx = (offset % pointsPerMer) + 1;
+
+  if (
+    meridianIdx < 0 ||
+    meridianIdx >= meridianCount ||
+    parallelIdx < 0 ||
+    parallelIdx >= parallelCount
+  ) {
+    return null;
+  }
+
+  return { meridianIdx, parallelIdx };
+}
+
+function normalizeAzimuthForGrid(azimuthDeg, ang) {
+  if (!Number.isFinite(azimuthDeg)) {
+    return azimuthDeg;
+  }
+  if (ang?.symmetry === 2) {
+    return ((azimuthDeg - 90) % 360 + 360) % 360;
+  }
+  return azimuthDeg;
 }
 
 function getResponseIndex(
@@ -2399,9 +4069,17 @@ function getResponseIndex(
     return null;
   }
 
-  const responseIndex =
-    localParallelIdx * grid.meridianCount + localMeridianIdx;
-  if (grid.responseCount && responseIndex >= grid.responseCount) {
+  const responseIndex = balloonResponseIndex(
+    localMeridianIdx,
+    localParallelIdx,
+    grid.meridianCount,
+    grid.parallelCount,
+    grid.frontHalfOnly,
+  );
+  if (
+    responseIndex === null ||
+    (grid.responseCount && responseIndex >= grid.responseCount)
+  ) {
     return null;
   }
 
@@ -2419,19 +4097,6 @@ function averageLevels(a, b) {
   return null;
 }
 
-function computeLevelRange(levels) {
-  let min = null;
-  let max = null;
-  for (const value of levels) {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-      continue;
-    }
-    if (min === null || value < min) min = value;
-    if (max === null || value > max) max = value;
-  }
-  return { min, max };
-}
-
 function buildLogFrequencies(definition, countOverride) {
   if (!definition) return null;
   const bandsPerOctave = Number(definition.bands_per_octave);
@@ -2443,8 +4108,9 @@ function buildLogFrequencies(definition, countOverride) {
       ? countOverride
       : pointCount;
   if (!count || count <= 0) return null;
-  return Array.from({ length: count }, (_, i) =>
-    startFreq * Math.pow(2, i / bandsPerOctave),
+  return Array.from(
+    { length: count },
+    (_, i) => startFreq * Math.pow(2, i / bandsPerOctave),
   );
 }
 
@@ -2467,1256 +4133,9 @@ function frequenciesMatch(a, b) {
   return true;
 }
 
-function updatePolarMeta(slice, plane, frequency) {
-  const meta = document.getElementById("polar-meta");
-  if (!meta) return;
-
-  const chips = [];
-  chips.push(
-    `<span class="chip">Plane ${plane === "vertical" ? "Vertical" : "Horizontal"}</span>`,
-  );
-  if (frequency) {
-    chips.push(
-      `<span class="chip">Frequency ${formatFrequency(frequency)}</span>`,
-    );
-  }
-
-  if (plane === "vertical") {
-    chips.push('<span class="chip">Meridian 0°</span>');
-    chips.push('<span class="chip">Elevation 0° top</span>');
-    chips.push('<span class="chip">90° / -90° bottom</span>');
-  } else {
-    chips.push(
-      `<span class="chip">Parallel ${formatAngle(slice.meta.parallelDeg)}°</span>`,
-    );
-    chips.push(
-      `<span class="chip">Azimuth 0° to ${formatAngle(slice.meta.maxAzimuth ?? 360)}°</span>`,
-    );
-  }
-
-  meta.innerHTML = chips.join("");
-}
-
-function updateBalloonPlaceholder(show) {
-  const container = document.getElementById("balloon-viewer");
-  if (!container) return;
-  let placeholder = document.getElementById("balloon-placeholder");
-  if (!placeholder) {
-    placeholder = document.createElement("div");
-    placeholder.id = "balloon-placeholder";
-    placeholder.className = "empty-state";
-    placeholder.textContent = "No 3D balloon data available";
-    container.appendChild(placeholder);
-  }
-  placeholder.classList.toggle("hidden", !show);
-}
-
-function initBalloonScene() {
-  const container = document.getElementById("balloon-viewer");
-  if (!container || typeof THREE === "undefined") {
-    return false;
-  }
-
-  if (balloonRenderer && balloonScene && balloonCamera && balloonGroup) {
-    return true;
-  }
-
-  const placeholder = document.getElementById("balloon-placeholder");
-  if (balloonRenderer && balloonRenderer.domElement?.parentNode) {
-    balloonRenderer.domElement.parentNode.removeChild(
-      balloonRenderer.domElement,
-    );
-  }
-  if (!placeholder) {
-    const placeholderNode = document.createElement("div");
-    placeholderNode.id = "balloon-placeholder";
-    placeholderNode.className = "empty-state";
-    placeholderNode.textContent = "No 3D balloon data available";
-    container.appendChild(placeholderNode);
-  }
-
-  balloonRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  balloonRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  balloonRenderer.setSize(container.clientWidth, container.clientHeight);
-  balloonRenderer.setClearColor(0x000000, 0);
-  container.appendChild(balloonRenderer.domElement);
-
-  balloonScene = new THREE.Scene();
-  balloonCamera = new THREE.PerspectiveCamera(
-    45,
-    container.clientWidth / container.clientHeight,
-    0.1,
-    100,
-  );
-  balloonCamera.position.set(0, 0.6, 2.6);
-  balloonCamera.lookAt(0, 0, 0);
-  balloonGroup = new THREE.Group();
-  balloonGroup.userData.autoRotate =
-    document.getElementById("balloon-autorotate")?.checked ?? true;
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.65);
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
-  keyLight.position.set(2.5, 2.5, 2);
-  balloonScene.add(ambient, keyLight);
-
-  const reference = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 24, 16),
-    new THREE.MeshBasicMaterial({
-      color: 0x94a3b8,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.28,
-    }),
-  );
-  reference.name = "reference-sphere";
-  balloonGroup.add(reference);
-
-  const axes = new THREE.AxesHelper(1.2);
-  axes.material.transparent = true;
-  axes.material.opacity = 0.5;
-  balloonGroup.add(axes);
-  balloonScene.add(balloonGroup);
-
-  initBalloonPointerControls(balloonRenderer.domElement);
-
-  if (!balloonResizeBound) {
-    window.addEventListener("resize", handleBalloonResize);
-    balloonResizeBound = true;
-  }
-
-  startBalloonAnimation();
-  return true;
-}
-
-function startBalloonAnimation() {
-  if (!balloonRenderer || !balloonScene || !balloonCamera) {
-    return;
-  }
-
-  if (balloonFrameId) {
-    cancelAnimationFrame(balloonFrameId);
-  }
-
-  const animate = () => {
-    balloonFrameId = requestAnimationFrame(animate);
-    if (balloonGroup && balloonGroup.userData.autoRotate) {
-      balloonGroup.rotation.y += 0.0035;
-    }
-    balloonRenderer.render(balloonScene, balloonCamera);
-  };
-
-  animate();
-}
-
-function initBalloonPointerControls(target) {
-  if (!target) return;
-
-  if (balloonPointerState?.bound) {
-    return;
-  }
-
-  const state = {
-    bound: true,
-    dragging: false,
-    lastX: 0,
-    lastY: 0,
-  };
-
-  const onPointerDown = (event) => {
-    state.dragging = true;
-    state.lastX = event.clientX;
-    state.lastY = event.clientY;
-    target.setPointerCapture?.(event.pointerId);
-  };
-
-  const onPointerMove = (event) => {
-    if (!state.dragging || !balloonGroup) return;
-    const dx = event.clientX - state.lastX;
-    const dy = event.clientY - state.lastY;
-    state.lastX = event.clientX;
-    state.lastY = event.clientY;
-    balloonGroup.rotation.y += dx * 0.005;
-    balloonGroup.rotation.x += dy * 0.005;
-    balloonGroup.rotation.x = Math.max(
-      -Math.PI / 2.2,
-      Math.min(Math.PI / 2.2, balloonGroup.rotation.x),
-    );
-  };
-
-  const onPointerUp = (event) => {
-    state.dragging = false;
-    target.releasePointerCapture?.(event.pointerId);
-  };
-
-  const onWheel = (event) => {
-    if (!balloonCamera) return;
-    event.preventDefault();
-    const delta = Math.sign(event.deltaY) * 0.2;
-    const nextZ = Math.max(1.2, Math.min(6, balloonCamera.position.z + delta));
-    balloonCamera.position.z = nextZ;
-  };
-
-  target.addEventListener("pointerdown", onPointerDown);
-  target.addEventListener("pointermove", onPointerMove);
-  target.addEventListener("pointerup", onPointerUp);
-  target.addEventListener("pointerleave", onPointerUp);
-  target.addEventListener("wheel", onWheel, { passive: false });
-
-  balloonPointerState = state;
-}
-
-function handleBalloonResize() {
-  if (!balloonRenderer || !balloonCamera) {
-    return;
-  }
-  const container = document.getElementById("balloon-viewer");
-  if (!container) return;
-  const width = container.clientWidth || 1;
-  const height = container.clientHeight || 1;
-  balloonRenderer.setSize(width, height);
-  balloonCamera.aspect = width / height;
-  balloonCamera.updateProjectionMatrix();
-}
-
-function destroyBalloonScene() {
-  if (balloonFrameId) {
-    cancelAnimationFrame(balloonFrameId);
-    balloonFrameId = null;
-  }
-
-  if (balloonMesh) {
-    balloonMesh.geometry?.dispose?.();
-    balloonMesh.material?.dispose?.();
-    balloonMesh = null;
-  }
-
-  if (balloonRenderer) {
-    balloonRenderer.dispose();
-    if (balloonRenderer.domElement?.parentNode) {
-      balloonRenderer.domElement.parentNode.removeChild(
-        balloonRenderer.domElement,
-      );
-    }
-  }
-
-  balloonRenderer = null;
-  balloonScene = null;
-  balloonCamera = null;
-  balloonGroup = null;
-  updateBalloonPlaceholder(true);
-}
-
-function updateBalloonVisualization() {
-  const sourceSelect = document.getElementById("balloon-source");
-  const freqSelect = document.getElementById("balloon-frequency");
-  const sources = currentData?.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
-  );
-
-  const sourceIndex = parseInt(sourceSelect.value);
-  const freqIndex = parseInt(freqSelect.value);
-
-  if (
-    isNaN(sourceIndex) ||
-    isNaN(freqIndex) ||
-    sourceIndex >= sourcesWithResponses.length
-  ) {
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  const source = sourcesWithResponses[sourceIndex];
-  const balloon = source?.definition?.balloon_data;
-  const ang = balloon?.angular_resolution;
-  const grid = getBalloonGrid(source);
-  if (!balloon || !ang || !grid) {
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  if (typeof THREE === "undefined") {
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  const sampleResponse = source?.responses?.[0];
-  const frequencies = sampleResponse?.frequencies || [];
-  const frequency = frequencies[freqIndex];
-  if (!frequency) {
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  const sceneReady = initBalloonScene();
-  if (!sceneReady) {
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-  handleBalloonResize();
-  updateBalloonPlaceholder(false);
-
-  updateBalloonSliderFromIndex(freqIndex, frequencies);
-  updateBalloonFrequencyValue(frequency);
-
-  const rangeValue = Number(document.getElementById("balloon-range")?.value);
-  const scaleValue = Number(document.getElementById("balloon-scale")?.value);
-  const dbRange = Number.isFinite(rangeValue) ? rangeValue : 40;
-  const scale = Number.isFinite(scaleValue) ? scaleValue : 1;
-
-  const geometryData = buildBalloonGeometry(
-    source,
-    grid,
-    ang,
-    freqIndex,
-    dbRange,
-    scale,
-  );
-
-  if (!geometryData) {
-    if (balloonMesh) {
-      balloonScene?.remove(balloonMesh);
-      balloonMesh.geometry?.dispose?.();
-      balloonMesh.material?.dispose?.();
-      balloonMesh = null;
-    }
-    updateBalloonPlaceholder(true);
-    updateBalloonMeta(null);
-    return;
-  }
-
-  const { geometry, stats } = geometryData;
-
-  if (balloonMesh) {
-    balloonGroup?.remove(balloonMesh);
-    balloonMesh.geometry?.dispose?.();
-    balloonMesh.material?.dispose?.();
-  }
-
-  const wireframe = !!document.getElementById("balloon-wireframe")?.checked;
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    flatShading: false,
-    metalness: 0.1,
-    roughness: 0.65,
-    wireframe,
-  });
-
-  balloonMesh = new THREE.Mesh(geometry, material);
-  balloonMesh.rotation.x = Math.PI * 0.15;
-  balloonGroup?.add(balloonMesh);
-
-  updateBalloonMeta(stats);
-}
-
-function buildBalloonGeometry(source, grid, ang, freqIndex, dbRange, scale) {
-  const meridianStep = ang.meridian_step;
-  const parallelStep = ang.parallel_step;
-
-  if (!meridianStep || !parallelStep) {
-    return null;
-  }
-
-  const meridianCount = Math.max(
-    3,
-    grid?.meridianCount || Math.round(360 / meridianStep),
-  );
-  const parallelCount = Math.max(
-    2,
-    grid?.parallelCount || Math.round(180 / parallelStep) + 1,
-  );
-  const wrapMeridian =
-    grid?.measuredMeridianDeg !== undefined
-      ? grid.measuredMeridianDeg >= 360 - meridianStep * 1.5
-      : true;
-
-  const levels = [];
-  const positions = [];
-  const colors = [];
-  const color = new THREE.Color();
-
-  let maxLevel = null;
-  let minLevel = null;
-
-  for (let p = 0; p < parallelCount; p += 1) {
-    const parallelDeg = p * parallelStep;
-    for (let m = 0; m < meridianCount; m += 1) {
-      const azimuthDeg = m * meridianStep;
-      const response = getResponseWithSymmetry(
-        source,
-        grid,
-        azimuthDeg,
-        parallelDeg,
-      );
-      const level = response?.level?.[freqIndex];
-
-      if (level !== null && level !== undefined && !Number.isNaN(level)) {
-        if (maxLevel === null || level > maxLevel) maxLevel = level;
-        if (minLevel === null || level < minLevel) minLevel = level;
-      }
-      levels.push(level ?? null);
-    }
-  }
-
-  if (maxLevel === null) {
-    if (window?.GLL_DEBUG_BALLOON) {
-      console.warn("[Balloon] No level data found for frequency index", {
-        freqIndex,
-        responseCount: source?.responses?.length || 0,
-      });
-    }
-    return null;
-  }
-
-  const displayMin = maxLevel - dbRange;
-  const baseRadius = 0.3 * scale;
-  const amplitude = 0.9 * scale;
-
-  let vertexIndex = 0;
-  for (let p = 0; p < parallelCount; p += 1) {
-    const parallelDeg = p * parallelStep;
-    const phi = (parallelDeg * Math.PI) / 180;
-    for (let m = 0; m < meridianCount; m += 1) {
-      const azimuthDeg = m * meridianStep;
-      const theta = (azimuthDeg * Math.PI) / 180;
-      const level = levels[vertexIndex];
-      const normalized =
-        level === null || level === undefined || Number.isNaN(level)
-          ? null
-          : Math.min(Math.max((level - displayMin) / dbRange, 0), 1);
-      const radius =
-        normalized === null ? baseRadius : baseRadius + amplitude * normalized;
-
-      const sinPhi = Math.sin(phi);
-      const x = radius * sinPhi * Math.cos(theta);
-      const y = radius * sinPhi * Math.sin(theta);
-      const z = radius * Math.cos(phi);
-      positions.push(x, y, z);
-
-      if (normalized === null) {
-        color.setRGB(0.65, 0.65, 0.65);
-      } else {
-        const hue = (1 - normalized) * 0.66;
-        color.setHSL(hue, 0.75, 0.5);
-      }
-      colors.push(color.r, color.g, color.b);
-      vertexIndex += 1;
-    }
-  }
-
-  const indices = [];
-  for (let p = 0; p < parallelCount - 1; p += 1) {
-    const meridianLimit = wrapMeridian ? meridianCount : meridianCount - 1;
-    for (let m = 0; m < meridianLimit; m += 1) {
-      const nextM = wrapMeridian ? (m + 1) % meridianCount : m + 1;
-      if (nextM >= meridianCount) {
-        continue;
-      }
-      const a = p * meridianCount + m;
-      const b = p * meridianCount + nextM;
-      const c = (p + 1) * meridianCount + m;
-      const d = (p + 1) * meridianCount + nextM;
-      indices.push(a, c, b);
-      indices.push(b, c, d);
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setIndex(indices);
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3),
-  );
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  geometry.computeVertexNormals();
-
-  return {
-    geometry,
-    stats: {
-      frequency: source.responses?.[0]?.frequencies?.[freqIndex],
-      minLevel,
-      maxLevel,
-      displayMin,
-      displayMax: maxLevel,
-      dbRange,
-      meridianCount,
-      parallelCount,
-      symmetry: grid.symmetry,
-      symmetryName: grid.symmetryName,
-    },
-  };
-}
-
-function updateBalloonMeta(stats) {
-  const meta = document.getElementById("balloon-meta");
-  if (!meta) return;
-  if (!stats) {
-    meta.innerHTML = '<span class="chip">No balloon data</span>';
-    updateBalloonLegend(null);
-    return;
-  }
-
-  const chips = [];
-  if (stats.frequency) {
-    chips.push(
-      `<span class="chip">Frequency ${formatFrequency(stats.frequency)}</span>`,
-    );
-  }
-  if (stats.maxLevel !== null) {
-    chips.push(
-      `<span class="chip">Level ${stats.displayMin.toFixed(1)} to ${stats.displayMax.toFixed(1)} dB</span>`,
-    );
-  }
-  chips.push(
-    `<span class="chip">Grid ${stats.meridianCount} × ${stats.parallelCount}</span>`,
-  );
-  chips.push(
-    `<span class="chip">Symmetry ${stats.symmetryName || "Unknown"}</span>`,
-  );
-  meta.innerHTML = chips.join("");
-  updateBalloonLegend(stats);
-}
-
-function updateBalloonLegend(stats) {
-  const legend = document.querySelector(".balloon-legend");
-  if (!legend) return;
-  const labels = legend.querySelectorAll(".balloon-legend-labels span");
-  if (!stats || labels.length < 2 || stats.displayMin === undefined) {
-    labels.forEach((label, idx) => {
-      label.textContent = idx === 0 ? "Low" : "High";
-    });
-    return;
-  }
-  labels[0].textContent = `${stats.displayMin.toFixed(1)} dB`;
-  labels[1].textContent = `${stats.displayMax.toFixed(1)} dB`;
-}
-
-function updateGeometryOptions() {
-  const kindSelect = document.getElementById("geometry-kind");
-  const itemSelect = document.getElementById("geometry-item");
-  if (!kindSelect || !itemSelect) return;
-
-  const db = currentData?.database;
-  const boxTypes = (db?.box_types || []).filter((box) =>
-    hasGeometryData(box.case_geometry),
-  );
-  const frames = (db?.frames || []).filter((frame) =>
-    hasGeometryData(frame.case_geometry),
-  );
-
-  const options = [];
-  if (boxTypes.length > 0) {
-    options.push({ value: "box", label: "Box Types", count: boxTypes.length });
-  }
-  if (frames.length > 0) {
-    options.push({ value: "frame", label: "Frames", count: frames.length });
-  }
-
-  if (options.length === 0) {
-    kindSelect.innerHTML = '<option value="">No geometry</option>';
-    kindSelect.disabled = true;
-    itemSelect.innerHTML = "";
-    itemSelect.disabled = true;
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    destroyGeometryScene();
-    return;
-  }
-
-  kindSelect.disabled = false;
-  kindSelect.innerHTML = options
-    .map(
-      (opt) =>
-        `<option value="${opt.value}">${opt.label} (${opt.count})</option>`,
-    )
-    .join("");
-
-  updateGeometryItemOptions();
-}
-
-function updateGeometryItemOptions() {
-  const kindSelect = document.getElementById("geometry-kind");
-  const itemSelect = document.getElementById("geometry-item");
-  if (!kindSelect || !itemSelect) return;
-
-  const db = currentData?.database;
-  const kind = kindSelect.value;
-  const items =
-    kind === "frame"
-      ? db?.frames || []
-      : kind === "box"
-        ? db?.box_types || []
-        : [];
-
-  const filtered = items
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => hasGeometryData(item.case_geometry));
-
-  if (filtered.length === 0) {
-    itemSelect.innerHTML = '<option value="">No geometry</option>';
-    itemSelect.disabled = true;
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  itemSelect.disabled = false;
-  itemSelect.innerHTML = filtered
-    .map(
-      ({ item, index }, i) =>
-        `<option value="${index}">${escapeHtml(item.label || item.key || `${kind} ${i + 1}`)}</option>`,
-    )
-    .join("");
-
-  updateGeometryVisualization();
-}
-
-function updateGeometryPlaceholder(show) {
-  const container = document.getElementById("geometry-viewer");
-  if (!container) return;
-  let placeholder = document.getElementById("geometry-placeholder");
-  if (!placeholder) {
-    placeholder = document.createElement("div");
-    placeholder.id = "geometry-placeholder";
-    placeholder.className = "empty-state";
-    placeholder.textContent = "No geometry data available";
-    container.appendChild(placeholder);
-  }
-  placeholder.classList.toggle("hidden", !show);
-}
-
-function initGeometryScene() {
-  const container = document.getElementById("geometry-viewer");
-  if (!container || typeof THREE === "undefined") {
-    return false;
-  }
-
-  if (geometryRenderer && geometryScene && geometryCamera && geometryGroup) {
-    return true;
-  }
-
-  if (geometryRenderer && geometryRenderer.domElement?.parentNode) {
-    geometryRenderer.domElement.parentNode.removeChild(
-      geometryRenderer.domElement,
-    );
-  }
-
-  geometryRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  geometryRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  geometryRenderer.setSize(container.clientWidth, container.clientHeight);
-  geometryRenderer.setClearColor(0x000000, 0);
-  container.appendChild(geometryRenderer.domElement);
-
-  geometryScene = new THREE.Scene();
-  geometryCamera = new THREE.PerspectiveCamera(
-    42,
-    container.clientWidth / container.clientHeight,
-    0.01,
-    200,
-  );
-  geometryCamera.position.set(0, 0.4, 2.2);
-  geometryCamera.lookAt(0, 0, 0);
-
-  geometryGroup = new THREE.Group();
-  geometryGroup.userData.autoRotate =
-    document.getElementById("geometry-autorotate")?.checked ?? true;
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
-  keyLight.position.set(2.5, 2.5, 2);
-  geometryScene.add(ambient, keyLight);
-
-  const grid = new THREE.GridHelper(2, 12, 0x94a3b8, 0xe2e8f0);
-  grid.material.transparent = true;
-  grid.material.opacity = 0.45;
-  geometryScene.add(grid);
-
-  const axes = new THREE.AxesHelper(0.8);
-  axes.material.transparent = true;
-  axes.material.opacity = 0.5;
-  geometryScene.add(axes);
-  geometryScene.add(geometryGroup);
-
-  initGeometryPointerControls(geometryRenderer.domElement);
-
-  if (!geometryResizeBound) {
-    window.addEventListener("resize", handleGeometryResize);
-    geometryResizeBound = true;
-  }
-
-  startGeometryAnimation();
-  return true;
-}
-
-function startGeometryAnimation() {
-  if (!geometryRenderer || !geometryScene || !geometryCamera) {
-    return;
-  }
-
-  if (geometryFrameId) {
-    cancelAnimationFrame(geometryFrameId);
-  }
-
-  const animate = () => {
-    geometryFrameId = requestAnimationFrame(animate);
-    if (geometryGroup && geometryGroup.userData.autoRotate) {
-      geometryGroup.rotation.y += 0.004;
-    }
-    geometryRenderer.render(geometryScene, geometryCamera);
-  };
-
-  animate();
-}
-
-function initGeometryPointerControls(target) {
-  if (!target) return;
-  if (geometryPointerState?.bound) return;
-
-  const state = {
-    bound: true,
-    dragging: false,
-    lastX: 0,
-    lastY: 0,
-  };
-
-  const onPointerDown = (event) => {
-    state.dragging = true;
-    state.lastX = event.clientX;
-    state.lastY = event.clientY;
-    target.setPointerCapture?.(event.pointerId);
-  };
-
-  const onPointerMove = (event) => {
-    if (!state.dragging || !geometryGroup) return;
-    const dx = event.clientX - state.lastX;
-    const dy = event.clientY - state.lastY;
-    state.lastX = event.clientX;
-    state.lastY = event.clientY;
-    geometryGroup.rotation.y += dx * 0.006;
-    geometryGroup.rotation.x += dy * 0.006;
-    geometryGroup.rotation.x = Math.max(
-      -Math.PI / 2.2,
-      Math.min(Math.PI / 2.2, geometryGroup.rotation.x),
-    );
-  };
-
-  const onPointerUp = (event) => {
-    state.dragging = false;
-    target.releasePointerCapture?.(event.pointerId);
-  };
-
-  const onWheel = (event) => {
-    if (!geometryCamera) return;
-    event.preventDefault();
-    const delta = Math.sign(event.deltaY) * 0.2;
-    const nextZ = Math.max(
-      0.5,
-      Math.min(10, geometryCamera.position.z + delta),
-    );
-    geometryCamera.position.z = nextZ;
-  };
-
-  target.addEventListener("pointerdown", onPointerDown);
-  target.addEventListener("pointermove", onPointerMove);
-  target.addEventListener("pointerup", onPointerUp);
-  target.addEventListener("pointerleave", onPointerUp);
-  target.addEventListener("wheel", onWheel, { passive: false });
-
-  geometryPointerState = state;
-}
-
-function handleGeometryResize() {
-  if (!geometryRenderer || !geometryCamera) {
-    return;
-  }
-  const container = document.getElementById("geometry-viewer");
-  if (!container) return;
-  const width = container.clientWidth || 1;
-  const height = container.clientHeight || 1;
-  geometryRenderer.setSize(width, height);
-  geometryCamera.aspect = width / height;
-  geometryCamera.updateProjectionMatrix();
-}
-
-function destroyGeometryScene() {
-  if (geometryFrameId) {
-    cancelAnimationFrame(geometryFrameId);
-    geometryFrameId = null;
-  }
-
-  if (geometryMesh) {
-    geometryMesh.geometry?.dispose?.();
-    geometryMesh.material?.dispose?.();
-    geometryMesh = null;
-  }
-
-  if (geometryLines) {
-    geometryLines.geometry?.dispose?.();
-    geometryLines.material?.dispose?.();
-    geometryLines = null;
-  }
-
-  if (geometryRenderer) {
-    geometryRenderer.dispose();
-    if (geometryRenderer.domElement?.parentNode) {
-      geometryRenderer.domElement.parentNode.removeChild(
-        geometryRenderer.domElement,
-      );
-    }
-  }
-
-  geometryRenderer = null;
-  geometryScene = null;
-  geometryCamera = null;
-  geometryGroup = null;
-  updateGeometryPlaceholder(true);
-}
-
-function handleGeometryAutorotateToggle(e) {
-  if (geometryGroup) {
-    geometryGroup.userData.autoRotate = !!e.target.checked;
-  }
-}
-
-function updateGeometryVisualization() {
-  const kindSelect = document.getElementById("geometry-kind");
-  const itemSelect = document.getElementById("geometry-item");
-  if (!kindSelect || !itemSelect) return;
-
-  const kind = kindSelect.value;
-  const itemIndex = parseInt(itemSelect.value);
-  if (Number.isNaN(itemIndex)) {
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  const db = currentData?.database;
-  const list =
-    kind === "frame"
-      ? db?.frames || []
-      : kind === "box"
-        ? db?.box_types || []
-        : [];
-  const item = list[itemIndex];
-  const geometry = item?.case_geometry;
-
-  if (!hasGeometryData(geometry)) {
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  if (typeof THREE === "undefined") {
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  const sceneReady = initGeometryScene();
-  if (!sceneReady) {
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  handleGeometryResize();
-  updateGeometryPlaceholder(false);
-
-  const showFaces =
-    document.getElementById("geometry-show-faces")?.checked ?? true;
-  const showEdges =
-    document.getElementById("geometry-show-edges")?.checked ?? true;
-
-  const geometryData = buildCaseGeometryData(geometry, {
-    showFaces,
-    showEdges,
-  });
-
-  if (!geometryData || (!geometryData.mesh && !geometryData.lines)) {
-    updateGeometryPlaceholder(true);
-    updateGeometryMeta(null);
-    return;
-  }
-
-  if (geometryMesh) {
-    geometryGroup?.remove(geometryMesh);
-    geometryMesh.geometry?.dispose?.();
-    geometryMesh.material?.dispose?.();
-    geometryMesh = null;
-  }
-  if (geometryLines) {
-    geometryGroup?.remove(geometryLines);
-    geometryLines.geometry?.dispose?.();
-    geometryLines.material?.dispose?.();
-    geometryLines = null;
-  }
-
-  geometryGroup.rotation.set(0, 0, 0);
-
-  if (geometryData.mesh) {
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      flatShading: true,
-      metalness: 0.05,
-      roughness: 0.75,
-      side: THREE.DoubleSide,
-    });
-    geometryMesh = new THREE.Mesh(geometryData.mesh, material);
-    geometryGroup.add(geometryMesh);
-  }
-
-  if (geometryData.lines) {
-    const lineMaterial = new THREE.LineBasicMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.9,
-    });
-    geometryLines = new THREE.LineSegments(geometryData.lines, lineMaterial);
-    geometryGroup.add(geometryLines);
-  }
-
-  if (geometryData.bounds && geometryCamera && geometryGroup) {
-    const bounds = geometryData.bounds;
-    const center = {
-      x: (bounds.minX + bounds.maxX) / 2,
-      y: (bounds.minY + bounds.maxY) / 2,
-      z: (bounds.minZ + bounds.maxZ) / 2,
-    };
-    geometryGroup.position.set(-center.x, -center.y, -center.z);
-
-    const size = Math.max(
-      bounds.maxX - bounds.minX,
-      bounds.maxY - bounds.minY,
-      bounds.maxZ - bounds.minZ,
-    );
-    const radius = Math.max(size * 0.65, 0.2);
-    const fov = (geometryCamera.fov * Math.PI) / 180;
-    const distance = radius / Math.sin(fov / 2);
-    geometryCamera.position.set(0, radius * 0.35, distance * 1.15);
-    geometryCamera.lookAt(0, 0, 0);
-  }
-
-  updateGeometryMeta({
-    name: item?.label || item?.key || "",
-    vertexCount: geometry?.vertices?.length || 0,
-    edgeCount: geometry?.edges?.length || 0,
-    faceCount: geometry?.faces?.length || 0,
-    symmetry: geometry?.is_symmetric
-      ? `Symmetric @ X=${formatNumber(geometry?.symmetry_axis, 3)}`
-      : "Asymmetric",
-  });
-}
-
-function buildCaseGeometryData(geometry, options) {
-  if (!geometry) return null;
-
-  const scale = 1 / 1000;
-  const bounds = {
-    minX: Infinity,
-    minY: Infinity,
-    minZ: Infinity,
-    maxX: -Infinity,
-    maxY: -Infinity,
-    maxZ: -Infinity,
-  };
-  let hasBounds = false;
-
-  const addBounds = (point) => {
-    if (!point) return;
-    hasBounds = true;
-    bounds.minX = Math.min(bounds.minX, point.x);
-    bounds.minY = Math.min(bounds.minY, point.y);
-    bounds.minZ = Math.min(bounds.minZ, point.z);
-    bounds.maxX = Math.max(bounds.maxX, point.x);
-    bounds.maxY = Math.max(bounds.maxY, point.y);
-    bounds.maxZ = Math.max(bounds.maxZ, point.z);
-  };
-
-  let lineGeometry = null;
-  if (options?.showEdges) {
-    const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
-    const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
-    const edgePairs =
-      edges.length > 0
-        ? edges.map((edge) => ({
-            v1: edge.v1,
-            v2: edge.v2,
-            color: edge.color,
-          }))
-        : buildSequentialEdgePairs(vertices.length).map(([v1, v2]) => ({
-            v1,
-            v2,
-            color: null,
-          }));
-
-    const positions = [];
-    const colors = [];
-    const color = new THREE.Color();
-
-    edgePairs.forEach((edge) => {
-      const p1 = resolveGeometryVertex(geometry, vertices, edge.v1, scale);
-      const p2 = resolveGeometryVertex(geometry, vertices, edge.v2, scale);
-      if (!p1 || !p2) return;
-      positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
-      addBounds(p1);
-      addBounds(p2);
-      const edgeColor = colorFromInt(edge.color, 0x475569, color);
-      colors.push(
-        edgeColor.r,
-        edgeColor.g,
-        edgeColor.b,
-        edgeColor.r,
-        edgeColor.g,
-        edgeColor.b,
-      );
-    });
-
-    if (positions.length > 0) {
-      lineGeometry = new THREE.BufferGeometry();
-      lineGeometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(positions, 3),
-      );
-      lineGeometry.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(colors, 3),
-      );
-    }
-  }
-
-  let meshGeometry = null;
-  if (options?.showFaces && Array.isArray(geometry.faces)) {
-    const faces = geometry.faces;
-    const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
-    const positions = [];
-    const colors = [];
-    const color = new THREE.Color();
-
-    faces.forEach((face) => {
-      const indices = Array.isArray(face.vertices) ? face.vertices : [];
-      if (indices.length < 3) return;
-      const faceColor = colorFromInt(face.color, 0x60a5fa, color);
-      for (let i = 1; i + 1 < indices.length; i += 1) {
-        const p0 = resolveGeometryVertex(geometry, vertices, indices[0], scale);
-        const p1 = resolveGeometryVertex(
-          geometry,
-          vertices,
-          indices[i],
-          scale,
-        );
-        const p2 = resolveGeometryVertex(
-          geometry,
-          vertices,
-          indices[i + 1],
-          scale,
-        );
-        if (!p0 || !p1 || !p2) continue;
-        positions.push(
-          p0.x,
-          p0.y,
-          p0.z,
-          p1.x,
-          p1.y,
-          p1.z,
-          p2.x,
-          p2.y,
-          p2.z,
-        );
-        addBounds(p0);
-        addBounds(p1);
-        addBounds(p2);
-        for (let c = 0; c < 3; c += 1) {
-          colors.push(faceColor.r, faceColor.g, faceColor.b);
-        }
-      }
-    });
-
-    if (positions.length > 0) {
-      meshGeometry = new THREE.BufferGeometry();
-      meshGeometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(positions, 3),
-      );
-      meshGeometry.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(colors, 3),
-      );
-      meshGeometry.computeVertexNormals();
-    }
-  }
-
-  if (!hasBounds) {
-    return null;
-  }
-
-  return {
-    bounds,
-    lines: lineGeometry,
-    mesh: meshGeometry,
-  };
-}
-
-function colorFromInt(value, fallback, target) {
-  const color = target || new THREE.Color();
-  const fallbackColor = new THREE.Color(fallback ?? 0x64748b);
-  if (!Number.isFinite(value)) {
-    color.copy(fallbackColor);
-    return color;
-  }
-  const raw = value >>> 0;
-  const r = (raw >> 16) & 0xff;
-  const g = (raw >> 8) & 0xff;
-  const b = raw & 0xff;
-  color.setRGB(r / 255, g / 255, b / 255);
-  return color;
-}
-
-function updateGeometryMeta(stats) {
-  const meta = document.getElementById("geometry-meta");
-  if (!meta) return;
-  if (!stats) {
-    meta.innerHTML = '<span class="chip">No geometry data</span>';
-    return;
-  }
-
-  const chips = [];
-  if (stats.name) {
-    chips.push(`<span class="chip">${escapeHtml(stats.name)}</span>`);
-  }
-  chips.push(
-    `<span class="chip">Vertices ${stats.vertexCount}</span>`,
-    `<span class="chip">Edges ${stats.edgeCount}</span>`,
-    `<span class="chip">Faces ${stats.faceCount}</span>`,
-    `<span class="chip">${stats.symmetry}</span>`,
-  );
-
-  meta.innerHTML = chips.join("");
-}
-
-function getPhaseSeries(mode, frequencies, phase, unwrapped) {
-  switch (mode) {
-    case "wrapped": {
-      const wrapped = phase.map((value) => wrapPhase(value));
-      return {
-        values: wrapped,
-        label: "Phase (rad)",
-        axisTitle: "Phase (rad)",
-        tableHeader: "Phase (rad)",
-        format: (value) => formatNumber(value, 4),
-      };
-    }
-    case "group-delay": {
-      const delayMs = computeGroupDelayMs(frequencies, unwrapped);
-      return {
-        values: delayMs,
-        label: "Group Delay (ms)",
-        axisTitle: "Group Delay (ms)",
-        tableHeader: "Group Delay (ms)",
-        format: (value) => formatNumber(value, 3),
-      };
-    }
-    case "unwrapped":
-    default:
-      return {
-        values: unwrapped,
-        label: "Phase (rad)",
-        axisTitle: "Phase (rad)",
-        tableHeader: "Phase (rad)",
-        format: (value) => formatNumber(value, 4),
-      };
-  }
-}
-
-function unwrapPhase(phase) {
-  if (!Array.isArray(phase) || phase.length === 0) return [];
-  const unwrapped = [phase[0]];
-  let offset = 0;
-  for (let i = 1; i < phase.length; i++) {
-    const delta = phase[i] - phase[i - 1];
-    if (delta > Math.PI) {
-      offset -= 2 * Math.PI;
-    } else if (delta < -Math.PI) {
-      offset += 2 * Math.PI;
-    }
-    unwrapped.push(phase[i] + offset);
-  }
-  return unwrapped;
-}
-
-function wrapPhase(value) {
-  if (value === null || value === undefined) return null;
-  const twoPi = 2 * Math.PI;
-  const wrapped = ((((value + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
-  return wrapped;
-}
-
-function computeGroupDelayMs(frequencies, phaseUnwrapped) {
-  if (!Array.isArray(frequencies) || frequencies.length === 0) return [];
-  const count = Math.min(frequencies.length, phaseUnwrapped.length);
-  const delays = new Array(count);
-  const scale = -1 / (2 * Math.PI);
-
-  for (let i = 0; i < count; i++) {
-    let dPhi;
-    let dF;
-    if (i === 0) {
-      dPhi = phaseUnwrapped[i + 1] - phaseUnwrapped[i];
-      dF = frequencies[i + 1] - frequencies[i];
-    } else if (i === count - 1) {
-      dPhi = phaseUnwrapped[i] - phaseUnwrapped[i - 1];
-      dF = frequencies[i] - frequencies[i - 1];
-    } else {
-      dPhi = phaseUnwrapped[i + 1] - phaseUnwrapped[i - 1];
-      dF = frequencies[i + 1] - frequencies[i - 1];
-    }
-
-    if (!dF || dF === 0 || Number.isNaN(dF) || Number.isNaN(dPhi)) {
-      delays[i] = null;
-      continue;
-    }
-
-    const delaySeconds = scale * (dPhi / dF);
-    delays[i] = delaySeconds * 1000;
-  }
-
-  return delays;
-}
-
 function formatNumber(value, digits) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   return Number(value).toFixed(digits);
-}
-
-function isPowerOfTen(value) {
-  if (!value || value <= 0) return false;
-  const exponent = Math.log10(value);
-  return Number.isInteger(exponent);
-}
-
-function buildLogTicks(min, max) {
-  if (!min || !max || min <= 0 || max <= 0) return [];
-  const ticks = [];
-  const startPower = Math.max(1, Math.floor(Math.log10(min)));
-  const endPower = Math.ceil(Math.log10(max));
-
-  for (let power = startPower; power <= endPower; power++) {
-    const decade = Math.pow(10, power);
-    for (let multiplier = 1; multiplier <= 9; multiplier++) {
-      const value = multiplier * decade;
-      if (value < min || value > max) {
-        continue;
-      }
-      ticks.push({ value });
-    }
-  }
-
-  return ticks;
 }
 
 function formatBytes(bytes) {
@@ -3745,12 +4164,38 @@ function toggleFilterGroup(idx) {
     content.style.display = "block";
     toggle.textContent = "▼";
     group.classList.add("expanded");
+    renderFilterGroupResponse(idx);
   } else {
     content.style.display = "none";
     toggle.textContent = "▶";
     group.classList.remove("expanded");
   }
 }
+
+// Source toggle for expandable response display
+// eslint-disable-next-line no-unused-vars
+function toggleSource(idx) {
+  const card = document.querySelector(`.source-card[data-source-idx="${idx}"]`);
+  if (!card) return;
+
+  const content = card.querySelector(".source-content");
+  const toggle = card.querySelector(".source-toggle");
+
+  if (content.style.display === "none") {
+    content.style.display = "block";
+    toggle.textContent = "▼";
+    card.classList.add("expanded");
+    renderSourceResponseChart(idx);
+  } else {
+    content.style.display = "none";
+    toggle.textContent = "▶";
+    card.classList.remove("expanded");
+  }
+}
+
+window.toggleSource = toggleSource;
+window.toggleFilterGroup = toggleFilterGroup;
+window.toggleCard = toggleCard;
 
 // Collapsible card toggle with localStorage persistence
 // eslint-disable-next-line no-unused-vars
@@ -3784,3 +4229,7 @@ function restoreCardStates() {
     }
   });
 }
+
+// Expose functions to global scope for inline event handlers
+window.toggleFilterGroup = toggleFilterGroup;
+window.toggleCard = toggleCard;

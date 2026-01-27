@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // DataType represents the frequency resolution type
@@ -124,7 +124,7 @@ type BalloonData struct {
 	ResponseCount     int32                `json:"response_count"`      // Number of responses in the file
 	ResponseVersion   int16                `json:"response_version"`    // 0 = legacy CLogSpectrumLP, 1 = TransferFunctionLsPs
 	ResponsesOffset   int64                `json:"-"`                   // Offset in file where responses start
-	Responses         []TransferFunction   `json:"responses,omitempty"` // One per angle point (loaded on demand)
+	Responses         []TransferFunction   `json:"responses,omitempty"` // One per angle point
 }
 
 // SourceDefinition contains complete acoustic data for a driver/source

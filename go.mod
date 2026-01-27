@@ -1,4 +1,4 @@
-module github.com/MeKo-Christian/gll-tools
+module github.com/cwbudde/gll-tools
 
 go 1.25.0
 

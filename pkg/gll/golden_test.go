@@ -16,13 +16,29 @@ import (
 
 type goldenSummary struct {
 	Header        Header               `json:"header"`
-	GenSystem     GenSystem            `json:"gen_system"`
+	GenSystem     genSystemSummary     `json:"gen_system"`
 	Metadata      Metadata             `json:"metadata"`
 	Database      databaseSummary      `json:"database"`
 	ResourceTypes map[ResourceType]int `json:"resource_types"`
 	ResourceCount int                  `json:"resource_count"`
 	Resources     []resourceSummary    `json:"resources,omitempty"`
 	Sources       []sourceSummary      `json:"sources,omitempty"`
+}
+
+type genSystemSummary struct {
+	Label                        string     `json:"label"`
+	Version                      float64    `json:"version"`
+	Key                          string     `json:"key"`
+	Type                         SystemType `json:"type"`
+	Company                      string     `json:"company"`
+	InfoText                     string     `json:"info_text,omitempty"`
+	CopyrightText                string     `json:"copyright_text,omitempty"`
+	SupportText                  string     `json:"support_text,omitempty"`
+	WebsiteText                  string     `json:"website_text,omitempty"`
+	EmailText                    string     `json:"email_text,omitempty"`
+	BackgroundColor              int32      `json:"background_color,omitempty"`
+	AllowUserDefinedClusterSetup bool       `json:"allow_user_defined_cluster_setup,omitempty"`
+	EnableForSubArrays           bool       `json:"enable_for_sub_arrays,omitempty"`
 }
 
 type databaseSummary struct {
@@ -84,7 +100,7 @@ type tfSummary struct {
 func summarizeFile(file *File, r io.ReadSeeker) goldenSummary {
 	summary := goldenSummary{
 		Header:        file.Header,
-		GenSystem:     file.GenSystem,
+		GenSystem:     summarizeGenSystem(file.GenSystem),
 		Metadata:      file.Metadata,
 		ResourceTypes: make(map[ResourceType]int),
 		ResourceCount: len(file.Resources),
@@ -113,6 +129,24 @@ func summarizeFile(file *File, r io.ReadSeeker) goldenSummary {
 	})
 
 	return summary
+}
+
+func summarizeGenSystem(sys GenSystem) genSystemSummary {
+	return genSystemSummary{
+		Label:                        sys.Label,
+		Version:                      sys.Version,
+		Key:                          sys.Key,
+		Type:                         sys.Type,
+		Company:                      sys.Company,
+		InfoText:                     sys.InfoText,
+		CopyrightText:                sys.CopyrightText,
+		SupportText:                  sys.SupportText,
+		WebsiteText:                  sys.WebsiteText,
+		EmailText:                    sys.EmailText,
+		BackgroundColor:              sys.BackgroundColor,
+		AllowUserDefinedClusterSetup: sys.AllowUserDefinedClusterSetup,
+		EnableForSubArrays:           sys.EnableForSubArrays,
+	}
 }
 
 func summarizeResources(file *File, r io.ReadSeeker) []resourceSummary {
@@ -299,6 +333,10 @@ func hashBytes(data []byte) string {
 }
 
 func TestParseGoldenFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping golden file tests in short mode")
+	}
+
 	testdataDir := os.Getenv("GLL_TESTDATA_DIR")
 	if testdataDir == "" {
 		testdataDir = filepath.Clean(filepath.Join("..", "..", "testdata", "gll"))
@@ -331,8 +369,9 @@ func TestParseGoldenFiles(t *testing.T) {
 	goldenDir := filepath.Join(testdataDir, "golden")
 
 	for _, path := range gllFiles {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
+			t.Parallel()
+
 			f, err := os.Open(path)
 			if err != nil {
 				t.Fatalf("open failed: %v", err)
