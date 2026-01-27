@@ -5,7 +5,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/compression"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // LogSpectrumDefinition defines the frequency grid for spectral data
@@ -150,7 +151,7 @@ func parseRecord(br *gll.ByteReader) ([]int16, error) {
 	case 0:
 		// Uncompressed: read elementCount int16 values directly
 		data = make([]int16, elementCount)
-		for i := int32(0); i < elementCount; i++ {
+		for i := range elementCount {
 			data[i], err = br.ReadInt16()
 			if err != nil {
 				_, _ = br.Seek(endOffset, io.SeekStart)
@@ -176,7 +177,7 @@ func parseRecord(br *gll.ByteReader) ([]int16, error) {
 		}
 
 		// Decompress using BitCompression with differentiation
-		data = gll.DecompressByteArray(compressedBytes, int(elementCount), true, 8)
+		data = compression.DecompressByteArray(compressedBytes, int(elementCount), true, 8)
 
 	default:
 		_, _ = br.Seek(endOffset, io.SeekStart)
@@ -188,3 +189,9 @@ func parseRecord(br *gll.ByteReader) ([]int16, error) {
 
 	return data, nil
 }
+
+// Scale factors for converting int16 values to physical units
+const (
+	levelScaleFactor = 0.01  // int16 * 0.01 = dB
+	phaseScaleFactor = 0.001 // int16 * 0.001 = radians
+)

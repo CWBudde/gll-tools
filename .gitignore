@@ -5,6 +5,7 @@
 *.so
 *.dylib
 /gllinfo
+/gllwasm
 
 # Test binary, built with `go test -c`
 *.test

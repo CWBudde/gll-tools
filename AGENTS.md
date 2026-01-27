@@ -9,7 +9,7 @@ gll-tools is a Go library and CLI toolset for parsing EASE GLL (Generic Loudspea
 **Key Facts:**
 
 - Language: Go 1.25
-- Organization: MeKo-Christian on GitHub
+- Organization: cwbudde on GitHub
 - Primary Purpose: Reverse-engineer and extract data from proprietary GLL binary files
 - No Windows/EASE software required
 

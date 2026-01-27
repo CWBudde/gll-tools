@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gllbin "github.com/MeKo-Christian/gll-tools/pkg/gll"
+	gllbin "github.com/cwbudde/gll-tools/pkg/gll"
 )
 
 func TestGLLWriterRoundTripHeader(t *testing.T) {

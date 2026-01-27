@@ -24,7 +24,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // Parse reads a GLL file from the provided reader
@@ -40,6 +40,23 @@ func Parse(r io.ReadSeeker) (*File, error) {
 	// Parse GenSystem
 	if err := parseGenSystem(br, file); err != nil {
 		return nil, fmt.Errorf("gen_system: %w", err)
+	}
+
+	if tail, err := readTailBytes(r, br.Offset()); err == nil && len(tail) > 0 {
+		file.RawTail = tail
+		stringsFound := ParseTailStrings(tail, 4, 200)
+		records := GroupTailStrings(stringsFound, 64)
+		presets := ParseTailPresets(records)
+		if len(stringsFound) > 0 || len(records) > 0 || len(presets) > 0 {
+			file.TailData = &TailData{
+				Strings: stringsFound,
+				Records: records,
+				Presets: presets,
+			}
+		}
+		if len(presets) > 0 {
+			file.TailPresets = presets
+		}
 	}
 
 	// Populate Metadata from GenSystem for compatibility
@@ -59,6 +76,14 @@ func Parse(r io.ReadSeeker) (*File, error) {
 	}
 
 	return file, nil
+}
+
+func readTailBytes(r io.ReadSeeker, offset int64) ([]byte, error) {
+	if _, err := r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	return io.ReadAll(r)
 }
 
 func parseHeader(br *gll.ByteReader, file *File) error {
@@ -150,6 +175,8 @@ func parseGenSystem(br *gll.ByteReader, file *File) error {
 	}
 
 	startOffset := br.Offset()
+	blockStart := startOffset - 4
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	// Read version check (should be 0)
 	versionCheck, err := br.ReadInt16()
@@ -167,6 +194,10 @@ func parseGenSystem(br *gll.ByteReader, file *File) error {
 	subVersion, err := br.ReadInt16()
 	if err != nil {
 		return fmt.Errorf("reading sub-version: %w", err)
+	}
+	file.GenSystem.SubVersion = subVersion
+	if len(rawBlock) > 0 {
+		file.GenSystem.RawBlock = rawBlock
 	}
 
 	// Read Label
@@ -253,6 +284,7 @@ func parseGenSystem(br *gll.ByteReader, file *File) error {
 			if err == nil {
 				file.GenSystem.AllowUserDefinedClusterSetup = (flags & 0x01) != 0
 				file.GenSystem.EnableForSubArrays = (flags & 0x02) != 0
+				file.GenSystem.FlagsPresent = true
 			}
 		}
 	}

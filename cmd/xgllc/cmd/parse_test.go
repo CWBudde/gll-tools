@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MeKo-Christian/gll-tools/pkg/xgll"
+	"github.com/cwbudde/gll-tools/pkg/xgll"
 )
 
 func TestWriteDiagnostics(t *testing.T) {

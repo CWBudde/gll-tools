@@ -51,6 +51,9 @@ type GenSystem struct {
 	BackgroundColor              int32      `json:"background_color,omitempty"`
 	AllowUserDefinedClusterSetup bool       `json:"allow_user_defined_cluster_setup,omitempty"`
 	EnableForSubArrays           bool       `json:"enable_for_sub_arrays,omitempty"`
+	SubVersion                   int16      `json:"sub_version,omitempty"`
+	FlagsPresent                 bool       `json:"flags_present,omitempty"`
+	RawBlock                     []byte     `json:"raw_block,omitempty"`
 }
 
 // Metadata contains the loudspeaker metadata (derived from GenSystem for compatibility)
@@ -84,11 +87,14 @@ type Resource struct {
 
 // File represents a parsed GLL file
 type File struct {
-	Header    Header     `json:"header"`
-	GenSystem GenSystem  `json:"gen_system"`
-	Metadata  Metadata   `json:"metadata"`
-	Database  *Database  `json:"database,omitempty"`
-	Resources []Resource `json:"resources,omitempty"`
+	Header      Header       `json:"header"`
+	GenSystem   GenSystem    `json:"gen_system"`
+	Metadata    Metadata     `json:"metadata"`
+	Database    *Database    `json:"database,omitempty"`
+	Resources   []Resource   `json:"resources,omitempty"`
+	RawTail     []byte       `json:"-"`
+	TailData    *TailData    `json:"tail_data,omitempty"`
+	TailPresets []TailPreset `json:"tail_presets,omitempty"`
 }
 
 // Vector3D represents a 3D coordinate in millimeters

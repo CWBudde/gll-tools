@@ -149,6 +149,35 @@ Represents a physical speaker cabinet type.
 
 ---
 
+### SourceBuffer (BoxType Sources)
+
+Defines the acoustic source placements inside a cabinet.
+
+This buffer follows the standard ObjectLSCBuffer wrapper:
+
+| Field      | Type   | Description       |
+| ---------- | ------ | ----------------- |
+| block_size | int32  | Total buffer size |
+| vcheck     | int16  | Must be 0         |
+| sver       | int16  | Sub-version       |
+| count      | int32  | Number of sources |
+| items[]    | Source | Source entries    |
+
+#### Source
+
+| Field        | Type     | Description                           |
+| ------------ | -------- | ------------------------------------- |
+| block_size   | int32    | Total block size                      |
+| vcheck       | int16    | Must be 0                             |
+| sver         | int16    | Sub-version                           |
+| Label        | string   | Display name                          |
+| Key          | string   | Source identifier                     |
+| Position     | Vector3D | X, Y, Z position (3 doubles)          |
+| Angles       | Vector3D | H, V, R rotation (3 doubles, radians) |
+| SourceDefKey | string   | Key of SourceDefinition to use        |
+
+---
+
 ## Frame (Rigging Frame)
 
 Represents a rigging frame for line array configurations.

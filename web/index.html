@@ -4,14 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GLL Viewer - GLL File Inspector</title>
-    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="icon" type="image/png" href="icon-256.png" sizes="256x256" />
+    <link rel="icon" type="image/png" href="icon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="icon-16.png" sizes="16x16" />
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
-    <meta
-      property="og:url"
-      content="https://meko-christian.github.io/gll-tools/"
-    />
+    <meta property="og:url" content="https://cwbudde.github.io/gll-tools/" />
     <meta property="og:title" content="GLL Viewer - GLL File Inspector" />
     <meta
       property="og:description"
@@ -22,7 +21,7 @@
     <meta property="twitter:card" content="summary_large_image" />
     <meta
       property="twitter:url"
-      content="https://meko-christian.github.io/gll-tools/"
+      content="https://cwbudde.github.io/gll-tools/"
     />
     <meta property="twitter:title" content="GLL Viewer - GLL File Inspector" />
     <meta
@@ -35,6 +34,20 @@
   <body>
     <div class="container">
       <header>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+          <svg class="theme-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <span class="theme-toggle-label">Auto</span>
+        </button>
         <h1>GLL Viewer</h1>
         <p class="subtitle">
           Inspect GLL (Generic Loudspeaker Library) files in your browser
@@ -78,9 +91,12 @@
         <div class="tabs">
           <button class="tab active" data-tab="overview">Overview</button>
           <button class="tab" data-tab="sources">Sources</button>
-          <button class="tab" data-tab="responses">Responses</button>
-          <button class="tab" data-tab="config">Config</button>
+          <button class="tab" data-tab="geometry">Geometry</button>
+          <button class="tab" data-tab="configurations">Configurations</button>
+          <button class="tab" data-tab="filters">Filters</button>
+          <button class="tab" data-tab="limits">Limits</button>
           <button class="tab" data-tab="resources">Resources</button>
+          <button class="tab" data-tab="visualization">Visualization</button>
         </div>
 
         <div id="tab-overview" class="tab-content active">
@@ -105,132 +121,41 @@
           </div>
         </div>
 
-        <div id="tab-responses" class="tab-content">
+        <div id="tab-visualization" class="tab-content">
           <div class="global-source-bar">
             <div class="global-source-card">
               <label for="global-source">Source:</label>
               <select id="global-source"></select>
             </div>
-          </div>
-          <div class="card">
-            <h3>Frequency Responses</h3>
-            <div class="response-controls">
-              <div class="response-controls-row">
-                <label class="source-selector">
-                  Source:
-                  <select id="response-source"></select>
-                </label>
-                <label>
-                  Phase:
-                  <select id="response-phase-mode">
-                    <option value="unwrapped" selected>Unwrapped</option>
-                    <option value="wrapped">Wrapped</option>
-                    <option value="group-delay">Group delay</option>
-                  </select>
-                </label>
-                <label class="response-toggle">
-                  <input id="response-use-onaxis" type="checkbox" />
-                  Normalized
-                </label>
-              </div>
-              <div class="response-controls-row">
-                <label>
-                  Response:
-                  <select id="response-index"></select>
-                </label>
-                <label class="response-slider">
-                  Azimuth:
-                  <input
-                    id="response-azimuth-slider"
-                    type="range"
-                    min="0"
-                    max="360"
-                    step="1"
-                    value="0"
-                  />
-                  <span id="response-azimuth-value" class="angle-value">-</span>
-                </label>
-                <label class="response-slider">
-                  Elevation:
-                  <input
-                    id="response-elevation-slider"
-                    type="range"
-                    min="0"
-                    max="180"
-                    step="1"
-                    value="0"
-                  />
-                  <span id="response-elevation-value" class="angle-value"
-                    >-</span
-                  >
-                </label>
-              </div>
-            </div>
-            <div id="response-chart-container">
-              <canvas id="response-chart"></canvas>
-            </div>
-            <div id="response-meta" class="response-meta"></div>
-          </div>
-          <div class="card">
-            <h3>Polar Plot</h3>
-            <div class="polar-controls">
-              <label>
-                Plane:
-                <select id="polar-plane">
-                  <option value="horizontal" selected>
-                    Horizontal (Azimuth)
-                  </option>
-                  <option value="vertical">Vertical (Elevation)</option>
-                </select>
-              </label>
-              <label>
-                Frequency:
-                <select id="polar-frequency"></select>
-              </label>
-              <label class="polar-slider">
+            <div class="global-frequency-card">
+              <label class="frequency-slider">
                 Frequency:
                 <input
-                  id="polar-frequency-slider"
+                  id="global-frequency-slider"
                   type="range"
                   min="0"
                   max="1000"
                   step="1"
                   value="0"
                 />
-                <span id="polar-frequency-value" class="frequency-value"
+                <span id="global-frequency-value" class="frequency-value"
                   >-</span
                 >
               </label>
             </div>
-            <div id="polar-chart-container">
-              <canvas id="polar-chart"></canvas>
+            <div class="global-normalize-card">
+              <label class="normalize-toggle">
+                <input id="global-normalize" type="checkbox" />
+                Normalize
+              </label>
             </div>
-            <div id="polar-meta" class="response-meta"></div>
           </div>
           <div class="card">
             <h3>3D Balloon</h3>
             <div class="balloon-controls">
-              <label class="source-selector">
-                Source:
-                <select id="balloon-source"></select>
-              </label>
               <label>
                 Frequency:
                 <select id="balloon-frequency"></select>
-              </label>
-              <label class="balloon-slider">
-                Frequency:
-                <input
-                  id="balloon-frequency-slider"
-                  type="range"
-                  min="0"
-                  max="1000"
-                  step="1"
-                  value="0"
-                />
-                <span id="balloon-frequency-value" class="frequency-value"
-                  >-</span
-                >
               </label>
               <label class="balloon-slider">
                 Range (dB):
@@ -282,64 +207,138 @@
             </div>
             <div id="balloon-meta" class="response-meta"></div>
           </div>
-        </div>
-
-        <div id="tab-config" class="tab-content">
           <div class="card">
-            <h3>3D Geometry</h3>
-            <div class="geometry-controls">
+            <h3>Polar Plot</h3>
+            <div class="polar-controls">
               <label>
-                Type:
-                <select id="geometry-kind"></select>
-              </label>
-              <label>
-                Item:
-                <select id="geometry-item"></select>
-              </label>
-              <label class="geometry-toggle">
-                <input id="geometry-show-faces" type="checkbox" checked />
-                Faces
-              </label>
-              <label class="geometry-toggle">
-                <input id="geometry-show-edges" type="checkbox" checked />
-                Edges
-              </label>
-              <label class="geometry-toggle">
-                <input id="geometry-autorotate" type="checkbox" checked />
-                Auto-rotate
+                Frequency:
+                <select id="polar-frequency"></select>
               </label>
             </div>
-            <div id="geometry-viewer" class="geometry-viewer">
-              <div id="geometry-placeholder" class="empty-state">
-                No geometry data available
+            <div id="polar-chart-container">
+              <canvas id="polar-chart"></canvas>
+            </div>
+            <div id="polar-meta" class="response-meta"></div>
+          </div>
+          <div class="card">
+            <h3>Combined Response</h3>
+            <div class="combined-controls">
+              <div class="combined-controls-row">
+                <label>
+                  Box Type:
+                  <select id="combined-box"></select>
+                </label>
+                <label>
+                  Filter Group:
+                  <select id="combined-filter-group"></select>
+                </label>
+                <label>
+                  Filter:
+                  <select id="combined-filter"></select>
+                </label>
+              </div>
+              <div class="combined-controls-row">
+                <label>
+                  Gain (dB):
+                  <input
+                    id="combined-gain"
+                    type="number"
+                    step="0.5"
+                    value="0"
+                  />
+                </label>
+                <label>
+                  Receiver Distance (m):
+                  <input
+                    id="combined-distance"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    value="1"
+                  />
+                </label>
+                <label>
+                  Phase:
+                  <select id="combined-phase-mode">
+                    <option value="unwrapped" selected>Unwrapped</option>
+                    <option value="wrapped">Wrapped</option>
+                    <option value="group-delay">Group delay</option>
+                  </select>
+                </label>
               </div>
             </div>
-            <div id="geometry-meta" class="response-meta"></div>
+            <div id="combined-response-chart-container">
+              <canvas id="combined-response-chart"></canvas>
+            </div>
+            <div id="combined-response-meta" class="response-meta"></div>
           </div>
-          <div class="card card-collapsible" data-card="box-types">
-            <h3 class="card-header" onclick="toggleCard('box-types')">
-              <span class="card-toggle">▼</span>
-              <span>Box Types</span>
-              <span class="card-count" id="box-types-count"></span>
-            </h3>
-            <div class="card-body" id="box-types-list"></div>
+        </div>
+
+        <div id="tab-geometry" class="tab-content">
+          <div class="card">
+            <h3>Box Types</h3>
+            <div id="box-types-list"></div>
           </div>
-          <div class="card card-collapsible" data-card="frames">
-            <h3 class="card-header" onclick="toggleCard('frames')">
-              <span class="card-toggle">▼</span>
-              <span>Frames</span>
-              <span class="card-count" id="frames-count"></span>
-            </h3>
-            <div class="card-body" id="frames-list"></div>
+          <div class="card">
+            <h3>Frames</h3>
+            <div id="frames-list"></div>
           </div>
-          <div class="card card-collapsible" data-card="filter-groups">
-            <h3 class="card-header" onclick="toggleCard('filter-groups')">
-              <span class="card-toggle">▼</span>
-              <span>Filter Groups</span>
-              <span class="card-count" id="filter-groups-count"></span>
-            </h3>
-            <div class="card-body" id="filter-groups-list"></div>
+        </div>
+
+        <div id="tab-configurations" class="tab-content">
+          <div class="card" id="cluster-setups-card">
+            <h3>Cluster Setups</h3>
+            <p class="section-hint">
+              Predefined speaker arrangements stored in the GLL file
+            </p>
+            <div id="cluster-setups-list"></div>
           </div>
+          <div class="card" id="connectors-card">
+            <h3>Connectors</h3>
+            <p class="section-hint">
+              Box-to-box connection rules with available splay angles
+            </p>
+            <div id="connectors-list"></div>
+          </div>
+          <div class="card" id="config-editor-card">
+            <h3>Configuration Editor</h3>
+            <p class="section-hint">
+              Build a custom speaker configuration for combined response calculation
+            </p>
+            <div class="config-editor-toolbar">
+              <button id="config-add-element" class="btn-small">Add Element</button>
+              <button id="config-clear" class="btn-small btn-secondary">Clear</button>
+              <button id="config-apply" class="btn-small btn-primary">Apply to Response</button>
+            </div>
+            <div id="config-editor-table-container">
+              <table class="config-editor-table" id="config-editor-table">
+                <thead>
+                  <tr>
+                    <th>Box Type</th>
+                    <th>X (mm)</th>
+                    <th>Y (mm)</th>
+                    <th>Z (mm)</th>
+                    <th>H (&deg;)</th>
+                    <th>V (&deg;)</th>
+                    <th>R (&deg;)</th>
+                    <th>Gain (dB)</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="config-editor-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-filters" class="tab-content">
+          <div class="card">
+            <h3>Filter Groups</h3>
+            <div id="filter-groups-list"></div>
+          </div>
+        </div>
+
+        <div id="tab-limits" class="tab-content">
           <div class="card card-collapsible" data-card="limits">
             <h3 class="card-header" onclick="toggleCard('limits')">
               <span class="card-toggle">▼</span>
@@ -360,7 +359,7 @@
 
         <div id="tab-resources" class="tab-content">
           <div class="card">
-            <h3>Documentation &amp; Drawings</h3>
+            <h3>Documentation</h3>
             <p class="section-hint">
               Technical drawings, spec sheets, and manuals embedded in the GLL
               file
@@ -374,10 +373,10 @@
             </p>
             <div id="data-files-list"></div>
           </div>
-          <div class="card">
+          <div class="card" id="other-resources-card">
             <h3>Other Resources</h3>
             <p class="section-hint">
-              Additional embedded content (fonts, compressed data)
+              Additional embedded content (non-PDF streams, misc data)
             </p>
             <div id="resources-list"></div>
           </div>
@@ -386,7 +385,7 @@
 
       <footer>
         <p>
-          <a href="https://github.com/MeKo-Christian/gll-tools" target="_blank"
+          <a href="https://github.com/cwbudde/gll-tools" target="_blank"
             >gll-tools</a
           >
           &mdash; Open source GLL parser written in Go
@@ -400,7 +399,14 @@
 
     <script src="wasm_exec.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.min.js"></script>
-    <script src="app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

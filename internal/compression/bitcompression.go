@@ -1,4 +1,4 @@
-package gll
+package compression
 
 // BitCompression implements the S3.Base.Compression.BitCompression algorithm
 // used by EASE/AFMG for compressing spectrum data in GLL files.

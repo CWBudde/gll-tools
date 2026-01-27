@@ -3,7 +3,7 @@
 
 set shell := ["bash", "-uc"]
 
-export GOPRIVATE := "github.com/MeKo-Christian"
+export GOPRIVATE := "github.com/cwbudde"
 
 # Default recipe - show available commands
 default:
@@ -38,11 +38,11 @@ check-tidy:
 
 # Run all tests
 test:
-    go test -v ./...
+    go test -v -timeout 120s ./...
 
 # Run tests with coverage
 test-coverage:
-    go test -v -coverprofile=coverage.out ./...
+    go test -v -timeout 120s -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
 
 # Run all checks (formatting, linting, tests, tidiness)
@@ -52,8 +52,23 @@ check: check-formatted lint test check-tidy
 build-gllinfo:
     go build -o bin/gllinfo ./cmd/gllinfo
 
+# Build WebAssembly module for web demo
+build-wasm:
+    GOOS=js GOARCH=wasm go build -buildvcs=false -o web/gll.wasm ./cmd/gllwasm
+    @echo "Copying wasm_exec.js..."
+    @GOROOT=$(go env GOROOT) && \
+    if [ -f "$$GOROOT/misc/wasm/wasm_exec.js" ]; then \
+        cp "$$GOROOT/misc/wasm/wasm_exec.js" web/; \
+    elif [ -f "$$GOROOT/lib/wasm/wasm_exec.js" ]; then \
+        cp "$$GOROOT/lib/wasm/wasm_exec.js" web/; \
+    else \
+        echo "Downloading wasm_exec.js..."; \
+        curl -sL "https://raw.githubusercontent.com/golang/go/go1.22.0/misc/wasm/wasm_exec.js" -o web/wasm_exec.js; \
+    fi
+    @echo "WASM build complete: web/gll.wasm"
+
 # Build all CLI tools
-build: build-gllinfo
+build: build-gllinfo build-wasm
 
 # Install gllinfo to $GOPATH/bin
 install-gllinfo:

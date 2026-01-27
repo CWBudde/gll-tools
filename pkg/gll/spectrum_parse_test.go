@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	internalgll "github.com/MeKo-Christian/gll-tools/internal/gll"
+	internalgll "github.com/cwbudde/gll-tools/internal/gll"
 )
 
 func TestParseRecordUncompressed(t *testing.T) {

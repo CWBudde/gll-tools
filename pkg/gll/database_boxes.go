@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MeKo-Christian/gll-tools/internal/gll"
+	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
 // DataFile represents an embedded file in the GLL
@@ -21,6 +21,7 @@ type BoxType struct {
 	Label                  string        `json:"label"`
 	Key                    string        `json:"key"`
 	Sources                []string      `json:"sources,omitempty"` // Keys of acoustic sources
+	SourcePlacements       []BoxSource   `json:"source_placements,omitempty"`
 	CaseGeometry           *CaseGeometry `json:"case_geometry,omitempty"`
 	NextPivot              *Vector3D     `json:"next_pivot,omitempty"`
 	ReferencePoint         *Vector3D     `json:"reference_point,omitempty"`
@@ -38,6 +39,15 @@ type IncludeFile struct {
 	Size     int32  `json:"size"`
 	Offset   int64  `json:"offset"` // Offset in file for lazy loading
 	Data     []byte `json:"-"`      // Actual data (loaded on demand)
+}
+
+// BoxSource represents a source placement inside a box type.
+type BoxSource struct {
+	Label        string   `json:"label,omitempty"`
+	Key          string   `json:"key,omitempty"`
+	Position     Vector3D `json:"position"`
+	Angles       Vector3D `json:"angles"` // H, V, R rotation angles
+	SourceDefKey string   `json:"source_def_key,omitempty"`
 }
 
 // CaseGeometry represents 3D cabinet/frame geometry (mesh data)
@@ -162,6 +172,160 @@ func parseDataFile(br *gll.ByteReader) (*DataFile, error) {
 	return df, nil
 }
 
+// parseSourceBuffer parses a buffer of box sources (placements).
+func parseSourceBuffer(br *gll.ByteReader, maxOffset int64) ([]BoxSource, error) {
+	if br.Offset() >= maxOffset {
+		return nil, nil
+	}
+
+	// Buffer has block wrapper
+	blockSize, err := br.ReadInt32()
+	if err != nil {
+		return nil, fmt.Errorf("reading buffer block size: %w", err)
+	}
+
+	if blockSize <= 0 {
+		return nil, nil
+	}
+
+	bufferEnd := br.Offset() + int64(blockSize) - 4
+	if bufferEnd > maxOffset {
+		bufferEnd = maxOffset
+	}
+	defer func() {
+		_, _ = br.Seek(bufferEnd, io.SeekStart)
+	}()
+
+	// Read version check and sub-version
+	versionCheck, err := br.ReadInt16()
+	if err != nil {
+		return nil, fmt.Errorf("reading version check: %w", err)
+	}
+
+	if versionCheck != 0 {
+		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
+	}
+
+	_, err = br.ReadInt16() // sub-version
+	if err != nil {
+		return nil, fmt.Errorf("reading sub-version: %w", err)
+	}
+
+	count, err := br.ReadInt32()
+	if err != nil {
+		return nil, fmt.Errorf("reading count: %w", err)
+	}
+
+	if count <= 0 {
+		return nil, nil
+	}
+
+	sources := make([]BoxSource, 0, count)
+
+	for i := int32(0); i < count; i++ {
+		if br.Offset() >= bufferEnd {
+			break
+		}
+
+		source, err := parseBoxSource(br)
+		if err != nil {
+			break
+		}
+
+		sources = append(sources, *source)
+	}
+
+	return sources, nil
+}
+
+// parseBoxSource parses a single box source placement.
+func parseBoxSource(br *gll.ByteReader) (*BoxSource, error) {
+	blockSize, err := br.ReadInt32()
+	if err != nil {
+		return nil, fmt.Errorf("reading block size: %w", err)
+	}
+
+	if blockSize <= 0 {
+		return nil, fmt.Errorf("invalid block size: %d", blockSize)
+	}
+
+	endOffset := br.Offset() + int64(blockSize) - 4
+
+	versionCheck, err := br.ReadInt16()
+	if err != nil {
+		return nil, fmt.Errorf("reading version check: %w", err)
+	}
+
+	if versionCheck != 0 {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("unsupported version: %d", versionCheck)
+	}
+
+	_, err = br.ReadInt16() // sub-version
+	if err != nil {
+		return nil, fmt.Errorf("reading sub-version: %w", err)
+	}
+
+	source := &BoxSource{}
+
+	source.Label, err = br.ReadString()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading label: %w", err)
+	}
+
+	source.Key, err = br.ReadString()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading key: %w", err)
+	}
+
+	source.Position.X, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading position X: %w", err)
+	}
+
+	source.Position.Y, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading position Y: %w", err)
+	}
+
+	source.Position.Z, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading position Z: %w", err)
+	}
+
+	source.Angles.X, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading angle H: %w", err)
+	}
+
+	source.Angles.Y, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading angle V: %w", err)
+	}
+
+	source.Angles.Z, err = br.ReadDouble()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading angle R: %w", err)
+	}
+
+	source.SourceDefKey, err = br.ReadString()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading source definition key: %w", err)
+	}
+
+	_, _ = br.Seek(endOffset, io.SeekStart)
+	return source, nil
+}
+
 func parseBoxTypeBuffer(br *gll.ByteReader, maxOffset int64) ([]BoxType, error) {
 	if br.Offset() >= maxOffset {
 		return nil, nil
@@ -284,10 +448,16 @@ func parseBoxType(br *gll.ByteReader, maxOffset int64) (*BoxType, error) {
 		return box, nil
 	}
 
-	// Skip SourceBuffer (list of source keys)
-	if err := skipBlockBuffer(br, endOffset); err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return box, nil
+	// Parse SourceBuffer (source placements)
+	sourcePlacements, err := parseSourceBuffer(br, endOffset)
+	if err == nil && len(sourcePlacements) > 0 {
+		box.SourcePlacements = sourcePlacements
+		box.Sources = make([]string, 0, len(sourcePlacements))
+		for _, src := range sourcePlacements {
+			if src.Key != "" {
+				box.Sources = append(box.Sources, src.Key)
+			}
+		}
 	}
 
 	// Skip InputConfigBuffer
