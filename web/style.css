@@ -284,7 +284,7 @@ header h1 {
 }
 
 .frequency-value {
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Code", monospace;
   font-size: 0.875rem;
   color: var(--text);
   font-weight: 500;
@@ -323,6 +323,7 @@ header h1 {
   border-bottom: 2px solid var(--border);
   margin-bottom: 1.5rem;
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .tab {
@@ -786,7 +787,11 @@ header h1 {
   height: 735px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: linear-gradient(135deg, var(--geometry-bg-start), var(--geometry-bg-end));
+  background: linear-gradient(
+    135deg,
+    var(--geometry-bg-start),
+    var(--geometry-bg-end)
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -824,7 +829,11 @@ header h1 {
   height: 560px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: linear-gradient(135deg, var(--geometry-bg-start), var(--geometry-bg-end));
+  background: linear-gradient(
+    135deg,
+    var(--geometry-bg-start),
+    var(--geometry-bg-end)
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -843,7 +852,11 @@ header h1 {
   height: 460px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: linear-gradient(135deg, var(--geometry-bg-start), var(--geometry-bg-end));
+  background: linear-gradient(
+    135deg,
+    var(--geometry-bg-start),
+    var(--geometry-bg-end)
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1350,7 +1363,10 @@ header h1 {
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px);
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    visibility 0.15s;
 }
 
 .dropdown-container.show .dropdown-menu {
