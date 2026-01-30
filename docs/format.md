@@ -170,11 +170,11 @@ This buffer follows the standard ObjectLSCBuffer wrapper:
 | block_size   | int32    | Total block size                      |
 | vcheck       | int16    | Must be 0                             |
 | sver         | int16    | Sub-version                           |
-| Label        | string   | Display name                          |
-| Key          | string   | Source identifier                     |
+| SourceDefKey | string   | Key of SourceDefinition to use        |
 | Position     | Vector3D | X, Y, Z position (3 doubles)          |
 | Angles       | Vector3D | H, V, R rotation (3 doubles, radians) |
-| SourceDefKey | string   | Key of SourceDefinition to use        |
+| Label        | string   | Display name                          |
+| Key          | string   | Source identifier                     |
 
 ---
 

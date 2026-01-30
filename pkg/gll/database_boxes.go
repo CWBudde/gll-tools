@@ -268,59 +268,41 @@ func parseBoxSource(br *gll.ByteReader) (*BoxSource, error) {
 
 	source := &BoxSource{}
 
-	source.Label, err = br.ReadString()
+	sourceDefKey, err := br.ReadString()
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading source definition key: %w", err)
+	}
+
+	pos, err := parseVector3D(br)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading position: %w", err)
+	}
+
+	angles, err := parseVector3D(br)
+	if err != nil {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, fmt.Errorf("reading angles: %w", err)
+	}
+
+	label, err := br.ReadString()
 	if err != nil {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return nil, fmt.Errorf("reading label: %w", err)
 	}
 
-	source.Key, err = br.ReadString()
+	key, err := br.ReadString()
 	if err != nil {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return nil, fmt.Errorf("reading key: %w", err)
 	}
 
-	source.Position.X, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading position X: %w", err)
-	}
-
-	source.Position.Y, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading position Y: %w", err)
-	}
-
-	source.Position.Z, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading position Z: %w", err)
-	}
-
-	source.Angles.X, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading angle H: %w", err)
-	}
-
-	source.Angles.Y, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading angle V: %w", err)
-	}
-
-	source.Angles.Z, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading angle R: %w", err)
-	}
-
-	source.SourceDefKey, err = br.ReadString()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading source definition key: %w", err)
-	}
+	source.SourceDefKey = sourceDefKey
+	source.Position = *pos
+	source.Angles = *angles
+	source.Label = label
+	source.Key = key
 
 	_, _ = br.Seek(endOffset, io.SeekStart)
 	return source, nil
