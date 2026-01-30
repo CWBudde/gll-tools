@@ -147,6 +147,12 @@ export function createGeometryController({
       mesh: null,
       lines: null,
       markers: null,
+      markerMeshes: null,
+      markerVisibility: {
+        ref: true,
+        com: true,
+        pivot: true,
+      },
       frameId: null,
       container,
       caseGeometry,
@@ -308,6 +314,7 @@ export function createGeometryController({
         child.material?.dispose?.();
       });
       inst.markers = null;
+      inst.markerMeshes = null;
     }
 
     inst.group.rotation.set(0, 0, 0);
@@ -360,8 +367,14 @@ export function createGeometryController({
         scaleFactor > 0 ? markerRadiusWorld / scaleFactor : markerRadiusWorld;
 
       const markers = new THREE.Group();
+      const markerMeshes = {
+        ref: null,
+        com: null,
+        pivot: null,
+      };
       const refPoint = toViewPoint(inst.item?.reference_point);
       const comPoint = toViewPoint(inst.item?.center_of_mass);
+      const pivotPoint = toViewPoint(inst.item?.next_pivot);
 
       if (refPoint) {
         const refGeom = new THREE.SphereGeometry(markerRadiusRaw, 16, 16);
@@ -369,6 +382,7 @@ export function createGeometryController({
         const refMesh = new THREE.Mesh(refGeom, refMat);
         refMesh.position.set(refPoint.x, refPoint.y, refPoint.z);
         markers.add(refMesh);
+        markerMeshes.ref = refMesh;
       }
 
       if (comPoint) {
@@ -377,11 +391,23 @@ export function createGeometryController({
         const comMesh = new THREE.Mesh(comGeom, comMat);
         comMesh.position.set(comPoint.x, comPoint.y, comPoint.z);
         markers.add(comMesh);
+        markerMeshes.com = comMesh;
+      }
+
+      if (pivotPoint) {
+        const pivotGeom = new THREE.SphereGeometry(markerRadiusRaw, 16, 16);
+        const pivotMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+        const pivotMesh = new THREE.Mesh(pivotGeom, pivotMat);
+        pivotMesh.position.set(pivotPoint.x, pivotPoint.y, pivotPoint.z);
+        markers.add(pivotMesh);
+        markerMeshes.pivot = pivotMesh;
       }
 
       if (markers.children.length > 0) {
         inst.markers = markers;
+        inst.markerMeshes = markerMeshes;
         inst.group.add(markers);
+        updateMarkerVisibility(inst);
       }
 
       const scaledSize = Math.max(size * scaleFactor, 0.2);
@@ -476,6 +502,9 @@ export function createGeometryController({
       const facesCheck = viewer.querySelector(".inline-geom-faces");
       const edgesCheck = viewer.querySelector(".inline-geom-edges");
       const autoCheck = viewer.querySelector(".inline-geom-autorotate");
+      const refCheck = viewer.querySelector(".inline-geom-ref");
+      const comCheck = viewer.querySelector(".inline-geom-com");
+      const pivotCheck = viewer.querySelector(".inline-geom-pivot");
 
       const onToggle = () => {
         populateGeometry(
@@ -495,7 +524,26 @@ export function createGeometryController({
           }
         });
       }
+
+      const onMarkerToggle = () => {
+        inst.markerVisibility.ref = refCheck?.checked ?? true;
+        inst.markerVisibility.com = comCheck?.checked ?? true;
+        inst.markerVisibility.pivot = pivotCheck?.checked ?? true;
+        updateMarkerVisibility(inst);
+      };
+      if (refCheck) refCheck.addEventListener("change", onMarkerToggle);
+      if (comCheck) comCheck.addEventListener("change", onMarkerToggle);
+      if (pivotCheck) pivotCheck.addEventListener("change", onMarkerToggle);
+      onMarkerToggle();
     });
+  }
+
+  function updateMarkerVisibility(inst) {
+    if (!inst.markerMeshes || !inst.markerVisibility) return;
+    const { ref, com, pivot } = inst.markerMeshes;
+    if (ref) ref.visible = !!inst.markerVisibility.ref;
+    if (com) com.visible = !!inst.markerVisibility.com;
+    if (pivot) pivot.visible = !!inst.markerVisibility.pivot;
   }
 
   function handleGeometryResize() {
