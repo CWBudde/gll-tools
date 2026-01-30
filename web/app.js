@@ -2134,16 +2134,33 @@ function formatBoxTypeDetail(box) {
     return "";
   }
 
-  const key = box.key ? escapeHtml(box.key) : "-";
-  const sources = Array.isArray(box.sources) && box.sources.length > 0
-    ? box.sources.map((src) => escapeHtml(src)).join(", ")
-    : "-";
+  const sanitizeDisplayText = (value) => {
+    if (value === null || value === undefined) return "";
+    const raw = String(value);
+    const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
+    if (!cleaned) return "";
+    const maxLen = 120;
+    return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 3)}...` : cleaned;
+  };
+
+  const formatSafeList = (values) => {
+    if (!Array.isArray(values) || values.length === 0) return "-";
+    const items = values
+      .map((value) => sanitizeDisplayText(value))
+      .filter((value) => value);
+    if (items.length === 0) return "-";
+    return items.map((value) => escapeHtml(value)).join(", ");
+  };
+
+  const keyText = sanitizeDisplayText(box.key);
+  const key = keyText ? escapeHtml(keyText) : "-";
+  const sources = formatSafeList(box.sources);
   const placements =
     Array.isArray(box.source_placements) && box.source_placements.length > 0
       ? box.source_placements
           .map((placement) => {
-            const label = placement?.label || placement?.key;
-            const defKey = placement?.source_def_key;
+            const label = sanitizeDisplayText(placement?.label || placement?.key);
+            const defKey = sanitizeDisplayText(placement?.source_def_key);
             if (label && defKey) {
               return `${escapeHtml(label)} (${escapeHtml(defKey)})`;
             }
