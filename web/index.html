@@ -317,22 +317,24 @@
         </div>
 
         <div id="tab-configurations" class="tab-content">
-          <div class="subtabs">
-            <button class="subtab active" data-subtab="cluster">Cluster Setups</button>
-            <button class="subtab" data-subtab="connectors">Connectors</button>
-          </div>
-          <div id="config-subtab-cluster" class="subtab-content active">
-            <div class="card" id="cluster-setups-card">
-              <h3>Cluster Setups</h3>
+          <div class="card card-collapsible" data-card="cluster-setups">
+            <h3 class="card-header" onclick="toggleCard('cluster-setups')">
+              <span class="card-toggle">▼</span>
+              <span>Cluster Setups</span>
+            </h3>
+            <div class="card-body" id="cluster-setups-card">
               <p class="section-hint">
                 Predefined speaker arrangements stored in the GLL file
               </p>
               <div id="cluster-setups-list"></div>
             </div>
           </div>
-          <div id="config-subtab-connectors" class="subtab-content">
-            <div class="card" id="connectors-card">
-              <h3>Connectors</h3>
+          <div class="card card-collapsible" data-card="connectors">
+            <h3 class="card-header" onclick="toggleCard('connectors')">
+              <span class="card-toggle">▼</span>
+              <span>Connectors</span>
+            </h3>
+            <div class="card-body" id="connectors-card">
               <p class="section-hint">
                 Box-to-box connection rules with available splay angles
               </p>

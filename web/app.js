@@ -44,7 +44,6 @@ let combinedChart = null;
 let combinedChartInitialized = false;
 let responseChartInitialized = false;
 let combinedListenersBound = false;
-let configSubtabsBound = false;
 let activeConfig = null; // { elements: [{ box_type_key, position: {x,y,z}, angles: {x,y,z}, gain }] }
 
 // Theme management
@@ -219,8 +218,6 @@ function setupEventListeners() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
   });
-
-  setupConfigurationsSubtabs();
 
   // Clear button
   clearBtn.addEventListener("click", clearResults);
@@ -1292,8 +1289,6 @@ function displayConfigurations() {
   const db = currentData?.database;
   const clusterSetups = db?.cluster_setups || [];
 
-  setupConfigurationsSubtabs();
-
   // Cluster Setups
   const clusterList = document.getElementById("cluster-setups-list");
   if (clusterList) {
@@ -1618,30 +1613,6 @@ function updateConfigEditorHint(message) {
     hint.textContent = "";
     hint.classList.add("hidden");
   }
-}
-
-function setupConfigurationsSubtabs() {
-  if (configSubtabsBound) return;
-  const buttons = document.querySelectorAll(".subtab");
-  if (!buttons.length) return;
-  buttons.forEach((button) => {
-    button.addEventListener("click", () =>
-      switchConfigurationsSubtab(button.dataset.subtab),
-    );
-  });
-  configSubtabsBound = true;
-}
-
-function switchConfigurationsSubtab(subtabName) {
-  document.querySelectorAll(".subtab").forEach((tab) => {
-    tab.classList.toggle("active", tab.dataset.subtab === subtabName);
-  });
-  document.querySelectorAll(".subtab-content").forEach((content) => {
-    content.classList.toggle(
-      "active",
-      content.id === `config-subtab-${subtabName}`,
-    );
-  });
 }
 
 function buildElementsFromConfig(config) {
