@@ -272,44 +272,18 @@
             </div>
             <div id="combined-response-meta" class="response-meta"></div>
           </div>
-        </div>
-
-        <div id="tab-geometry" class="tab-content">
-          <div class="card">
-            <h3>Box Types</h3>
-            <div id="box-types-list"></div>
-          </div>
-          <div class="card">
-            <h3>Frames</h3>
-            <div id="frames-list"></div>
-          </div>
-        </div>
-
-        <div id="tab-configurations" class="tab-content">
-          <div class="card" id="cluster-setups-card">
-            <h3>Cluster Setups</h3>
-            <p class="section-hint">
-              Predefined speaker arrangements stored in the GLL file
-            </p>
-            <div id="cluster-setups-list"></div>
-          </div>
-          <div class="card" id="connectors-card">
-            <h3>Connectors</h3>
-            <p class="section-hint">
-              Box-to-box connection rules with available splay angles
-            </p>
-            <div id="connectors-list"></div>
-          </div>
           <div class="card" id="config-editor-card">
             <h3>Configuration Editor</h3>
             <p class="section-hint">
-              Build a custom speaker configuration for combined response calculation
+              Build a custom speaker configuration for combined response
+              calculation
             </p>
             <div class="config-editor-toolbar">
               <button id="config-add-element" class="btn-small">Add Element</button>
               <button id="config-clear" class="btn-small btn-secondary">Clear</button>
               <button id="config-apply" class="btn-small btn-primary">Apply to Response</button>
             </div>
+            <p id="config-editor-hint" class="section-hint hidden"></p>
             <div id="config-editor-table-container">
               <table class="config-editor-table" id="config-editor-table">
                 <thead>
@@ -327,6 +301,42 @@
                 </thead>
                 <tbody id="config-editor-body"></tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-geometry" class="tab-content">
+          <div class="card">
+            <h3>Box Types</h3>
+            <div id="box-types-list"></div>
+          </div>
+          <div class="card">
+            <h3>Frames</h3>
+            <div id="frames-list"></div>
+          </div>
+        </div>
+
+        <div id="tab-configurations" class="tab-content">
+          <div class="subtabs">
+            <button class="subtab active" data-subtab="cluster">Cluster Setups</button>
+            <button class="subtab" data-subtab="connectors">Connectors</button>
+          </div>
+          <div id="config-subtab-cluster" class="subtab-content active">
+            <div class="card" id="cluster-setups-card">
+              <h3>Cluster Setups</h3>
+              <p class="section-hint">
+                Predefined speaker arrangements stored in the GLL file
+              </p>
+              <div id="cluster-setups-list"></div>
+            </div>
+          </div>
+          <div id="config-subtab-connectors" class="subtab-content">
+            <div class="card" id="connectors-card">
+              <h3>Connectors</h3>
+              <p class="section-hint">
+                Box-to-box connection rules with available splay angles
+              </p>
+              <div id="connectors-list"></div>
             </div>
           </div>
         </div>

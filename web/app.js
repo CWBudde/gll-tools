@@ -44,6 +44,7 @@ let combinedChart = null;
 let combinedChartInitialized = false;
 let responseChartInitialized = false;
 let combinedListenersBound = false;
+let configSubtabsBound = false;
 let activeConfig = null; // { elements: [{ box_type_key, position: {x,y,z}, angles: {x,y,z}, gain }] }
 
 // Theme management
@@ -218,6 +219,8 @@ function setupEventListeners() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
   });
+
+  setupConfigurationsSubtabs();
 
   // Clear button
   clearBtn.addEventListener("click", clearResults);
@@ -413,6 +416,7 @@ function clearResults() {
   responseChartInitialized = false;
   combinedChartInitialized = false;
   activeConfig = null;
+  updateConfigEditorHint("");
   results.classList.add("hidden");
   loading.classList.add("hidden");
   error.classList.add("hidden");
@@ -431,6 +435,7 @@ function displayResults() {
   displayConfig();
   displayConfigurations();
   displayResources();
+  setupConfigEditor();
   setupGlobalSourceControls();
   setupCombinedResponseControls();
   setupPolarControls();
@@ -1286,8 +1291,8 @@ function displayConfig() {
 function displayConfigurations() {
   const db = currentData?.database;
   const clusterSetups = db?.cluster_setups || [];
-  const boxTypes = db?.box_types || [];
-  const systemType = currentData?.gen_system?.type;
+
+  setupConfigurationsSubtabs();
 
   // Cluster Setups
   const clusterList = document.getElementById("cluster-setups-list");
@@ -1339,11 +1344,11 @@ function displayConfigurations() {
   // Connectors
   displayConnectors(db);
 
-  // Configuration editor setup
-  setupConfigEditor();
-
   // Auto-select default configuration
   autoSelectDefaultConfig();
+
+  // Demo configuration if no setup data exists
+  ensureDemoConfiguration();
 }
 
 function displayConnectors(db) {
@@ -1408,6 +1413,7 @@ function setupConfigEditor() {
     clearBtn.onclick = () => {
       document.getElementById("config-editor-body").innerHTML = "";
       activeConfig = null;
+      updateConfigEditorHint("Add elements to build a configuration.");
     };
   }
   if (applyBtn) {
@@ -1458,6 +1464,7 @@ window.loadClusterSetupToEditor = function (clusterIndex) {
 
   const tbody = document.getElementById("config-editor-body");
   if (tbody) tbody.innerHTML = "";
+  updateConfigEditorHint("");
 
   for (const box of cs.setup?.boxes || []) {
     addConfigEditorRow(box.box_type_key, box.position, box.angles, 0);
@@ -1491,8 +1498,10 @@ function applyConfigFromEditor() {
 
   if (elements.length === 0) {
     activeConfig = null;
+    updateConfigEditorHint("Add elements to build a configuration.");
   } else {
-    activeConfig = { elements };
+    activeConfig = { elements, label: `Config (${elements.length} boxes)` };
+    updateConfigEditorHint("");
   }
 
   updateCombinedResponseChart();
@@ -1516,13 +1525,123 @@ function autoSelectDefaultConfig() {
       }));
       if (elements.length > 0) {
         activeConfig = { elements };
+        activeConfig.label = `Config (${elements.length} boxes)`;
         // Also populate editor
         window.loadClusterSetupToEditor(0);
+        updateConfigEditorHint("");
       }
     }
   }
   // For Loudspeaker (type 2), the existing box-type dropdown works fine
   // For LineArray (type 0), full support needs Frame/Connector parsing (not yet implemented)
+}
+
+function ensureDemoConfiguration() {
+  const db = currentData?.database;
+  if (!db) return;
+
+  const clusterSetups = db.cluster_setups || [];
+  const connectors = db.connectors || [];
+  if (clusterSetups.length || connectors.length) {
+    return;
+  }
+
+  if (activeConfig?.elements?.length) {
+    return;
+  }
+
+  const boxTypes = db.box_types || [];
+  if (!boxTypes.length) {
+    updateConfigEditorHint("No box types available for demo configuration.");
+    return;
+  }
+
+  const demoBox = boxTypes.find((box) => {
+    const placements = box?.source_placements || [];
+    const sources = box?.sources || [];
+    return placements.length > 0 || sources.length > 0;
+  });
+
+  if (!demoBox) {
+    updateConfigEditorHint("No box types with sources available for demo.");
+    return;
+  }
+
+  const spacingMm = 500;
+  const splayDeg = 5;
+  const elements = Array.from({ length: 4 }, (_, i) => ({
+    box_type_key: demoBox.key,
+    position: { x: 0, y: i * spacingMm, z: 0 },
+    angles: { x: 0, y: toRad(-splayDeg * i), z: 0 },
+    gain: 0,
+  }));
+
+  activeConfig = {
+    elements,
+    label: "Demo Config (4 boxes)",
+    isDemo: true,
+  };
+
+  if (buildElementsFromConfig(activeConfig).length === 0) {
+    activeConfig = null;
+    updateConfigEditorHint(
+      "Demo configuration could not be generated from available sources.",
+    );
+    return;
+  }
+
+  const tbody = document.getElementById("config-editor-body");
+  if (tbody) {
+    tbody.innerHTML = "";
+    elements.forEach((elem) =>
+      addConfigEditorRow(
+        elem.box_type_key,
+        elem.position,
+        elem.angles,
+        elem.gain,
+      ),
+    );
+  }
+
+  updateConfigEditorHint(
+    "Demo configuration created (no setup data found in file).",
+  );
+}
+
+function updateConfigEditorHint(message) {
+  const hint = document.getElementById("config-editor-hint");
+  if (!hint) return;
+  if (message) {
+    hint.textContent = message;
+    hint.classList.remove("hidden");
+  } else {
+    hint.textContent = "";
+    hint.classList.add("hidden");
+  }
+}
+
+function setupConfigurationsSubtabs() {
+  if (configSubtabsBound) return;
+  const buttons = document.querySelectorAll(".subtab");
+  if (!buttons.length) return;
+  buttons.forEach((button) => {
+    button.addEventListener("click", () =>
+      switchConfigurationsSubtab(button.dataset.subtab),
+    );
+  });
+  configSubtabsBound = true;
+}
+
+function switchConfigurationsSubtab(subtabName) {
+  document.querySelectorAll(".subtab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.subtab === subtabName);
+  });
+  document.querySelectorAll(".subtab-content").forEach((content) => {
+    content.classList.toggle(
+      "active",
+      content.id === `config-subtab-${subtabName}`,
+    );
+  });
 }
 
 function buildElementsFromConfig(config) {
@@ -2744,8 +2863,16 @@ function updateCombinedResponseChart() {
     elements = buildCombinedElements(box);
   }
 
+  if (elements.length) {
+    const validSources = new Set(
+      (currentData?.database?.source_definitions || []).map((s) => s.key),
+    );
+    elements = elements.filter((elem) => validSources.has(elem.source_key));
+  }
+
   if (!elements.length) {
-    meta.innerHTML = '<span class="chip">No source placements found</span>';
+    meta.innerHTML =
+      '<span class="chip">No valid sources found for this configuration</span>';
     destroyCombinedChart();
     return;
   }
@@ -2961,7 +3088,7 @@ function updateCombinedResponseChart() {
 
   combinedChartInitialized = true;
   const configBox = activeConfig
-    ? { label: `Config (${activeConfig.elements.length} boxes)` }
+    ? { label: activeConfig.label || `Config (${activeConfig.elements.length} boxes)` }
     : box;
   updateCombinedResponseMeta(
     meta,
