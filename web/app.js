@@ -1102,6 +1102,7 @@ function displayConfig() {
                     <div class="config-item-header">${escapeHtml(box.label)}</div>
                     ${formatGeometryActions("box", index, box.case_geometry, box.label || box.key)}
                 </div>
+                ${formatBoxTypeDetail(box)}
                 ${formatGeometryDetail(box.case_geometry)}
                 ${formatInlineGeometryViewer("box", index, box.case_geometry)}
             </div>
@@ -2124,6 +2125,29 @@ function formatGeometryDetail(geometry) {
   return `
         <div class="config-item-detail">
             Geometry: ${vertexCount} vertices • ${edgeCount} edges • ${faceCount} faces • ${symmetry}
+        </div>
+    `;
+}
+
+function formatBoxTypeDetail(box) {
+  if (!box) {
+    return "";
+  }
+
+  const key = box.key ? escapeHtml(box.key) : "-";
+  const sources = Array.isArray(box.sources) && box.sources.length > 0
+    ? box.sources.map((src) => escapeHtml(src)).join(", ")
+    : "-";
+  const weightValue = formatNumber(box.weight, 2);
+  const weight = weightValue === "-" ? "-" : `${weightValue} kg`;
+  const vAngleValue = formatNumber(box.vertical_opening_angle, 1);
+  const vAngle = vAngleValue === "-" ? "-" : `${vAngleValue}°`;
+  const hAngleValue = formatNumber(box.horizontal_opening_angle, 1);
+  const hAngle = hAngleValue === "-" ? "-" : `${hAngleValue}°`;
+
+  return `
+        <div class="config-item-detail">
+            Key: ${key} • Sources: ${sources} • Weight: ${weight} • Vertical Opening Angle: ${vAngle} • Horizontal Opening Angle: ${hAngle}
         </div>
     `;
 }
