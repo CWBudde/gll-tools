@@ -126,19 +126,19 @@ The `gllinfo` tool can currently extract:
 ## Example Output
 
 ```
-File: TiRAY-V1_3.gll
+File: AcmeArray-V2_1.gll
 Format: EASE v3 (sub: 3)
 
 === System ===
-Label:   TiRAY
-Key:     TiRAY
+Label:   AcmeArray
+Key:     AcmeArray
 Type:    Line Array
-Version: 1.3
+Version: 2.1
 
 === Metadata ===
-Manufacturer: d&b audiotechnik GmbH
-Description:  d&b TiRAY Line Array Element...
-Website:      www.dbaudio.com
+Manufacturer: Acme Acoustics GmbH
+Description:  Acme AcmeArray Line Array Element...
+Website:      www.acme-acoustics.example.com
 
 === Source Definitions ===
   Woofer: 60-200 Hz (Monopole Radial Symmetric)
@@ -146,7 +146,7 @@ Website:      www.dbaudio.com
   HF Driver: 2000-20000 Hz (Rotating balloon)
 
 === Embedded Resources ===
-  png: TiRAY.png (245678 bytes)
+  png: AcmeArray.png (245678 bytes)
   zlib: pdf-graphics (12345 bytes)
   zlib: font-ttf (45678 bytes)
 ```
