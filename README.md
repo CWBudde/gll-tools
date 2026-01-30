@@ -14,11 +14,11 @@ GLL files are a proprietary format used by AFMG's EASE acoustic simulation softw
 - Extract manufacturer/product information
 - Extract embedded resources (images, fonts, PDFs)
 - Decompress zlib-compressed resources
-- Parse database structures (box types, source definitions)
+- Parse database structures (box types, source definitions, filter groups, limits, warnings, presets)
+- Decode acoustic directivity balloon data and frequency responses
+- Export response data to CSV
 - JSON output format
-- Extract directivity data
-- Extract frequency response data
-- Export to open formats (CLF, FRD, CSV)
+- Convert between GLL binary and XGLL text formats
 
 ## Installation
 
@@ -35,7 +35,7 @@ go install github.com/cwbudde/gll-tools/cmd/xgllc@latest
 # Basic information
 gllinfo speaker.gll
 
-# Verbose output (includes full descriptions and checksums)
+# Verbose output (includes full descriptions, balloon details, checksums)
 gllinfo -v speaker.gll
 
 # JSON output
@@ -61,15 +61,52 @@ gllinfo extract --data speaker.gll
 gllinfo extract --decompress=false speaker.gll
 ```
 
-### Other commands
+### Acoustic data
 
 ```bash
-# Show version information
-gllinfo version
+# Show all source definitions with balloon info
+gllinfo acoustic speaker.gll
 
-# Show help
-gllinfo --help
-gllinfo extract --help
+# Show a specific source in detail
+gllinfo acoustic speaker.gll --source 0
+
+# Include frequency response data
+gllinfo acoustic speaker.gll -s 0 --responses
+
+# Export response data to CSV
+gllinfo acoustic speaker.gll -s 0 --export-csv output.csv
+```
+
+### Configuration data
+
+```bash
+# Show all config (limits, warnings, filter groups)
+gllinfo config speaker.gll
+
+# Show only limits, warnings, or filters
+gllinfo config speaker.gll --limits
+gllinfo config speaker.gll --warnings
+gllinfo config speaker.gll --filters
+```
+
+### System presets
+
+```bash
+# Show presets
+gllinfo presets speaker.gll
+
+# Decode config bytes
+gllinfo presets speaker.gll --decode
+```
+
+### Convert GLL to XGLL text
+
+```bash
+# Convert to XGLL and print to stdout
+gllinfo xgll speaker.gll
+
+# Write to file
+gllinfo xgll speaker.gll -o output.xgll
 ```
 
 ### Parse XGLL files
@@ -92,63 +129,89 @@ xgllc convert testdata/xgll/example-ls.xgll --output /tmp/example-pretty.xgllbin
 
 # Convert to a minimal GLL container (header + GenSystem only)
 xgllc convert testdata/xgll/example-ls.xgll --output /tmp/example.gll --format gll
+
+# Convert a GLL file back to XGLL text
+xgllc from-gll speaker.gll -o output.xgll
+```
+
+### Other commands
+
+```bash
+# Inspect trailing bytes after the GenSystem block
+gllinfo tail speaker.gll
+
+# Show version information
+gllinfo version
+
+# Show help
+gllinfo --help
 ```
 
 ## Project Structure
 
-```
+```text
 gll-tools/
-├── cmd/gllinfo/     # CLI tool
-├── cmd/xgllc/       # XGLL parser/converter CLI tool
-├── pkg/gll/         # Go library for parsing GLL files
-├── pkg/xgll/        # Go library for parsing XGLL files
-├── docs/            # Documentation and format specifications
-├── testdata/        # Test data (GLL + XGLL examples)
-└── legacy/          # Extracted EASE GLL Viewer (for research)
+├── cmd/
+│   ├── gllinfo/      # CLI for inspecting/extracting GLL files
+│   ├── xgllc/        # CLI for parsing/converting XGLL text format
+│   └── gllwasm/      # WebAssembly build for browser-based parsing
+├── pkg/
+│   ├── gll/          # Public library for GLL binary parsing
+│   └── xgll/         # Public library for XGLL text format parsing
+├── internal/
+│   ├── gll/          # Internal parsing utilities (ByteReader, BitCompression)
+│   ├── acoustics/    # Acoustic calculations (air properties, balloon geometry)
+│   ├── compression/  # BitCompression decompression
+│   ├── filters/      # IIR filter processing
+│   └── mime/         # MIME type detection for embedded resources
+├── docs/             # Format specifications and research
+├── testdata/         # Test GLL and XGLL files
+└── legacy/           # Extracted EASE GLL Viewer (for research)
 ```
 
 ## What Can Be Extracted
 
-The `gllinfo` tool can currently extract:
+The `gllinfo` tool can extract:
 
 - **Metadata**: Manufacturer, model name, description, copyright, website, email, support info
+- **Box Types**: Cabinet configurations and cluster setups
+- **Source Definitions**: Driver specifications with frequency ranges, directivity balloon data, and frequency/phase responses
+- **Acoustic Data**: Balloon directivity grids with symmetry information, individual frequency responses exportable to CSV
+- **Configuration**: Mechanical/electrical limits, warnings, and filter group definitions (Butterworth, Bessel, Linkwitz-Riley, etc.)
+- **Presets**: System preset configurations
 - **Images**: Embedded PNG images (product photos, diagrams)
 - **Geometry**: 3D geometry file references (.xed files)
-- **Compressed Resources**: Zlib-compressed embedded data including:
-  - PDF content (graphics and font data)
-  - TrueType fonts (TTF files)
-  - Text data
-- **Database Information**:
-  - Box types (cabinet configurations)
-  - Source definitions (driver specifications with frequency ranges)
-  - Data files (embedded resources)
+- **Compressed Resources**: Zlib-compressed embedded data (PDFs, fonts, text)
 
 ## Example Output
 
-```
-File: AcmeArray-V2_1.gll
-Format: EASE v3 (sub: 3)
+```text
+File: speaker.gll
+Format: EGLL v6 (sub: 0)
 
 === System ===
 Label:   AcmeArray
 Key:     AcmeArray
-Type:    Line Array
+Type:    LineArray
 Version: 2.1
 
 === Metadata ===
 Manufacturer: Acme Acoustics GmbH
-Description:  Acme AcmeArray Line Array Element...
-Website:      www.acme-acoustics.example.com
+Description:  AcmeArray is a compact line array element...
+Copyright:    © 2024 Acme Acoustics
+Website:      http://www.acme-acoustics.example.com
+Email:        contact@acme-acoustics.example.com
+
+=== Box Types ===
+  AcmeArray 60°
+  AcmeArray 90°
 
 === Source Definitions ===
-  Woofer: 60-200 Hz (Monopole Radial Symmetric)
-  MF Driver: 200-2000 Hz (Rotating balloon)
-  HF Driver: 2000-20000 Hz (Rotating balloon)
+  LF: 50-700 Hz (HighRes)
+  MHF: 700-20000 Hz (HighRes)
 
 === Embedded Resources ===
-  png: AcmeArray.png (245678 bytes)
-  zlib: pdf-graphics (12345 bytes)
-  zlib: font-ttf (45678 bytes)
+  PNG: .\Drawings\AcmeArray.png (11796 bytes)
 ```
 
 ## Documentation
@@ -164,15 +227,22 @@ Website:      www.acme-acoustics.example.com
 git clone https://github.com/cwbudde/gll-tools.git
 cd gll-tools
 
-# Build the CLI tool
+# Build all CLI tools
+just build
+
+# Or build individually
 go build -o gllinfo ./cmd/gllinfo
+go build -o xgllc ./cmd/xgllc
 
 # Run tests
-go test ./...
+just test
 
-# Format and lint (requires justfile)
+# Format and lint
 just fmt
 just lint
+
+# Run all checks
+just check
 ```
 
 ## Legal Context
