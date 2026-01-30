@@ -353,10 +353,10 @@ func TestToComplexFromComplex(t *testing.T) {
 	phase := []float64{0, math.Pi / 4, math.Pi / 2, math.Pi}
 
 	// Convert to complex
-	real, imag := ToComplex(level, phase)
+	realPart, imagPart := ToComplex(level, phase)
 
 	// Convert back
-	newLevel, newPhase := FromComplex(real, imag)
+	newLevel, newPhase := FromComplex(realPart, imagPart)
 
 	// Check round-trip accuracy
 	for i := range level {
@@ -374,10 +374,10 @@ func TestToComplex(t *testing.T) {
 	// 0 dB = magnitude 1.0
 	level := []float64{0}
 	phase := []float64{0}
-	real, imag := ToComplex(level, phase)
+	realPart, imagPart := ToComplex(level, phase)
 
 	expectedMag := 1.0
-	gotMag := math.Sqrt(real[0]*real[0] + imag[0]*imag[0])
+	gotMag := math.Sqrt(realPart[0]*realPart[0] + imagPart[0]*imagPart[0])
 	if math.Abs(gotMag-expectedMag) > 1e-10 {
 		t.Errorf("Magnitude at 0dB: got %f, want %f", gotMag, expectedMag)
 	}
@@ -385,10 +385,10 @@ func TestToComplex(t *testing.T) {
 	// -6 dB ≈ magnitude 0.5
 	level = []float64{-6.0206}
 	phase = []float64{0}
-	real, imag = ToComplex(level, phase)
+	realPart, imagPart = ToComplex(level, phase)
 
 	expectedMag = 0.5
-	gotMag = math.Sqrt(real[0]*real[0] + imag[0]*imag[0])
+	gotMag = math.Sqrt(realPart[0]*realPart[0] + imagPart[0]*imagPart[0])
 	if math.Abs(gotMag-expectedMag) > 0.001 {
 		t.Errorf("Magnitude at -6dB: got %f, want %f", gotMag, expectedMag)
 	}

@@ -396,7 +396,7 @@ func TestParseGoldenFiles(t *testing.T) {
 					t.Fatalf("mkdir failed: %v", err)
 				}
 
-				if err := os.WriteFile(goldenPath, append(current, '\n'), 0o644); err != nil {
+				if err := os.WriteFile(goldenPath, append(current, '\n'), 0o600); err != nil {
 					t.Fatalf("write golden failed: %v", err)
 				}
 

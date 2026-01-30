@@ -8,14 +8,16 @@ func MapMeridianBySymmetry(merDeg float64, symmetry int) float64 {
 	case 1: // SymmetryAxial
 		return 0
 	case 2: // SymmetryQuarter
-		if merDeg >= 270 {
+		switch {
+		case merDeg >= 270:
 			return 360 - merDeg
-		} else if merDeg >= 180 {
+		case merDeg >= 180:
 			return merDeg - 180
-		} else if merDeg >= 90 {
+		case merDeg >= 90:
 			return 180 - merDeg
+		default:
+			return merDeg
 		}
-		return merDeg
 	case 3: // SymmetryVertical
 		if merDeg >= 180 {
 			return 360 - merDeg
@@ -23,12 +25,14 @@ func MapMeridianBySymmetry(merDeg float64, symmetry int) float64 {
 		return merDeg
 	case 4: // SymmetryHorizontal
 		merDeg -= 90
-		if merDeg < 0 {
+		switch {
+		case merDeg < 0:
 			return -merDeg
-		} else if merDeg >= 180 {
+		case merDeg >= 180:
 			return 360 - merDeg
+		default:
+			return merDeg
 		}
-		return merDeg
 	default: // SymmetryNone
 		return merDeg
 	}

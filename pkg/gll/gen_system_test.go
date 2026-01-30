@@ -9,7 +9,11 @@ import (
 )
 
 func writeTestString(buf *bytes.Buffer, s string) {
-	_ = binary.Write(buf, binary.LittleEndian, int16(len(s)))
+	length := len(s)
+	if length > 32767 {
+		panic("test string too long")
+	}
+	_ = binary.Write(buf, binary.LittleEndian, int16(length))
 	_, _ = buf.WriteString(s)
 }
 
@@ -30,7 +34,7 @@ func buildMinimalDatabaseBlock() []byte {
 	_ = binary.Write(body, binary.LittleEndian, int32(0)) // cluster setups block size
 
 	buf := &bytes.Buffer{}
-	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len()))
+	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len())) // nolint:gosec
 	_, _ = buf.Write(body.Bytes())
 
 	return buf.Bytes()
@@ -56,7 +60,7 @@ func buildGenSystemBlock() []byte {
 	_, _ = body.Write(buildMinimalDatabaseBlock())
 
 	buf := &bytes.Buffer{}
-	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len()))
+	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len())) // nolint:gosec
 	_, _ = buf.Write(body.Bytes())
 
 	return buf.Bytes()

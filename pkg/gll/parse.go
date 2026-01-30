@@ -150,12 +150,14 @@ func parseHeader(br *gll.ByteReader, file *File) error {
 			return fmt.Errorf("reading hash length: %w", err)
 		}
 
-		if hashLen > 0 {
-			for i := 0; i < int(hashLen) && i < 32; i++ {
-				file.Header.HashID[i], err = br.ReadByte()
-				if err != nil {
-					return fmt.Errorf("reading hash: %w", err)
-				}
+		if hashLen < 0 || hashLen > 32 {
+			return fmt.Errorf("invalid hash length: %d", hashLen)
+		}
+
+		for i := int32(0); i < hashLen; i++ {
+			file.Header.HashID[i], err = br.ReadByte()
+			if err != nil {
+				return fmt.Errorf("reading hash: %w", err)
 			}
 		}
 	}

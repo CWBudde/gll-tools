@@ -18,17 +18,18 @@ type DataFile struct {
 
 // BoxType represents a speaker cabinet type
 type BoxType struct {
-	Label                  string        `json:"label"`
-	Key                    string        `json:"key"`
-	Sources                []string      `json:"sources,omitempty"` // Keys of acoustic sources
-	SourcePlacements       []BoxSource   `json:"source_placements,omitempty"`
-	CaseGeometry           *CaseGeometry `json:"case_geometry,omitempty"`
-	NextPivot              *Vector3D     `json:"next_pivot,omitempty"`
-	ReferencePoint         *Vector3D     `json:"reference_point,omitempty"`
-	CenterOfMass           *Vector3D     `json:"center_of_mass,omitempty"`
-	Weight                 float64       `json:"weight,omitempty"`                   // kg
-	VerticalOpeningAngle   float64       `json:"vertical_opening_angle,omitempty"`   // degrees
-	HorizontalOpeningAngle float64       `json:"horizontal_opening_angle,omitempty"` // degrees
+	Label                  string          `json:"label"`
+	Key                    string          `json:"key"`
+	Sources                []string        `json:"sources,omitempty"` // Keys of acoustic sources
+	SourcePlacements       []BoxSource     `json:"source_placements,omitempty"`
+	InputConfig            *BoxInputConfig `json:"input_config,omitempty"` // Embedded input configuration
+	CaseGeometry           *CaseGeometry   `json:"case_geometry,omitempty"`
+	NextPivot              *Vector3D       `json:"next_pivot,omitempty"`
+	ReferencePoint         *Vector3D       `json:"reference_point,omitempty"`
+	CenterOfMass           *Vector3D       `json:"center_of_mass,omitempty"`
+	Weight                 float64         `json:"weight,omitempty"`                   // kg
+	VerticalOpeningAngle   float64         `json:"vertical_opening_angle,omitempty"`   // degrees
+	HorizontalOpeningAngle float64         `json:"horizontal_opening_angle,omitempty"` // degrees
 }
 
 // IncludeFile represents an additional data file embedded in the GLL
@@ -174,68 +175,7 @@ func parseDataFile(br *gll.ByteReader) (*DataFile, error) {
 
 // parseSourceBuffer parses a buffer of box sources (placements).
 func parseSourceBuffer(br *gll.ByteReader, maxOffset int64) ([]BoxSource, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// Buffer has block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-	defer func() {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-	}()
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading count: %w", err)
-	}
-
-	if count <= 0 {
-		return nil, nil
-	}
-
-	sources := make([]BoxSource, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		source, err := parseBoxSource(br)
-		if err != nil {
-			break
-		}
-
-		sources = append(sources, *source)
-	}
-
-	return sources, nil
+	return parseBufferItems(br, maxOffset, 0, parseBoxSource)
 }
 
 // parseBoxSource parses a single box source placement.
@@ -442,10 +382,10 @@ func parseBoxType(br *gll.ByteReader, maxOffset int64) (*BoxType, error) {
 		}
 	}
 
-	// Skip InputConfigBuffer
-	if err := skipBlockBuffer(br, endOffset); err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return box, nil
+	// Parse InputConfigBuffer
+	inputConfig, err := parseInputConfigBuffer(br, endOffset)
+	if err == nil {
+		box.InputConfig = inputConfig
 	}
 
 	// Parse CaseGeometry (3D mesh data)
@@ -510,70 +450,7 @@ func parseBoxType(br *gll.ByteReader, maxOffset int64) (*BoxType, error) {
 
 // parseIncludeFileBuffer parses the IncludeFiles buffer
 func parseIncludeFileBuffer(br *gll.ByteReader, maxOffset int64) ([]IncludeFile, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// Buffer has block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	// Read count
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	files := make([]IncludeFile, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		file, err := parseIncludeFile(br)
-		if err != nil {
-			break
-		}
-
-		files = append(files, *file)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return files, nil
+	return parseBufferItems(br, maxOffset, 0, parseIncludeFile)
 }
 
 func parseIncludeFile(br *gll.ByteReader) (*IncludeFile, error) {
@@ -796,65 +673,7 @@ func parseCaseGeometry(br *gll.ByteReader, maxOffset int64) (*CaseGeometry, erro
 }
 
 func parseVertexBuffer(br *gll.ByteReader, maxOffset int64) ([]Vertex, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading vertex buffer size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading vertex buffer version check: %w", err)
-	}
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported vertex buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading vertex buffer sub-version: %w", err)
-	}
-
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading vertex count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	vertices := make([]Vertex, 0, count)
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		vertex, err := parseVertex(br)
-		if err != nil {
-			break
-		}
-
-		vertices = append(vertices, *vertex)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return vertices, nil
+	return parseBufferItems(br, maxOffset, 0, parseVertex)
 }
 
 func parseVertex(br *gll.ByteReader) (*Vertex, error) {
@@ -918,65 +737,7 @@ func parseVertex(br *gll.ByteReader) (*Vertex, error) {
 }
 
 func parseEdgeBuffer(br *gll.ByteReader, maxOffset int64) ([]Edge, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading edge buffer size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading edge buffer version check: %w", err)
-	}
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported edge buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading edge buffer sub-version: %w", err)
-	}
-
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading edge count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	edges := make([]Edge, 0, count)
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		edge, err := parseEdge(br)
-		if err != nil {
-			break
-		}
-
-		edges = append(edges, *edge)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return edges, nil
+	return parseBufferItems(br, maxOffset, 0, parseEdge)
 }
 
 func parseEdge(br *gll.ByteReader) (*Edge, error) {
@@ -1045,65 +806,7 @@ func parseEdge(br *gll.ByteReader) (*Edge, error) {
 }
 
 func parseFaceBuffer(br *gll.ByteReader, maxOffset int64) ([]Face, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading face buffer size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading face buffer version check: %w", err)
-	}
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported face buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading face buffer sub-version: %w", err)
-	}
-
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading face count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	faces := make([]Face, 0, count)
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		face, err := parseFace(br)
-		if err != nil {
-			break
-		}
-
-		faces = append(faces, *face)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return faces, nil
+	return parseBufferItems(br, maxOffset, 0, parseFace)
 }
 
 func parseFace(br *gll.ByteReader) (*Face, error) {

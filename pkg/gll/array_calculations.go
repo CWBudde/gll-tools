@@ -99,8 +99,23 @@ type ArrayConfig struct {
 	Elements []ArrayElement
 }
 
+// ComputeSystemResponseGrid calculates the combined array response at multiple receiver positions.
+// This is more efficient than calling ComputeSystemResponseAt in a loop because the caller
+// can reuse the same parsed config and loaded balloon data.
+func ComputeSystemResponseGrid(
+	config *ArrayConfig,
+	receivers []Vector3D,
+	airProps AirProperties,
+	airAttenOn bool,
+) []*TransferFunction {
+	results := make([]*TransferFunction, len(receivers))
+	for i, recv := range receivers {
+		results[i] = ComputeSystemResponseAt(config, recv, airProps, airAttenOn)
+	}
+	return results
+}
+
 // ComputeSystemResponseAt calculates the combined array response at a receiver position.
-// This is the Go equivalent of EASE's GenSystemInstance.ComputeSystemResponseAt.
 //
 // Algorithm:
 //  1. For each element in the array:
@@ -145,7 +160,6 @@ func ComputeSystemResponseAt(
 }
 
 // computeElementResponseAt calculates response for a single array element.
-// This corresponds to EASE's BoxType.GetResponseAt.
 func computeElementResponseAt(
 	elem *ArrayElement,
 	receiver Vector3D,
@@ -218,7 +232,6 @@ func computeElementResponseAt(
 }
 
 // getSourceResponseAt gets the directivity response at a given receiver position.
-// This corresponds to EASE's Source.GetResponseAt.
 func getSourceResponseAt(
 	srcDef *SourceDefinition,
 	sourcePos Vector3D,

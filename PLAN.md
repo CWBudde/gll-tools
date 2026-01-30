@@ -140,57 +140,100 @@ All database buffers implemented:
 
 ## Phase 7: Advanced Features (Future)
 
-### 7.1 Data Export
+### 7.1 DXF Export (Cabinet Geometry)
 
-- [ ] Export directivity to CLF format (Common Loudspeaker Format)
-  - CLF is industry-standard for acoustic simulation software
-  - Map balloon data to CLF structure (header + data blocks)
-  - Reference: <https://www.clfgroup.org/>
+- [x] Export CaseGeometry mesh data to DXF format
+  - Convert GLL vertices/edges/faces to DXF ENTITIES (LINE, 3DFACE)
+  - ASCII DXF R12 (AC1009) for maximum compatibility
+  - RGB colors mapped to nearest ACI (AutoCAD Color Index)
+  - Integrated into `gllinfo plot geometry --output file.dxf`
+- [x] CLF `<CABINET>` tag references external DXF file path
+  - `WithCabinetDXF(path)` export option writes `<CABINET>\t<dxf>path`
+  - CLI flag `--cabinet-dxf` on `gllinfo acoustic --export-clf`
+- [x] Add DXF export option to CLF export workflow (auto-generate DXF alongside CLF)
+  - Auto-finds box geometry matching exported source
+  - Generates `.dxf` file alongside `.clf` with same basename
+  - References DXF basename in `<CABINET>` tag automatically
+
+### 7.2 CLF Export (Common Loudspeaker Format)
+
+- [x] Research CLF format specification
+  - CLF text format is TAB-delimited with header fields and BAND data blocks
+  - Two types: CLF1 (octave/10°) and CLF2 (1/3-octave/5°) — CLF2 matches GLL resolution
+  - Binary format (CF1/CF2) is proprietary — targeting text format only
+  - Full spec documented in [docs/clf-format.md](docs/clf-format.md)
+- [x] Implement CLF text format writer (`internal/clf/`)
+  - CLF2 text format with 5° resolution and 24 third-octave bands (100–20000 Hz)
+  - Nearest-neighbor frequency resampling on log scale
+  - GLL-to-CLF symmetry mapping (none/vertical/horizontal/full/rotational)
+  - Full header metadata from GenSystem and SourceDefinition
+- [x] Add CLI support for CLF export
+  - `gllinfo acoustic --source N --export-clf output.txt`
+- [x] Add tests for CLF export
+  - Unit tests for frequencies, symmetry, writer, and export
+  - Integration test: parse GLL → export CLF text → validate structure
+- [x] Populate `<CABINET-SYSTEM>` text and `<WEIGHT>` from BoxType data
+- [ ] Populate `<SENSITIVITY>` per-band data from on-axis response
+- [ ] Handle `FrontHalfOnly` balloon data (front-hemisphere only export)
+
+### 7.3 FRD Export (Frequency Response Data)
+
 - [ ] Export frequency response to FRD format
   - Simple text format: `frequency magnitude phase`
   - One file per response/angle point
   - Include metadata in comments
-- [ ] Export to SOFA format (Spatially Oriented Format for Acoustics)
-  - HDF5-based format used in academic research
-  - Requires: go-hdf5 library or h5py via cgo
 
-### 7.2 Visualization (Optional)
+### 7.4 Visualization (Optional)
 
-- [ ] Generate polar plots (SVG/PNG)
+- [x] Generate polar plots (SVG/PNG)
   - Plot level vs angle at specific frequencies
   - Support horizontal (meridian) and vertical (parallel) planes
   - Use go-chart or gonum/plot library
-- [ ] Generate frequency response graphs
+- [x] Generate frequency response graphs
   - Level and phase vs frequency
   - Support log frequency scale
-- [ ] Generate 3D balloon visualization
+- [x] Generate 3D balloon visualization
   - Export to common 3D formats (OBJ, PLY, STL)
   - Color vertices by SPL level
   - Use standard 72×37 grid (5° resolution)
 
-### 7.3 Wine Integration (Optional)
+### 7.5 XGLL Support (Text Format)
 
-- [ ] Call native DLL functions via Wine
-  - Use CGO with Wine's PE loader or go-ole
-  - Validate parsed data against official API output
-- [ ] Document native API usage patterns
-  - See `docs/api.md` for function signatures
-  - Buffer sizes: DB_GetCone5=108, DB_GetLobe5=1332, DB_GetPhase5=2664 floats
-  - Frequency bands: 21 (1/3-octave, 50Hz-10kHz)
-- [ ] Hybrid approach for complex calculations
-  - Use native DLL for proprietary interpolation algorithms
-  - Use Go parser for file I/O and data export
+- [x] XGLL text format parser (`pkg/xgll/`)
+  - Lexer/parser for all statement types (assignments, blocks, arrays)
+  - `ParseFile()` reads .xgll into `Document` model
+- [x] XGLL to GLL compilation — header + GenSystem
+  - `BuildGLLFile()` maps XGLL Document → GLL File model
+  - `gllEncoder` serializes header (v3–v6), checksums, hashes
+  - GenSystem block: label, key, type, company, text fields, colors, flags
+  - Round-trip via raw base64 blocks (`BinaryGenSystem`, `BinaryDatabase`, `BinaryTail`)
+- [x] Writer registry with multiple output formats
+  - `gll` (binary), `xgll` (text), `xgllbin` / `xgllbin-pretty` (JSON container)
+  - CLI: `xgllc convert <file.xgll> -f gll -o out.gll`
+- [x] Round-trip tests
+  - `TestRoundTripXGLLSystem`: XGLL → GLL → XGLL GenSystem equivalence
+  - `TestRoundTripGLLViaXGLL`: byte-for-byte GLL → XGLL → GLL (via raw blocks)
+  - `TestGLLWriterRoundTripHeader`: header/GenSystem validation
+- [x] Compiled GLL testdata from `testdata/xgll/*.xgll`
+- [ ] Database serialization from XGLL (partial implementation)
+  - [x] BoxTypes: basic metadata (label, key)
+  - [x] BoxTypes: source placements (position, angles, source references)
+  - [x] BoxTypes: physical properties (weight, reference points, opening angles)
+  - [x] BoxTypes: CaseGeometry (3D mesh data - vertices, edges, faces)
+    - Full binary encoding with Vertex/Edge/Face buffers
+    - Supports symmetry, sub-versions, and all metadata fields
+    - Round-trip tested with real GLL files
+    - .xed export available via `gllinfo extract` and web demo
+  - [ ] BoxTypes: InputConfigurations (inputs, links, rated impedance)
+  - [ ] SourceDefinitions with balloon/transfer function data
+  - [ ] FilterGroups with filter definitions
+  - [ ] Limits, Warnings, Connectors, Frames
 
-### 7.4 XGLL Support (Text Format)
+### 7.6 SOFA Export (Spatially Oriented Format for Acoustics)
 
-- [ ] Complete XGLL text format parser
-  - Existing: `pkg/xgll/` with basic lexer/parser
-  - Document block structure and statement syntax
-  - Parse all statement types (assignments, blocks, arrays)
-- [ ] XGLL to GLL compilation (write support)
-  - Implement binary serialization (SaveToTarget pattern)
-  - Generate valid checksums (v4+) and hashes (v6)
-  - Validate output against reference files
+- [ ] Export to SOFA format
+  - HDF5-based format used in academic research
+  - Requires: go-hdf5 library or h5py via cgo
 
 ## Phase 8: WebAssembly Demo
 
@@ -208,83 +251,7 @@ All database buffers implemented:
   - Auto-deploy to GitHub Pages on push to main
   - Builds WASM from Go source
 
-### 8.2 Advanced Features (Future)
-
-- [x] Add polar plot visualization
-  - 2D polar plots at selected frequencies
-  - Horizontal and vertical plane views
-- [x] Add 3D balloon visualization
-  - Interactive 3D directivity balloon
-  - Color-coded by SPL level
-  - Requires Three.js or similar
-- [ ] Add data export options
-  - Export response data as CSV
-  - Export directivity as CLF or FRD
-
 ---
-
-## Current Status
-
-Phases 4-6 are complete. Core parser, CLI tool, and test suite are implemented.
-
-### Research Phase Complete (Phase 1-3)
-
-- Project structure created
-- Comprehensive format documentation in `docs/format.md`
-- Internal data structures:
-  - Component structure (position, angles, filters)
-  - BandData structure (directivity, sensitivity, impedance per band)
-  - Buffer sizes: DB_GetCone5=108, DB_GetLobe5=1332, DB_GetPhase5=2664 floats
-  - Plugin entry: 0x4230 bytes with function pointers at +0x4224/+0x4228/+0x422C
-- Calling conventions: stdcall, global state management
-- Frequency bands: 21 (1/3-octave, 50Hz-10kHz)
-- Directivity grid: 72×37 points (5° resolution)
-
-### Go Parser Status (Phase 4 nearly complete)
-
-**Completed:**
-
-- Header parsing (magic, version, checksum, hash)
-- GenSystem metadata extraction (all fields)
-- Database buffer parsing:
-  - DataFiles (embedded PNGs, XED geometry files)
-  - BoxTypes (cabinet definitions with Label, Key)
-  - Frames (rigging frames with PinPoints, NextPivot, CenterOfMass)
-  - Connectors (box-to-box connections with splay angles)
-  - Limits (mechanical/electrical constraints)
-  - Warnings (configuration messages)
-  - FilterGroups with nested FilterDefinitions
-  - BoxInputConfig (parsing ready, not yet integrated into BoxType)
-- SourceDefinitions with BalloonData:
-  - Angular resolution (symmetry, steps, grid size)
-  - Response metadata (count, version, offset)
-- Transfer function parsing:
-  - CLogSpectrumLP (v0 legacy format)
-  - TransferFunctionLsPs (v1 current format)
-  - ComplexSequence with nested Records
-- BitCompression decompression algorithm (`internal/gll/bitcompression.go`)
-- CLI tool (`cmd/gllinfo`) with subcommands:
-  - Default: header + metadata display
-  - `extract`: resource extraction (images, data)
-  - `acoustic`: source definitions with response loading
-
-**Files added/modified:**
-
-- `pkg/gll/types.go` - Core type definitions
-- `pkg/gll/database.go` - Database buffer parsing:
-  - Limits, Warnings, FilterGroups
-  - Frames (with LabeledVector3DBuffer for PinPoints)
-  - Connectors (with LabeledValueDBuffer for Angles)
-  - BoxInputConfig (with BoxInput and SourceFilterLink)
-  - ClusterSetups (with ClusterSetupItem, ClusterSetup, ClusterBox)
-  - Presets (GenSystemPreset with Label/Key)
-  - IncludeFiles (with Label, Key, Filename, embedded bytes)
-  - AuthorFiles (uses DataFileBuffer format)
-  - Transformers (with TapSettingBuffer)
-- `pkg/gll/source.go` - Source definitions and transfer functions
-- `internal/gll/bitcompression.go` - Decompression algorithm
-- `cmd/gllinfo/cmd/acoustic.go` - Acoustic data display
-- `docs/format.md` - Format specification (updated with new structures)
 
 **Remaining (lower priority):**
 

@@ -3,6 +3,7 @@
 
 // XED Format (EASE native format)
 export function buildXedContent(geometry, options) {
+  // Build XED text with unit scaling
   const units = (options?.units || "m").toLowerCase();
   const precision = Number.isFinite(options?.precision) ? options.precision : 6;
   const headerUnits = units === "ft" ? "ft" : "m";
@@ -17,6 +18,7 @@ export function buildXedContent(geometry, options) {
       ? edges.map((edge) => [edge.v1, edge.v2])
       : buildSequentialEdgePairs(vertices.length);
 
+  // Write line segments for each edge
   for (const [v1, v2] of edgePairs) {
     const p1 = resolveGeometryVertex(geometry, vertices, v1, scale);
     const p2 = resolveGeometryVertex(geometry, vertices, v2, scale);
@@ -31,6 +33,7 @@ export function buildXedContent(geometry, options) {
 }
 
 export function buildSequentialEdgePairs(vertexCount) {
+  // Pair vertices sequentially as edges
   const pairs = [];
   for (let i = 0; i + 1 < vertexCount; i += 2) {
     pairs.push([i + 1, i + 2]);
@@ -39,21 +42,25 @@ export function buildSequentialEdgePairs(vertexCount) {
 }
 
 function formatXedLine(point, precision) {
+  // Format one XED line (x y z)
   return `${formatXedNumber(point.x, precision)} ${formatXedNumber(point.y, precision)} ${formatXedNumber(point.z, precision)}`;
 }
 
 function formatXedNumber(value, precision) {
+  // Trim trailing zeros for compact output
   const rounded = Number(value).toFixed(precision);
   return rounded.replace(/\.?0+$/, "");
 }
 
 // STL Binary Format
 export function buildStlBinary(geometry, options) {
+  // Build binary STL from triangles
   const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
   const faces = Array.isArray(geometry.faces) ? geometry.faces : [];
   const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
 
   if (faces.length === 0) {
+    // Export empty STL when no faces exist
     if (vertices.length === 0 && edges.length === 0) {
       return new Uint8Array(0);
     }
@@ -79,6 +86,7 @@ export function buildStlBinary(geometry, options) {
   }
 
   if (triangles.length === 0) {
+    // No triangles to write
     return new Uint8Array(0);
   }
 
@@ -135,6 +143,7 @@ export function buildStlBinary(geometry, options) {
 }
 
 function buildEmptyStlBinary() {
+  // STL header with zero triangles
   const buffer = new ArrayBuffer(84);
   const view = new DataView(buffer);
   const headerText = "Binary STL from GLL Viewer";
@@ -147,11 +156,13 @@ function buildEmptyStlBinary() {
 
 // OBJ Format (Wavefront)
 export function buildObjContent(geometry, options) {
+  // Build Wavefront OBJ text output
   const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
   const faces = Array.isArray(geometry.faces) ? geometry.faces : [];
   const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
 
   if (vertices.length === 0) {
+    // Nothing to export
     return "";
   }
 
@@ -208,6 +219,7 @@ export function buildObjContent(geometry, options) {
 
   if (useFaces) {
     // Write faces
+    // Write faces
     for (const face of faces) {
       const faceVertices = face.vertices || [];
       if (faceVertices.length < 3) continue;
@@ -221,6 +233,7 @@ export function buildObjContent(geometry, options) {
       }
     }
   } else if (edges.length > 0) {
+    // Write edges as line segments
     // Write edges as line segments
     for (const edge of edges) {
       const v1 = vertexMap.get(edge.v1);
@@ -237,6 +250,7 @@ export function buildObjContent(geometry, options) {
 // Shared Geometry Utilities
 
 export function resolveGeometryVertex(geometry, vertices, index, scale) {
+  // Resolve a vertex index with symmetry and scaling
   if (!index || !Number.isFinite(index)) {
     return null;
   }
@@ -256,6 +270,7 @@ export function resolveGeometryVertex(geometry, vertices, index, scale) {
     return null;
   }
   if (rawIndex < 0 && geometry.is_symmetric) {
+    // Mirror across symmetry axis
     const axis = Number(geometry.symmetry_axis) || 0;
     x = 2 * axis - x;
   }
@@ -267,6 +282,7 @@ export function resolveGeometryVertex(geometry, vertices, index, scale) {
 }
 
 export function triangulateFace(vertexIndices) {
+  // Convert polygon face to triangle fan
   const triangles = [];
   if (vertexIndices.length < 3) return triangles;
 
@@ -280,6 +296,7 @@ export function triangulateFace(vertexIndices) {
 }
 
 export function calculateNormal(v1, v2, v3) {
+  // Compute normalized face normal
   // Edge vectors
   const e1x = v2.x - v1.x;
   const e1y = v2.y - v1.y;
@@ -297,6 +314,7 @@ export function calculateNormal(v1, v2, v3) {
   // Normalize
   const length = Math.sqrt(nx * nx + ny * ny + nz * nz);
   if (length < 1e-10) {
+    // Default normal for degenerate triangles
     return { x: 0, y: 0, z: 1 };
   }
 
@@ -308,6 +326,7 @@ export function calculateNormal(v1, v2, v3) {
 }
 
 export function hasGeometryData(geometry) {
+  // Lightweight check for geometry presence
   if (!geometry) return false;
   const hasEdges = Array.isArray(geometry.edges) && geometry.edges.length > 0;
   const hasVertices =
@@ -322,6 +341,7 @@ const RAD_TO_DEG = 180 / Math.PI;
 // FRD Format (Frequency Response Data)
 // Standard text format: frequency_hz  level_db  phase_deg
 export function buildFrdContent(frequencies, levels, phases) {
+  // Build FRD text format (freq, level, phase)
   const lines = [];
   for (let i = 0; i < frequencies.length; i++) {
     const freq = frequencies[i];
@@ -336,6 +356,7 @@ export function buildFrdContent(frequencies, levels, phases) {
 
 // CSV Format for filter responses
 export function buildCsvFilterContent(frequencies, levels, phases) {
+  // Build CSV content for filter responses
   const lines = ["Frequency (Hz),Level (dB),Phase (deg)"];
   for (let i = 0; i < frequencies.length; i++) {
     const freq = frequencies[i];
@@ -350,6 +371,7 @@ export function buildCsvFilterContent(frequencies, levels, phases) {
 // Human-readable text format mirroring the binary GenericFilterBank structure.
 // Phase values in radians (matching GLL internal format).
 export function buildXgfbContent(filterDef) {
+  // Build XGFB text for filter bank definitions
   const bank = filterDef?.filter;
   if (!bank) return "";
 
@@ -379,6 +401,7 @@ export function buildXgfbContent(filterDef) {
     lines.push(`Delay = ${(f.delay || 0).toFixed(6)}`);
 
     if (f.kind === 0 && f.log_spectrum) {
+      // LogSpectrum entries
       const s = f.log_spectrum;
       lines.push(`BandsPerOctave = ${s.bands_per_octave}`);
       lines.push(`LowestFrequency = ${s.lowest_frequency}`);
@@ -397,6 +420,7 @@ export function buildXgfbContent(filterDef) {
         );
       }
     } else if (f.kind === 1 && f.iir_params) {
+      // IIR parameters
       const p = f.iir_params;
       lines.push(`FilterType = ${formatXgfbIIRType(p.filter_type)}`);
       lines.push(`FilterShape = ${formatXgfbIIRShape(p.filter_shape)}`);
@@ -408,6 +432,7 @@ export function buildXgfbContent(filterDef) {
         `ParametricGainIndB = ${(p.parametric_gain_db || 0).toFixed(3)}`,
       );
     } else if (f.kind === 2 && f.fir_data) {
+      // FIR data block
       const d = f.fir_data;
       lines.push(`IsTimeResponse = ${!!d.is_time_response}`);
       lines.push(`IsComplex = ${!!d.is_complex}`);
@@ -436,6 +461,7 @@ export function buildXgfbContent(filterDef) {
 }
 
 function formatXgfbKind(kind) {
+  // Map kind enum to label
   switch (kind) {
     case 0:
       return "LogSpectrum";
@@ -449,6 +475,7 @@ function formatXgfbKind(kind) {
 }
 
 function formatXgfbIIRType(type) {
+  // Map IIR type enum to label
   const names = [
     "LowPass",
     "HighPass",
@@ -462,6 +489,7 @@ function formatXgfbIIRType(type) {
 }
 
 function formatXgfbIIRShape(shape) {
+  // Map IIR shape enum to label
   const names = ["Butterworth", "LinkwitzRiley", "Bessel", "SallenKey"];
   return names[shape] ?? `Unknown(${shape})`;
 }

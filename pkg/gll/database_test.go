@@ -2,6 +2,8 @@ package gll
 
 import "testing"
 
+const testMaxWeightKg = "MaxWeightKg"
+
 func TestLimitTypeString(t *testing.T) {
 	cases := []struct {
 		value LimitType
@@ -9,7 +11,7 @@ func TestLimitTypeString(t *testing.T) {
 	}{
 		{LimitTypeMaxCount, "MaxCount"},
 		{LimitTypeMaxCountType, "MaxCountType"},
-		{LimitTypeMaxWeightKg, "MaxWeightKg"},
+		{LimitTypeMaxWeightKg, testMaxWeightKg},
 		{LimitTypeMaxTiltAngle, "MaxTiltAngle"},
 		{LimitTypeMinTiltAngle, "MinTiltAngle"},
 		{LimitTypeMinCount, "MinCount"},
@@ -30,7 +32,7 @@ func TestWarningTypeString(t *testing.T) {
 	}{
 		{WarningTypeMaxCount, "MaxCount"},
 		{WarningTypeMinCount, "MinCount"},
-		{WarningTypeMaxWeightKg, "MaxWeightKg"},
+		{WarningTypeMaxWeightKg, testMaxWeightKg},
 		{WarningTypeMaxTiltAngle, "MaxTiltAngle"},
 		{WarningTypeMinTiltAngle, "MinTiltAngle"},
 		{WarningType(99), "Unknown"},
@@ -70,8 +72,8 @@ func TestWarningStruct(t *testing.T) {
 		LimitValue: 100.0,
 	}
 
-	if warn.Type.String() != "MaxWeightKg" {
-		t.Errorf("Warning.Type.String() = %q, want MaxWeightKg", warn.Type.String())
+	if warn.Type.String() != testMaxWeightKg {
+		t.Errorf("Warning.Type.String() = %q, want %s", warn.Type.String(), testMaxWeightKg)
 	}
 	if warn.Text != "Weight limit exceeded" {
 		t.Errorf("Warning.Text = %q, want %q", warn.Text, "Weight limit exceeded")

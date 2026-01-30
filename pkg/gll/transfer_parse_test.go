@@ -28,6 +28,7 @@ func TestParseCLogSpectrumLPUncompressed(t *testing.T) {
 	_ = binary.Write(body, binary.LittleEndian, float64(0.25))
 
 	buf := &bytes.Buffer{}
+	// nolint:gosec
 	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len()))
 	_, _ = buf.Write(body.Bytes())
 
@@ -59,14 +60,14 @@ func TestParseTransferFunctionLsPsUncompressed(t *testing.T) {
 		body := &bytes.Buffer{}
 		_ = binary.Write(body, binary.LittleEndian, int16(0))
 		_ = binary.Write(body, binary.LittleEndian, int16(0))
-		_ = binary.Write(body, binary.LittleEndian, int32(0)) // compression type
-		_ = binary.Write(body, binary.LittleEndian, int32(len(values)))
+		_ = binary.Write(body, binary.LittleEndian, int32(0))           // compression type
+		_ = binary.Write(body, binary.LittleEndian, int32(len(values))) // nolint:gosec
 		for _, v := range values {
 			_ = binary.Write(body, binary.LittleEndian, v)
 		}
 
 		buf := &bytes.Buffer{}
-		_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len()))
+		_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len())) // nolint:gosec
 		_, _ = buf.Write(body.Bytes())
 
 		return buf.Bytes()
@@ -79,7 +80,7 @@ func TestParseTransferFunctionLsPsUncompressed(t *testing.T) {
 	_, _ = complexBody.Write(buildRecord([]int16{1000, -2000}))
 
 	complexBuf := &bytes.Buffer{}
-	_ = binary.Write(complexBuf, binary.LittleEndian, int32(4+complexBody.Len()))
+	_ = binary.Write(complexBuf, binary.LittleEndian, int32(4+complexBody.Len())) // nolint:gosec
 	_, _ = complexBuf.Write(complexBody.Bytes())
 
 	body := &bytes.Buffer{}
@@ -92,7 +93,7 @@ func TestParseTransferFunctionLsPsUncompressed(t *testing.T) {
 	_ = binary.Write(body, binary.LittleEndian, float64(0.5))
 
 	buf := &bytes.Buffer{}
-	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len()))
+	_ = binary.Write(buf, binary.LittleEndian, int32(4+body.Len())) // nolint:gosec
 	_, _ = buf.Write(body.Bytes())
 
 	br := internalgll.NewByteReader(bytes.NewReader(buf.Bytes()))

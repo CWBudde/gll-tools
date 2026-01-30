@@ -152,7 +152,7 @@ func evalAnalogResponse(coeffs []float64, frequencies []float64, freqCrit, gain 
 		if invert {
 			num = (-num) / ratio
 		} else {
-			num = num * ratio
+			num *= ratio
 		}
 		s := complex(0, num)
 		denom := base

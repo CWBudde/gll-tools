@@ -309,11 +309,11 @@ func TestEvalAnalogResponse(t *testing.T) {
 // TestCalculateIIRTransfer tests IIR filter transfer function calculation
 func TestCalculateIIRTransfer(t *testing.T) {
 	params := &gll.IIRFilterParams{
-		FilterType:  gll.FilterTypeLowPass,
-		FilterShape: gll.FilterShapeButterworth,
-		Order:       2,
+		FilterType:   gll.FilterTypeLowPass,
+		FilterShape:  gll.FilterShapeButterworth,
+		Order:        2,
 		FreqCritInHz: 1000.0,
-		Alignment:   gll.FilterAlignLevel3dB,
+		Alignment:    gll.FilterAlignLevel3dB,
 	}
 
 	frequencies := []float64{100, 1000, 10000}

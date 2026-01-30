@@ -12,6 +12,7 @@ let filterContext = null;
 let filterListenersBound = false;
 
 export function setupFilterControls(context) {
+  // Store context for data/bytes access
   filterContext = context;
   const groupSelect = document.getElementById("filter-group-select");
   const defSelect = document.getElementById("filter-def-select");
@@ -21,6 +22,7 @@ export function setupFilterControls(context) {
   }
 
   if (!filterListenersBound) {
+    // Bind UI listeners once
     groupSelect.addEventListener("change", updateFilterDefinitionOptions);
     defSelect.addEventListener("change", updateFilterChart);
     if (phaseSelect) {
@@ -32,6 +34,7 @@ export function setupFilterControls(context) {
   const data = filterContext?.getData?.();
   const groups = data?.database?.filter_groups || [];
   if (!groups.length) {
+    // Empty state when no filter groups exist
     groupSelect.innerHTML = '<option value="">No filter groups</option>';
     groupSelect.disabled = true;
     defSelect.innerHTML = "";
@@ -42,6 +45,7 @@ export function setupFilterControls(context) {
   }
 
   groupSelect.disabled = false;
+  // Populate filter group dropdown
   groupSelect.innerHTML = groups
     .map(
       (group, i) =>
@@ -53,6 +57,7 @@ export function setupFilterControls(context) {
 }
 
 export function updateFilterDefinitionOptions() {
+  // Populate filter definitions for selected group
   const groupSelect = document.getElementById("filter-group-select");
   const defSelect = document.getElementById("filter-def-select");
   if (!groupSelect || !defSelect) {
@@ -63,6 +68,7 @@ export function updateFilterDefinitionOptions() {
   const groups = data?.database?.filter_groups || [];
   const groupIndex = parseInt(groupSelect.value);
   if (isNaN(groupIndex) || groupIndex >= groups.length) {
+    // Invalid selection
     defSelect.innerHTML = "";
     defSelect.disabled = true;
     setFilterPlaceholder("Select a filter group to view response data");
@@ -73,6 +79,7 @@ export function updateFilterDefinitionOptions() {
   const group = groups[groupIndex];
   const defs = group?.filters || [];
   if (!defs.length) {
+    // Group has no filters
     defSelect.innerHTML = '<option value="">No filters</option>';
     defSelect.disabled = true;
     setFilterPlaceholder("No filters available in this group");
@@ -81,6 +88,7 @@ export function updateFilterDefinitionOptions() {
   }
 
   defSelect.disabled = false;
+  // Build filter definition options
   defSelect.innerHTML = defs
     .map(
       (filter, i) =>
@@ -92,6 +100,7 @@ export function updateFilterDefinitionOptions() {
 }
 
 export function updateFilterChart() {
+  // Compute and render filter response chart
   const groupSelect = document.getElementById("filter-group-select");
   const defSelect = document.getElementById("filter-def-select");
   if (!groupSelect || !defSelect) {
@@ -104,11 +113,8 @@ export function updateFilterChart() {
   const groupIndex = parseInt(groupSelect.value);
   const defIndex = parseInt(defSelect.value);
 
-  if (
-    isNaN(groupIndex) ||
-    isNaN(defIndex) ||
-    groupIndex >= groups.length
-  ) {
+  if (isNaN(groupIndex) || isNaN(defIndex) || groupIndex >= groups.length) {
+    // Invalid selection or missing group
     updateFilterMeta("No filter response data available");
     setFilterPlaceholder("No filter response data available");
     destroyFilterChart();
@@ -116,6 +122,7 @@ export function updateFilterChart() {
   }
 
   if (!bytes || typeof computeFilterResponse !== "function") {
+    // Missing WASM helper
     updateFilterMeta("Filter response helper not available");
     setFilterPlaceholder("Filter response helper not available");
     destroyFilterChart();
@@ -125,6 +132,7 @@ export function updateFilterChart() {
   const group = groups[groupIndex];
   const filterDef = group?.filters?.[defIndex];
 
+  // Request filter response from WASM
   const payload = JSON.stringify({
     group_index: groupIndex,
     filter_index: defIndex,
@@ -134,12 +142,14 @@ export function updateFilterChart() {
     const responseJSON = computeFilterResponse(bytes, payload);
     response = JSON.parse(responseJSON);
   } catch (err) {
+    // Response parsing failed
     updateFilterMeta("Failed to compute filter response");
     setFilterPlaceholder("Failed to compute filter response");
     destroyFilterChart();
     return;
   }
   if (!response.success) {
+    // Surface computation errors
     updateFilterMeta(response.error || "Failed to compute filter response");
     setFilterPlaceholder(response.error || "Failed to compute filter response");
     destroyFilterChart();
@@ -147,12 +157,9 @@ export function updateFilterChart() {
   }
 
   if (!response.frequencies?.length || !response.level?.length) {
-    const message =
-      response.message || "No filter response data available";
-    updateFilterMeta(
-      message,
-      buildFilterMetaChips(group, filterDef, response),
-    );
+    // Missing usable response data
+    const message = response.message || "No filter response data available";
+    updateFilterMeta(message, buildFilterMetaChips(group, filterDef, response));
     setFilterPlaceholder(message);
     destroyFilterChart();
     return;
@@ -160,6 +167,7 @@ export function updateFilterChart() {
 
   const phaseSelect = document.getElementById("filter-phase-mode");
   if (phaseSelect) {
+    // Disable phase selector when phase data is missing
     const hasPhase = Array.isArray(response.phase) && response.phase.length > 0;
     phaseSelect.disabled = !hasPhase;
     if (!hasPhase) {
@@ -169,9 +177,11 @@ export function updateFilterChart() {
 
   const ctx = document.getElementById("filter-response-chart").getContext("2d");
   if (filterChart) {
+    // Replace existing chart instance
     filterChart.destroy();
   }
 
+  // Build frequency data points
   const frequencyData = buildFrequencyPoints(
     response.frequencies,
     response.level,
@@ -184,6 +194,7 @@ export function updateFilterChart() {
   }
 
   setFilterPlaceholder("");
+  // Base dataset for level response
   const datasets = [
     {
       label: "Level (dB)",
@@ -199,6 +210,7 @@ export function updateFilterChart() {
 
   let phaseAxisTitle = "Phase (rad)";
   if (response.phase && response.phase.length === response.level.length) {
+    // Add phase dataset when available
     const phaseMode = phaseSelect?.value || "unwrapped";
     const phaseSeries = getPhaseSeries(
       phaseMode,
@@ -225,6 +237,7 @@ export function updateFilterChart() {
   }
 
   const scales = {
+    // Log frequency scale + linear level axis
     x: buildLogFrequencyScale(
       frequencyData.minFrequency,
       frequencyData.maxFrequency,
@@ -242,6 +255,7 @@ export function updateFilterChart() {
   };
 
   if (response.phase) {
+    // Add secondary axis for phase
     scales.y1 = {
       type: "linear",
       display: true,
@@ -257,6 +271,7 @@ export function updateFilterChart() {
   }
 
   filterChart = new Chart(ctx, {
+    // Create Chart.js line chart
     type: "line",
     data: {
       datasets,
@@ -291,15 +306,21 @@ export function updateFilterChart() {
   });
 
   filterChartInitialized = true;
-  updateFilterMeta(response.message, buildFilterMetaChips(group, filterDef, response));
+  // Update metadata chips under the chart
+  updateFilterMeta(
+    response.message,
+    buildFilterMetaChips(group, filterDef, response),
+  );
 }
 
 export function resetFilterChart() {
+  // Reset chart state for new data
   destroyFilterChart();
   filterChartInitialized = false;
 }
 
 function destroyFilterChart() {
+  // Tear down chart instance
   if (filterChart) {
     filterChart.destroy();
     filterChart = null;
@@ -307,6 +328,7 @@ function destroyFilterChart() {
 }
 
 function buildFilterMetaChips(group, filterDef, response) {
+  // Build metadata chips for filter response
   const chips = [];
   if (group) {
     chips.push(
@@ -320,10 +342,14 @@ function buildFilterMetaChips(group, filterDef, response) {
   }
   if (Number.isFinite(response.used_filters)) {
     const kind = response.filter_kind || "LogSpectrum";
-    chips.push(`<span class="chip">${escapeHtml(kind)} ${response.used_filters}</span>`);
+    chips.push(
+      `<span class="chip">${escapeHtml(kind)} ${response.used_filters}</span>`,
+    );
   }
   if (Number.isFinite(response.sample_rate)) {
-    chips.push(`<span class="chip">SR ${response.sample_rate.toFixed(0)} Hz</span>`);
+    chips.push(
+      `<span class="chip">SR ${response.sample_rate.toFixed(0)} Hz</span>`,
+    );
   }
   if (Number.isFinite(response.point_count)) {
     chips.push(`<span class="chip">${response.point_count} points</span>`);
@@ -331,11 +357,19 @@ function buildFilterMetaChips(group, filterDef, response) {
   if (response.is_complex) {
     chips.push('<span class="chip">Complex</span>');
   }
-  if (Number.isFinite(response.skipped_filters) && response.skipped_filters > 0) {
+  if (
+    Number.isFinite(response.skipped_filters) &&
+    response.skipped_filters > 0
+  ) {
     chips.push(`<span class="chip">Skipped ${response.skipped_filters}</span>`);
   }
-  if (Number.isFinite(response.mismatched_filters) && response.mismatched_filters > 0) {
-    chips.push(`<span class="chip">Mismatched ${response.mismatched_filters}</span>`);
+  if (
+    Number.isFinite(response.mismatched_filters) &&
+    response.mismatched_filters > 0
+  ) {
+    chips.push(
+      `<span class="chip">Mismatched ${response.mismatched_filters}</span>`,
+    );
   }
   if (response.bypassed) {
     chips.push('<span class="chip">Bypassed</span>');
@@ -344,6 +378,7 @@ function buildFilterMetaChips(group, filterDef, response) {
 }
 
 function updateFilterMeta(message, chips = null) {
+  // Update metadata display for filter response
   const meta = document.getElementById("filter-response-meta");
   if (!meta) return;
 
@@ -352,13 +387,15 @@ function updateFilterMeta(message, chips = null) {
     parts.push(`<span class="chip">${escapeHtml(message)}</span>`);
   }
   if (parts.length === 0) {
-    meta.innerHTML = '<span class="chip">No filter response data available</span>';
+    meta.innerHTML =
+      '<span class="chip">No filter response data available</span>';
     return;
   }
   meta.innerHTML = parts.join("");
 }
 
 function setFilterPlaceholder(message) {
+  // Show or hide placeholder overlay
   const placeholder = document.getElementById("filter-response-placeholder");
   if (!placeholder) return;
   if (message) {
@@ -370,6 +407,7 @@ function setFilterPlaceholder(message) {
 }
 
 function escapeHtml(str) {
+  // Basic HTML escaping for safe output
   if (typeof str !== "string") return str;
   return str
     .replace(/&/g, "&amp;")
@@ -380,6 +418,7 @@ function escapeHtml(str) {
 }
 
 function formatFrequency(hz) {
+  // Format Hz for display
   if (!hz || hz === 0) return "-";
   if (hz >= 1000) {
     return (hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1) + " kHz";

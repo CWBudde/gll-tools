@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseResolutionDescriptor(t *testing.T) {
+	// Build a minimal ResolutionDescriptor block
 	buf := &bytes.Buffer{}
 	_ = binary.Write(buf, binary.LittleEndian, int32(32))
 	_ = binary.Write(buf, binary.LittleEndian, int16(0))
@@ -18,6 +19,7 @@ func TestParseResolutionDescriptor(t *testing.T) {
 	_ = binary.Write(buf, binary.LittleEndian, float64(10))
 	_ = binary.Write(buf, binary.LittleEndian, float64(5))
 
+	// Parse from byte reader
 	br := internalgll.NewByteReader(bytes.NewReader(buf.Bytes()))
 
 	res, err := parseResolutionDescriptor(br)
@@ -25,12 +27,14 @@ func TestParseResolutionDescriptor(t *testing.T) {
 		t.Fatalf("parseResolutionDescriptor error: %v", err)
 	}
 
+	// Verify parsed descriptor
 	if res.Symmetry != int32(SymmetryVertical) || !res.FrontHalfOnly || res.MeridianStep != 10 || res.ParallelStep != 5 {
 		t.Fatalf("unexpected resolution descriptor: %+v", res)
 	}
 }
 
 func TestResolutionDescriptorCounts(t *testing.T) {
+	// Check derived counts for known steps
 	res := ResolutionDescriptor{MeridianStep: 10, ParallelStep: 5}
 	if got := res.MeridianCount(); got != 36 {
 		t.Fatalf("MeridianCount = %d, want 36", got)
@@ -46,6 +50,7 @@ func TestResolutionDescriptorCounts(t *testing.T) {
 }
 
 func TestResolutionDescriptorZeroStep(t *testing.T) {
+	// Zero steps should yield zero counts
 	res := ResolutionDescriptor{}
 	if res.MeridianCount() != 0 || res.ParallelCount() != 0 || res.TotalPoints() != 0 {
 		t.Fatalf("expected zero counts for empty resolution descriptor")
@@ -53,6 +58,7 @@ func TestResolutionDescriptorZeroStep(t *testing.T) {
 }
 
 func TestDataTypeString(t *testing.T) {
+	// Validate DataType string formatting
 	cases := []struct {
 		value DataType
 		want  string
@@ -71,6 +77,7 @@ func TestDataTypeString(t *testing.T) {
 }
 
 func TestSymmetryTypeString(t *testing.T) {
+	// Validate SymmetryType string formatting
 	cases := []struct {
 		value SymmetryType
 		want  string

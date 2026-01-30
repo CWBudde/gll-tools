@@ -8,6 +8,7 @@ import (
 type tokenKind int
 
 const (
+	// Token kinds for XGLL lexer
 	tokenEOF tokenKind = iota
 	tokenString
 	tokenNumber
@@ -17,6 +18,7 @@ const (
 )
 
 type token struct {
+	// Token metadata
 	Kind   tokenKind
 	Value  string
 	Line   int
@@ -24,6 +26,7 @@ type token struct {
 }
 
 type lexer struct {
+	// Lexer state and diagnostics
 	input []rune
 	pos   int
 	line  int
@@ -32,6 +35,7 @@ type lexer struct {
 }
 
 func newLexer(input string) *lexer {
+	// Initialize lexer with input
 	return &lexer{
 		input: []rune(input),
 		line:  1,
@@ -40,13 +44,16 @@ func newLexer(input string) *lexer {
 }
 
 func (l *lexer) nextToken() token {
+	// Main tokenization loop
 	for {
 		if l.pos >= len(l.input) {
 			return token{Kind: tokenEOF, Line: l.line, Column: l.col}
 		}
 
+		// Inspect next rune
 		ch := l.peek()
 
+		// Normalize CRLF or CR newlines
 		if ch == '\r' {
 			l.advance()
 
@@ -60,6 +67,7 @@ func (l *lexer) nextToken() token {
 			return token{Kind: tokenNewline, Line: l.line - 1, Column: 1}
 		}
 
+		// Handle LF newline
 		if ch == '\n' {
 			l.advance()
 			l.line++
@@ -68,11 +76,13 @@ func (l *lexer) nextToken() token {
 			return token{Kind: tokenNewline, Line: l.line - 1, Column: 1}
 		}
 
+		// Skip whitespace
 		if ch == ' ' || ch == '\t' {
 			l.advance()
 			continue
 		}
 
+		// Reject non-ASCII control chars
 		if ch < 32 || ch > 127 {
 			l.diag(SeverityError, fmt.Sprintf("invalid character %q", ch))
 			l.advance()
@@ -80,6 +90,7 @@ func (l *lexer) nextToken() token {
 			return token{Kind: tokenInvalid, Line: l.line, Column: l.col - 1}
 		}
 
+		// Tokenize by leading character
 		switch ch {
 		case '"':
 			return l.readString()
@@ -100,6 +111,7 @@ func (l *lexer) nextToken() token {
 }
 
 func (l *lexer) readString() token {
+	// Parse quoted string literal
 	startLine := l.line
 	startCol := l.col
 	l.advance()
@@ -133,18 +145,22 @@ func (l *lexer) readString() token {
 }
 
 func (l *lexer) readNumber() token {
+	// Parse numeric literal
 	startLine := l.line
 	startCol := l.col
 	start := l.pos
 
+	// Optional sign
 	if l.peek() == '+' || l.peek() == '-' {
 		l.advance()
 	}
 
+	// Integer part
 	for isDigit(l.peek()) {
 		l.advance()
 	}
 
+	// Fractional part
 	if l.peek() == '.' {
 		l.advance()
 
@@ -153,6 +169,7 @@ func (l *lexer) readNumber() token {
 		}
 	}
 
+	// Exponent part
 	if l.peek() == 'e' || l.peek() == 'E' {
 		l.advance()
 
@@ -165,6 +182,7 @@ func (l *lexer) readNumber() token {
 		}
 	}
 
+	// Validate numeric value
 	value := string(l.input[start:l.pos])
 	if _, err := strconv.ParseFloat(value, 64); err != nil {
 		l.diagAt(SeverityError, fmt.Sprintf("invalid number %q", value), startLine, startCol)
@@ -175,6 +193,7 @@ func (l *lexer) readNumber() token {
 }
 
 func (l *lexer) peek() rune {
+	// Peek current rune
 	if l.pos >= len(l.input) {
 		return 0
 	}
@@ -183,6 +202,7 @@ func (l *lexer) peek() rune {
 }
 
 func (l *lexer) peekNext() rune {
+	// Peek next rune
 	if l.pos+1 >= len(l.input) {
 		return 0
 	}
@@ -191,6 +211,7 @@ func (l *lexer) peekNext() rune {
 }
 
 func (l *lexer) advance() {
+	// Advance cursor and update line/column
 	if l.pos < len(l.input) {
 		if l.input[l.pos] == '\n' {
 			l.line++
@@ -204,6 +225,7 @@ func (l *lexer) advance() {
 }
 
 func (l *lexer) diag(sev DiagnosticSeverity, msg string) {
+	// Record diagnostic at current position
 	l.diags = append(l.diags, Diagnostic{
 		Severity: sev,
 		Message:  msg,
@@ -213,6 +235,7 @@ func (l *lexer) diag(sev DiagnosticSeverity, msg string) {
 }
 
 func (l *lexer) diagAt(sev DiagnosticSeverity, msg string, line, col int) {
+	// Record diagnostic at specified position
 	l.diags = append(l.diags, Diagnostic{
 		Severity: sev,
 		Message:  msg,
@@ -222,10 +245,12 @@ func (l *lexer) diagAt(sev DiagnosticSeverity, msg string, line, col int) {
 }
 
 func isDigit(ch rune) bool {
+	// ASCII digit check
 	return ch >= '0' && ch <= '9'
 }
 
 func isNumberStart(ch rune, next rune) bool {
+	// Detect number prefix (+, -, ., digit)
 	if isDigit(ch) {
 		return true
 	}

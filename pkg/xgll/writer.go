@@ -10,17 +10,21 @@ import (
 
 // Writer emits a binary representation of an XGLL document.
 type Writer interface {
+	// Format returns the writer format key
 	Format() string
+	// Write serializes a document to output
 	Write(doc *Document, w io.Writer) error
 }
 
 var (
+	// Writer registry
 	writerMu sync.RWMutex
 	writers  = map[string]Writer{}
 )
 
 // RegisterWriter registers a writer by format.
 func RegisterWriter(w Writer) {
+	// Register under lowercase format key
 	writerMu.Lock()
 	defer writerMu.Unlock()
 
@@ -29,6 +33,7 @@ func RegisterWriter(w Writer) {
 
 // GetWriter returns a writer for the given format.
 func GetWriter(format string) (Writer, error) {
+	// Lookup registered writer
 	writerMu.RLock()
 	defer writerMu.RUnlock()
 
@@ -37,11 +42,13 @@ func GetWriter(format string) (Writer, error) {
 		return nil, fmt.Errorf("unknown format %q", format)
 	}
 
+	// Return selected writer
 	return w, nil
 }
 
 // ListWriterFormats returns registered formats in sorted order.
 func ListWriterFormats() []string {
+	// Collect and sort keys
 	writerMu.RLock()
 	defer writerMu.RUnlock()
 
@@ -50,6 +57,7 @@ func ListWriterFormats() []string {
 		formats = append(formats, k)
 	}
 
+	// Sort for stable output
 	sort.Strings(formats)
 
 	return formats

@@ -109,3 +109,12 @@ convert-xgll-pretty FILE="testdata/xgll/example-ls.xgll" OUTPUT="example-pretty.
 # Validate XGLL example
 validate-xgll FILE="testdata/xgll/example-la.xgll":
     go run ./cmd/xgllc validate "{{ FILE }}"
+
+# Compile all XGLL testdata to GLL files
+compile-xgll:
+    #!/usr/bin/env bash
+    for f in testdata/xgll/*.xgll; do
+        out="${f%.xgll}.gll"
+        echo "Compiling $f -> $out"
+        go run ./cmd/xgllc convert "$f" -f gll -o "$out"
+    done

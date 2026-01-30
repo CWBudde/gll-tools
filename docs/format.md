@@ -1014,11 +1014,11 @@ Common embedded files:
 
 3D coordinate.
 
-| Field | Type   | Description       |
-| ----- | ------ | ----------------- |
-| X     | double | X coordinate (mm) |
-| Y     | double | Y coordinate (mm) |
-| Z     | double | Z coordinate (mm) |
+| Field | Type   | Description      |
+| ----- | ------ | ---------------- |
+| X     | double | X coordinate (m) |
+| Y     | double | Y coordinate (m) |
+| Z     | double | Z coordinate (m) |
 
 ---
 
@@ -1051,9 +1051,9 @@ Each vertex has a block wrapper and metadata.
 | vcheck     | int16  | Must be 0                      |
 | sver       | int16  | Sub-version                    |
 | Color      | int32  | RGB color for rendering        |
-| X          | double | X coordinate (mm)              |
-| Y          | double | Y coordinate (mm)              |
-| Z          | double | Z coordinate (mm)              |
+| X          | double | X coordinate (m)               |
+| Y          | double | Y coordinate (m)               |
+| Z          | double | Z coordinate (m)               |
 | Label      | string | Optional vertex label          |
 | HasTwin    | byte   | 1 if vertex has symmetric twin |
 
