@@ -2138,6 +2138,25 @@ function formatBoxTypeDetail(box) {
   const sources = Array.isArray(box.sources) && box.sources.length > 0
     ? box.sources.map((src) => escapeHtml(src)).join(", ")
     : "-";
+  const placements =
+    Array.isArray(box.source_placements) && box.source_placements.length > 0
+      ? box.source_placements
+          .map((placement) => {
+            const label = placement?.label || placement?.key;
+            const defKey = placement?.source_def_key;
+            if (label && defKey) {
+              return `${escapeHtml(label)} (${escapeHtml(defKey)})`;
+            }
+            if (label) {
+              return escapeHtml(label);
+            }
+            if (defKey) {
+              return escapeHtml(defKey);
+            }
+            return "-";
+          })
+          .join(", ")
+      : "-";
   const weightValue = formatNumber(box.weight, 2);
   const weight = weightValue === "-" ? "-" : `${weightValue} kg`;
   const vAngleValue = formatNumber(box.vertical_opening_angle, 1);
@@ -2147,7 +2166,10 @@ function formatBoxTypeDetail(box) {
 
   return `
         <div class="config-item-detail">
-            Key: ${key} • Sources: ${sources} • Weight: ${weight} • Vertical Opening Angle: ${vAngle} • Horizontal Opening Angle: ${hAngle}
+            Key: ${key} • Weight: ${weight} • Vertical Opening Angle: ${vAngle} • Horizontal Opening Angle: ${hAngle}
+        </div>
+        <div class="config-item-detail">
+            Sources: ${sources} • Source Placements: ${placements}
         </div>
     `;
 }
