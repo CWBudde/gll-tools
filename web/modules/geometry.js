@@ -43,13 +43,15 @@ export function createGeometryController({
   function toViewPoint(point) {
     const p = normalizePoint(point);
     if (!p) return null;
-    // Most likely fix: GLL geometry is Z-up; swap Y/Z for Three.js (Y-up).
+    // NOTE: GLL geometry is Z-up; Three.js is Y-up.
     return { x: p.x, y: p.z, z: p.y };
   }
 
   function applyGridTheme(grid, colors) {
     if (!grid || !colors) return;
-    const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
+    const materials = Array.isArray(grid.material)
+      ? grid.material
+      : [grid.material];
     materials.forEach((material, index) => {
       if (!material) return;
       material.transparent = true;
@@ -232,7 +234,9 @@ export function createGeometryController({
 
         const forward = new THREE.Vector3();
         inst.camera.getWorldDirection(forward);
-        const right = new THREE.Vector3().crossVectors(forward, inst.camera.up).normalize();
+        const right = new THREE.Vector3()
+          .crossVectors(forward, inst.camera.up)
+          .normalize();
         const up = new THREE.Vector3().copy(inst.camera.up).normalize();
 
         inst.orbit.target.addScaledVector(right, -deltaX);
@@ -241,7 +245,10 @@ export function createGeometryController({
       } else if (state.mode === "rotate") {
         inst.orbit.theta -= dx * 0.006;
         inst.orbit.phi -= dy * 0.006;
-        inst.orbit.phi = Math.max(0.05, Math.min(Math.PI - 0.05, inst.orbit.phi));
+        inst.orbit.phi = Math.max(
+          0.05,
+          Math.min(Math.PI - 0.05, inst.orbit.phi),
+        );
         updateCameraFromOrbit(inst);
       }
     });
@@ -259,7 +266,10 @@ export function createGeometryController({
         if (!inst.camera || !inst.orbit) return;
         e.preventDefault();
         const delta = Math.sign(e.deltaY) * 0.2;
-        inst.orbit.radius = Math.max(0.25, Math.min(25, inst.orbit.radius + delta));
+        inst.orbit.radius = Math.max(
+          0.25,
+          Math.min(25, inst.orbit.radius + delta),
+        );
         updateCameraFromOrbit(inst);
       },
       { passive: false },
@@ -270,13 +280,15 @@ export function createGeometryController({
     const geometry = inst.caseGeometry;
     if (!hasGeometryData(geometry)) return;
 
-    const geometryData = buildCaseGeometryData(geometry, { showFaces, showEdges });
+    const geometryData = buildCaseGeometryData(geometry, {
+      showFaces,
+      showEdges,
+    });
     if (!geometryData || (!geometryData.mesh && !geometryData.lines)) return;
 
     inst.showFaces = showFaces;
     inst.showEdges = showEdges;
 
-    // Remove old
     if (inst.mesh) {
       inst.group.remove(inst.mesh);
       inst.mesh.geometry?.dispose?.();
@@ -326,9 +338,9 @@ export function createGeometryController({
     if (geometryData.bounds && inst.camera && inst.group) {
       const bounds = geometryData.bounds;
       const center = {
-        x: (bounds.minX + bounds.maxX) / 2,
-        y: (bounds.minY + bounds.maxY) / 2,
-        z: (bounds.minZ + bounds.maxZ) / 2,
+        x: (bounds.minX + bounds.maxX) * 0.5,
+        y: (bounds.minY + bounds.maxY) * 0.5,
+        z: (bounds.minZ + bounds.maxZ) * 0.5,
       };
       inst.group.position.set(-center.x, -center.y, -center.z);
 
@@ -343,10 +355,9 @@ export function createGeometryController({
       const scaleFactor = size > 0 ? targetSize / size : 1;
       inst.group.scale.setScalar(scaleFactor);
 
-      const markerRadiusWorld = 0.03;
-      const markerRadiusRaw = scaleFactor > 0
-        ? markerRadiusWorld / scaleFactor
-        : markerRadiusWorld;
+      const markerRadiusWorld = 0.01;
+      const markerRadiusRaw =
+        scaleFactor > 0 ? markerRadiusWorld / scaleFactor : markerRadiusWorld;
 
       const markers = new THREE.Group();
       const refPoint = toViewPoint(inst.item?.reference_point);
@@ -376,7 +387,7 @@ export function createGeometryController({
       const scaledSize = Math.max(size * scaleFactor, 0.2);
       const radius = Math.max(scaledSize * 0.5, 0.1);
       const fov = (inst.camera.fov * Math.PI) / 180;
-      const distance = radius / Math.tan(fov / 2);
+      const distance = radius / Math.tan(fov * 0.5);
       if (inst.controls) {
         inst.controls.target.set(0, 0, 0);
         inst.camera.position.set(0, 0.4, Math.max(distance * 1.15, 0.5));
@@ -389,8 +400,6 @@ export function createGeometryController({
         updateCameraFromOrbit(inst);
       }
     }
-
-    // Meta removed (duplicate of header info)
   }
 
   function destroyInstance(inst) {
@@ -412,7 +421,9 @@ export function createGeometryController({
     if (inst.renderer) {
       inst.renderer.dispose();
       if (inst.renderer.domElement?.parentNode) {
-        inst.renderer.domElement.parentNode.removeChild(inst.renderer.domElement);
+        inst.renderer.domElement.parentNode.removeChild(
+          inst.renderer.domElement,
+        );
       }
     }
   }
@@ -530,7 +541,9 @@ export function createGeometryController({
     let lineGeometry = null;
     if (options?.showEdges) {
       const edges = Array.isArray(geometry.edges) ? geometry.edges : [];
-      const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
+      const vertices = Array.isArray(geometry.vertices)
+        ? geometry.vertices
+        : [];
       const edgePairs =
         edges.length > 0
           ? edges.map((edge) => ({
@@ -559,7 +572,11 @@ export function createGeometryController({
         positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
         addBounds(p1);
         addBounds(p2);
-        const edgeColor = colorFromInt(edge.color, themeColors.edgeFallback, color);
+        const edgeColor = colorFromInt(
+          edge.color,
+          themeColors.edgeFallback,
+          color,
+        );
         colors.push(
           edgeColor.r,
           edgeColor.g,
@@ -586,7 +603,9 @@ export function createGeometryController({
     let meshGeometry = null;
     if (options?.showFaces && Array.isArray(geometry.faces)) {
       const faces = geometry.faces;
-      const vertices = Array.isArray(geometry.vertices) ? geometry.vertices : [];
+      const vertices = Array.isArray(geometry.vertices)
+        ? geometry.vertices
+        : [];
       const positions = [];
       const colors = [];
       const color = new THREE.Color();
@@ -594,7 +613,11 @@ export function createGeometryController({
       faces.forEach((face) => {
         const indices = Array.isArray(face.vertices) ? face.vertices : [];
         if (indices.length < 3) return;
-        const faceColor = colorFromInt(face.color, themeColors.faceFallback, color);
+        const faceColor = colorFromInt(
+          face.color,
+          themeColors.faceFallback,
+          color,
+        );
         for (let i = 1; i + 1 < indices.length; i += 1) {
           const p0 = toViewPoint(
             resolveGeometryVertex(geometry, vertices, indices[0], scale),
@@ -606,17 +629,7 @@ export function createGeometryController({
             resolveGeometryVertex(geometry, vertices, indices[i + 1], scale),
           );
           if (!p0 || !p1 || !p2) continue;
-          positions.push(
-            p0.x,
-            p0.y,
-            p0.z,
-            p1.x,
-            p1.y,
-            p1.z,
-            p2.x,
-            p2.y,
-            p2.z,
-          );
+          positions.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
           addBounds(p0);
           addBounds(p1);
           addBounds(p2);
