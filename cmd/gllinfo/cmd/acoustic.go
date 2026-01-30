@@ -5,8 +5,14 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/cwbudde/gll-tools/internal/clf"
+	"github.com/cwbudde/gll-tools/internal/frd"
+	"github.com/cwbudde/gll-tools/internal/mesh"
+	"github.com/cwbudde/gll-tools/internal/viz"
 	"github.com/cwbudde/gll-tools/pkg/gll"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +22,9 @@ var (
 	loadResponses bool
 	maxResponses  int
 	exportCSV     string
+	exportCLF     string
+	exportFRD     string
+	cabinetDXF    string
 )
 
 var acousticCmd = &cobra.Command{
@@ -28,7 +37,8 @@ Examples:
   gllinfo acoustic speaker.gll                    # Show all sources
   gllinfo acoustic speaker.gll --source 0         # Show first source in detail
   gllinfo acoustic speaker.gll -s 0 --responses   # Include response data
-  gllinfo acoustic speaker.gll -s 0 --export-csv output.csv  # Export to CSV`,
+  gllinfo acoustic speaker.gll -s 0 --export-csv output.csv  # Export to CSV
+  gllinfo acoustic speaker.gll -s 0 --export-frd output/     # Export to FRD files`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAcoustic,
 }
@@ -40,6 +50,9 @@ func init() {
 	acousticCmd.Flags().BoolVarP(&loadResponses, "responses", "r", false, "load and display response data")
 	acousticCmd.Flags().IntVar(&maxResponses, "max-responses", 10, "maximum responses to display (default: 10)")
 	acousticCmd.Flags().StringVar(&exportCSV, "export-csv", "", "export response data to CSV file")
+	acousticCmd.Flags().StringVar(&exportCLF, "export-clf", "", "export directivity to CLF text format file")
+	acousticCmd.Flags().StringVar(&exportFRD, "export-frd", "", "export responses to FRD files (directory path)")
+	acousticCmd.Flags().StringVar(&cabinetDXF, "cabinet-dxf", "", "DXF file path to reference in CLF <CABINET> tag")
 }
 
 func runAcoustic(cmd *cobra.Command, args []string) error {
@@ -75,12 +88,30 @@ func runAcoustic(cmd *cobra.Command, args []string) error {
 			return exportResponsesCSV(f, sources[sourceIndex], exportCSV)
 		}
 
+		// Handle CLF export
+		if exportCLF != "" {
+			return exportSourceCLF(f, sources[sourceIndex], &file.GenSystem, exportCLF, file.Database.BoxTypes)
+		}
+
+		// Handle FRD export
+		if exportFRD != "" {
+			return exportResponsesFRD(f, sources[sourceIndex], filename, exportFRD)
+		}
+
 		return displaySource(f, sources[sourceIndex], placementsByDef, loadResponses, maxResponses)
 	}
 
-	// CSV export requires a specific source
+	// CLF/CSV/FRD export requires a specific source
+	if exportCLF != "" {
+		return fmt.Errorf("--export-clf requires --source to specify which source to export")
+	}
+
 	if exportCSV != "" {
 		return fmt.Errorf("--export-csv requires --source to specify which source to export")
+	}
+
+	if exportFRD != "" {
+		return fmt.Errorf("--export-frd requires --source to specify which source to export")
 	}
 
 	// Display all sources summary
@@ -394,4 +425,174 @@ func exportResponsesCSV(f *os.File, src gll.SourceDefinitionItem, filename strin
 
 	fmt.Printf("Exported %d responses to %s\n", len(balloon.Responses), filename)
 	return nil
+}
+
+// exportResponsesFRD exports each balloon response as a separate FRD file into the given directory.
+func exportResponsesFRD(f *os.File, src gll.SourceDefinitionItem, gllFilename string, outDir string) error {
+	if src.Definition == nil {
+		return fmt.Errorf("source has no definition")
+	}
+
+	def := src.Definition
+	if def.BalloonData == nil {
+		return fmt.Errorf("source has no balloon data")
+	}
+
+	balloon := def.BalloonData
+	if balloon.ResponseCount == 0 {
+		return fmt.Errorf("source has no responses")
+	}
+
+	if err := gll.LoadBalloonResponses(f, balloon); err != nil {
+		return fmt.Errorf("failed to load responses: %w", err)
+	}
+
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Extract basename from GLL filename (without extension)
+	basename := strings.TrimSuffix(filepath.Base(gllFilename), filepath.Ext(gllFilename))
+
+	angRes := balloon.AngularResolution
+	meridianCount := angRes.MeridianCount()
+	parallelCount := angRes.ParallelCount()
+
+	for i, resp := range balloon.Responses {
+		meridianIdx := i % meridianCount
+		parallelIdx := i / meridianCount
+		if parallelIdx >= parallelCount {
+			continue
+		}
+
+		meridianAngle := float64(meridianIdx) * angRes.MeridianStep
+		parallelAngle := float64(parallelIdx) * angRes.ParallelStep
+
+		filename := filepath.Join(outDir, fmt.Sprintf("%s_m%03.0f_p%03.0f.frd", basename, meridianAngle, parallelAngle))
+
+		frequencies := make([]float64, int(resp.Definition.PointCount))
+		levels := make([]float64, int(resp.Definition.PointCount))
+		phases := make([]float64, int(resp.Definition.PointCount))
+
+		for j := range frequencies {
+			frequencies[j] = resp.Definition.GetFrequency(j)
+			if j < len(resp.Level) {
+				levels[j] = resp.Level[j]
+			}
+			if j < len(resp.Phase) {
+				phases[j] = resp.Phase[j]
+			}
+		}
+
+		outFile, err := os.Create(filename)
+		if err != nil {
+			return fmt.Errorf("failed to create FRD file: %w", err)
+		}
+
+		err = frd.WriteResponse(outFile, frequencies, levels, phases)
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to write FRD data: %w", err)
+		}
+	}
+
+	fmt.Printf("Exported %d responses as FRD files to %s\n", len(balloon.Responses), outDir)
+	return nil
+}
+
+// exportSourceCLF exports directivity data for a source to a CLF text format file.
+func exportSourceCLF(f *os.File, src gll.SourceDefinitionItem, gen *gll.GenSystem, filename string, boxes []gll.BoxType) error {
+	if src.Definition == nil {
+		return fmt.Errorf("source has no definition")
+	}
+
+	def := src.Definition
+	if def.BalloonData == nil {
+		return fmt.Errorf("source has no balloon data")
+	}
+
+	balloon := def.BalloonData
+	if balloon.ResponseCount == 0 {
+		return fmt.Errorf("source has no responses")
+	}
+
+	err := gll.LoadBalloonResponses(f, balloon)
+	if err != nil {
+		return fmt.Errorf("failed to load responses: %w", err)
+	}
+
+	outFile, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	opts := []clf.ExportOption{
+		clf.WithBoxTypes(boxes),
+		clf.WithSourceKey(src.Key),
+	}
+
+	// Determine DXF path: explicit flag, or auto-generate alongside CLF.
+	dxfPath := cabinetDXF
+	if dxfPath == "" {
+		dxfPath = autoExportCabinetDXF(filename, src.Key, boxes)
+	}
+	if dxfPath != "" {
+		opts = append(opts, clf.WithCabinetDXF(filepath.Base(dxfPath)))
+	}
+
+	err = clf.ExportSource(outFile, def, gen, opts...)
+	if err != nil {
+		return fmt.Errorf("CLF export failed: %w", err)
+	}
+
+	fmt.Printf("Exported CLF text file to %s\n", filename)
+	return nil
+}
+
+// autoExportCabinetDXF finds the first box containing sourceKey that has geometry,
+// exports it as a DXF file alongside the CLF file, and returns the DXF path.
+// Returns "" if no suitable geometry is found.
+func autoExportCabinetDXF(clfPath string, sourceKey string, boxes []gll.BoxType) string {
+	if sourceKey == "" {
+		return ""
+	}
+
+	var geom *gll.CaseGeometry
+	for _, box := range boxes {
+		for _, sp := range box.SourcePlacements {
+			if sp.SourceDefKey == sourceKey {
+				if box.CaseGeometry != nil && len(box.CaseGeometry.Vertices) > 0 {
+					geom = box.CaseGeometry
+				}
+				break
+			}
+		}
+		if geom != nil {
+			break
+		}
+	}
+
+	if geom == nil {
+		return ""
+	}
+
+	m, err := viz.BuildCaseGeometryMesh(geom)
+	if err != nil {
+		return ""
+	}
+
+	dxfPath := strings.TrimSuffix(clfPath, filepath.Ext(clfPath)) + ".dxf"
+	dxfFile, err := os.Create(dxfPath)
+	if err != nil {
+		return ""
+	}
+	defer dxfFile.Close()
+
+	if err := mesh.WriteDXF(dxfFile, m, "cabinet"); err != nil {
+		return ""
+	}
+
+	fmt.Printf("Exported cabinet DXF to %s\n", dxfPath)
+	return dxfPath
 }

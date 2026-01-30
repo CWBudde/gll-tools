@@ -149,6 +149,9 @@ func TestDecompressByteArrayWithDifferentiation(t *testing.T) {
 func TestBitMasksTable(t *testing.T) {
 	// Verify the bit masks are correct powers of 2
 	for i, mask := range bitMasks {
+		if i < 0 || i >= 32 {
+			t.Fatalf("index %d out of range for uint32", i)
+		}
 		expected := uint32(1) << uint(i)
 		if mask != expected {
 			t.Errorf("bitMasks[%d] = %d, want %d", i, mask, expected)

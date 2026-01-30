@@ -1,5 +1,6 @@
 export function createVisualizationController({
   getCurrentData,
+  getCachedArrayBalloon,
   formatFrequency,
   formatAngle,
   computePolarSlices,
@@ -7,6 +8,7 @@ export function createVisualizationController({
   getResponseWithSymmetry,
   escapeHtml,
 }) {
+  // Chart and scene state
   let polarChart = null;
   let polarChartInitialized = false;
   let balloonRenderer = null;
@@ -17,9 +19,11 @@ export function createVisualizationController({
   let balloonFrameId = null;
   let balloonResizeBound = false;
   let balloonPointerState = null;
+  let coverageLines = [];
   const balloonMaxCache = new WeakMap();
   const polarSliderMax = 1000;
 
+  // Chart.js plugin for polar compass labels
   const polarCompassPlugin = {
     id: "polarCompass",
     afterDraw(chart) {
@@ -72,31 +76,48 @@ export function createVisualizationController({
   };
 
   function updatePolarOptions() {
-    const sourceSelect = document.getElementById("global-source");
+    // Populate polar frequency options from cached array balloon data
     const freqSelect = document.getElementById("polar-frequency");
-    if (!sourceSelect || !freqSelect) {
+    if (!freqSelect) {
       return;
     }
-    const currentData = getCurrentData();
-    const sources = currentData?.database?.source_definitions || [];
-    const sourcesWithResponses = sources.filter(
-      (s) => s.responses && s.responses.length > 0,
-    );
+
+    const cached = getCachedArrayBalloon();
+    if (!cached?.frequencies?.length) {
+      // Fall back to single-source if no array data
+      const currentData = getCurrentData();
+      const sources = currentData?.database?.source_definitions || [];
+      const sourcesWithResponses = sources.filter(
+        (s) => s.responses && s.responses.length > 0,
+      );
+      if (!sourcesWithResponses.length) {
+        freqSelect.innerHTML = "";
+        updateGlobalSliderState(null);
+        document.getElementById("polar-meta").innerHTML =
+          '<div class="empty-state">No polar data available. Build a configuration and recalculate.</div>';
+        return;
+      }
+      // Use first source as frequency reference
+      const source = sourcesWithResponses[0];
+      const sampleResponse = source?.responses?.[0];
+      const frequencies = sampleResponse?.frequencies || [];
+      const previousIndex = parseInt(freqSelect.value);
+      freqSelect.innerHTML = frequencies
+        .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
+        .join("");
+      const nextIndex =
+        !isNaN(previousIndex) && previousIndex < frequencies.length
+          ? previousIndex
+          : findNearestFrequencyIndex(frequencies, 1000);
+      freqSelect.value = String(nextIndex);
+      updateGlobalSliderState(frequencies);
+      updateGlobalSliderFromIndex(nextIndex, frequencies);
+      updatePolarChart();
+      return;
+    }
+
+    const frequencies = cached.frequencies;
     const previousIndex = parseInt(freqSelect.value);
-
-    const sourceIndex = parseInt(sourceSelect.value);
-    if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-      freqSelect.innerHTML = "";
-      updateGlobalSliderState(null);
-      document.getElementById("polar-meta").innerHTML =
-        '<div class="empty-state">No polar data available</div>';
-      return;
-    }
-
-    const source = sourcesWithResponses[sourceIndex];
-    const sampleResponse = source?.responses?.[0];
-    const frequencies = sampleResponse?.frequencies || [];
-
     freqSelect.innerHTML = frequencies
       .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
       .join("");
@@ -113,56 +134,18 @@ export function createVisualizationController({
   }
 
   function updateBalloonSourceOptions() {
-    const sourceSelect = document.getElementById("global-source");
-    const currentData = getCurrentData();
-    const sources = currentData?.database?.source_definitions || [];
-    const sourcesWithResponses = sources.filter(
-      (s) => s.responses && s.responses.length > 0,
-    );
-
-    if (!sourcesWithResponses.length) {
-      if (sourceSelect) {
-        sourceSelect.innerHTML =
-          '<option value="">No response data available</option>';
-        sourceSelect.disabled = true;
-      }
-      return;
-    }
-    const defaultIndex = parseInt(sourceSelect?.value);
-
-    if (sourceSelect) {
-      sourceSelect.disabled = false;
-      sourceSelect.innerHTML = sourcesWithResponses
-        .map(
-          (src, i) =>
-            `<option value="${i}">${escapeHtml(src.definition?.label || src.key)}</option>`,
-        )
-        .join("");
-
-      if (
-        !Number.isNaN(defaultIndex) &&
-        defaultIndex < sourcesWithResponses.length
-      ) {
-        sourceSelect.value = String(defaultIndex);
-      }
-    }
+    // Source selects are now populated by setupSourceControls() in app.js
   }
 
   function updateBalloonOptions() {
-    const sourceSelect = document.getElementById("global-source");
+    // Populate balloon frequency options from cached array balloon data
     const freqSelect = document.getElementById("balloon-frequency");
-    if (!sourceSelect || !freqSelect) {
+    if (!freqSelect) {
       return;
     }
-    const currentData = getCurrentData();
-    const sources = currentData?.database?.source_definitions || [];
-    const sourcesWithResponses = sources.filter(
-      (s) => s.responses && s.responses.length > 0,
-    );
-    const previousIndex = parseInt(freqSelect.value);
 
-    const sourceIndex = parseInt(sourceSelect.value);
-    if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
+    const cached = getCachedArrayBalloon();
+    if (!cached?.frequencies?.length) {
       freqSelect.innerHTML = "";
       updateGlobalSliderState(null);
       updateBalloonPlaceholder(true);
@@ -170,10 +153,8 @@ export function createVisualizationController({
       return;
     }
 
-    const source = sourcesWithResponses[sourceIndex];
-    const sampleResponse = source?.responses?.[0];
-    const frequencies = sampleResponse?.frequencies || [];
-
+    const frequencies = cached.frequencies;
+    const previousIndex = parseInt(freqSelect.value);
     freqSelect.innerHTML = frequencies
       .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
       .join("");
@@ -188,49 +169,116 @@ export function createVisualizationController({
     updateBalloonVisualization();
   }
 
+  function extractArrayPolarSlices(cached, freqIndex) {
+    // Extract horizontal and vertical slices from cached array balloon grid
+    const { merCount, parCount } = cached.grid;
+    const stepDeg = 10;
+    const angles = buildPolarAngles(stepDeg);
+    const labels = angles.map(formatPolarLabel);
+    const horizontalLevels = [];
+    const verticalLevels = [];
+
+    // Grid indexing: result[m * parCount + p] for meridian m, parallel p
+    // Meridian 90° = index merCount * 90/360 = merCount/4
+    // Meridian 270° = index merCount * 270/360 = 3*merCount/4
+    // Meridian 0° = index 0
+    // Meridian 180° = index merCount/2
+    const merRight = Math.round((merCount * 90) / 360);
+    const merLeft = Math.round((merCount * 270) / 360);
+    const merTop = 0;
+    const merBottom = Math.round((merCount * 180) / 360);
+
+    for (const angle of angles) {
+      const parallelDeg = Math.abs(angle);
+      // Parallel index: 0=0°, parCount-1=180°
+      const pIdx = Math.min(
+        parCount - 1,
+        Math.round((parallelDeg / 180) * (parCount - 1)),
+      );
+
+      // Horizontal slice (right/left plane)
+      const hMerIdx = angle >= 0 ? merRight : merLeft;
+      const hResult = cached.results[hMerIdx * parCount + pIdx];
+      horizontalLevels.push(hResult?.level?.[freqIndex] ?? null);
+
+      // Vertical slice (top/bottom plane)
+      const vMerIdx = angle >= 0 ? merTop : merBottom;
+      const vResult = cached.results[vMerIdx * parCount + pIdx];
+      verticalLevels.push(vResult?.level?.[freqIndex] ?? null);
+    }
+
+    return { labels, horizontalLevels, verticalLevels };
+  }
+
+  function buildPolarAngles(stepDeg) {
+    const angles = [];
+    for (let a = 0; a < 360; a += stepDeg) {
+      angles.push(a <= 180 ? a : a - 360);
+    }
+    return angles;
+  }
+
+  function formatPolarLabel(angle) {
+    return `${angle}°`;
+  }
+
   function updatePolarChart() {
-    const sourceSelect = document.getElementById("global-source");
+    // Render polar directivity chart from cached array balloon data
     const freqSelect = document.getElementById("polar-frequency");
-    if (!sourceSelect || !freqSelect) {
+    if (!freqSelect) {
       return;
     }
-    const currentData = getCurrentData();
-    const sources = currentData?.database?.source_definitions || [];
-    const sourcesWithResponses = sources.filter(
-      (s) => s.responses && s.responses.length > 0,
-    );
 
-    const sourceIndex = parseInt(sourceSelect.value);
     const freqIndex = parseInt(freqSelect.value);
-
-    if (
-      isNaN(sourceIndex) ||
-      isNaN(freqIndex) ||
-      sourceIndex >= sourcesWithResponses.length
-    ) {
+    if (isNaN(freqIndex)) {
       return;
     }
 
-    const source = sourcesWithResponses[sourceIndex];
-    const sampleResponse = source?.responses?.[0];
-    const frequencies = sampleResponse?.frequencies || [];
-    const frequency = frequencies[freqIndex];
+    const cached = getCachedArrayBalloon();
+    let slices;
+    let frequency;
+    let frequencies;
+    let isFallback = false;
 
-    const slices = computePolarSlices(source, freqIndex);
-    if (!slices) {
-      return;
+    if (cached?.frequencies?.length) {
+      frequencies = cached.frequencies;
+      frequency = frequencies[freqIndex];
+      const extracted = extractArrayPolarSlices(cached, freqIndex);
+      slices = {
+        labels: extracted.labels,
+        horizontal: { levels: extracted.horizontalLevels },
+        vertical: { levels: extracted.verticalLevels },
+        meta: { symmetryName: "Array", frontHalfOnly: false, usesOnAxis: false },
+      };
+    } else {
+      // Fallback to single-source
+      const currentData = getCurrentData();
+      const sources = currentData?.database?.source_definitions || [];
+      const sourcesWithResponses = sources.filter(
+        (s) => s.responses && s.responses.length > 0,
+      );
+      if (!sourcesWithResponses.length) return;
+      const source = sourcesWithResponses[0];
+      const sampleResponse = source?.responses?.[0];
+      frequencies = sampleResponse?.frequencies || [];
+      frequency = frequencies[freqIndex];
+      slices = computePolarSlices(source, freqIndex);
+      isFallback = true;
     }
+
+    if (!slices) return;
 
     updatePolarSliderFromIndex(freqIndex, frequencies);
     updatePolarFrequencyValue(frequency);
 
     const ctx = document.getElementById("polar-chart").getContext("2d");
     if (polarChart) {
+      // Replace existing chart instance
       polarChart.destroy();
     }
 
     // Check if normalization is enabled
-    const normalizeCheckbox = document.getElementById("global-normalize");
+    const normalizeCheckbox = document.getElementById("polar-normalize");
     const normalize = normalizeCheckbox?.checked ?? false;
 
     // Apply normalization if enabled
@@ -238,14 +286,19 @@ export function createVisualizationController({
     let verticalLevels = slices.vertical.levels;
 
     if (normalize) {
-      const hMax = Math.max(...horizontalLevels.filter((v) => v !== null && !isNaN(v)));
-      const vMax = Math.max(...verticalLevels.filter((v) => v !== null && !isNaN(v)));
+      // Normalize to each slice's max level
+      const hMax = Math.max(
+        ...horizontalLevels.filter((v) => v !== null && !isNaN(v)),
+      );
+      const vMax = Math.max(
+        ...verticalLevels.filter((v) => v !== null && !isNaN(v)),
+      );
 
       horizontalLevels = horizontalLevels.map((v) =>
-        v !== null && !isNaN(v) ? v - hMax : v
+        v !== null && !isNaN(v) ? v - hMax : v,
       );
       verticalLevels = verticalLevels.map((v) =>
-        v !== null && !isNaN(v) ? v - vMax : v
+        v !== null && !isNaN(v) ? v - vMax : v,
       );
     }
 
@@ -259,6 +312,7 @@ export function createVisualizationController({
       levelRange.max !== null ? levelRange.max - 40 : undefined;
 
     polarChart = new Chart(ctx, {
+      // Create Chart.js radar chart
       type: "radar",
       plugins: [polarCompassPlugin],
       data: {
@@ -347,6 +401,7 @@ export function createVisualizationController({
   }
 
   function handleGlobalSliderInput(e) {
+    // Sync all frequency controls from the global slider
     const sliderValue = Number(e.target.value);
     const frequencyData = getGlobalFrequencyData();
     if (!frequencyData) {
@@ -383,6 +438,7 @@ export function createVisualizationController({
   }
 
   function handleBalloonRangeInput(e) {
+    // Update dB range for balloon visualization
     const value = Number(e.target.value);
     const label = document.getElementById("balloon-range-value");
     label.textContent = Number.isFinite(value) ? String(value) : "-";
@@ -390,6 +446,7 @@ export function createVisualizationController({
   }
 
   function handleBalloonScaleInput(e) {
+    // Update size scale for balloon visualization
     const value = Number(e.target.value);
     const label = document.getElementById("balloon-scale-value");
     label.textContent = Number.isFinite(value) ? `${value.toFixed(1)}×` : "-";
@@ -397,12 +454,14 @@ export function createVisualizationController({
   }
 
   function handleBalloonAutorotateToggle(e) {
+    // Toggle auto-rotation of balloon mesh
     if (balloonGroup) {
       balloonGroup.userData.autoRotate = !!e.target.checked;
     }
   }
 
   function updateGlobalSliderState(frequencies) {
+    // Enable/disable global frequency slider
     const slider = document.getElementById("global-frequency-slider");
     if (!slider) return;
 
@@ -428,6 +487,7 @@ export function createVisualizationController({
   }
 
   function updateGlobalSliderFromIndex(freqIndex, frequencies) {
+    // Move global slider based on selected frequency
     const slider = document.getElementById("global-frequency-slider");
     if (!slider) return;
 
@@ -459,6 +519,7 @@ export function createVisualizationController({
   }
 
   function updateGlobalFrequencyValue(frequency) {
+    // Update frequency label text
     const value = document.getElementById("global-frequency-value");
     if (value) {
       value.textContent = frequency ? formatFrequency(frequency) : "-";
@@ -478,18 +539,26 @@ export function createVisualizationController({
   }
 
   function getGlobalFrequencyData(frequenciesOverride) {
-    const sourceSelect = document.getElementById("global-source");
+    // Compute log range used for slider mapping
+    // Prefer cached array balloon frequencies
+    const cached = getCachedArrayBalloon();
+    if (cached?.frequencies?.length) {
+      const frequencies = frequenciesOverride || cached.frequencies;
+      if (!frequencies.length) return null;
+      const logMin = Math.log10(frequencies[0]);
+      const logMax = Math.log10(frequencies[frequencies.length - 1]);
+      return { frequencies, logMin, logRange: logMax - logMin };
+    }
+
+    // Fallback to first source with responses
     const currentData = getCurrentData();
     const sources = currentData?.database?.source_definitions || [];
     const sourcesWithResponses = sources.filter(
       (s) => s.responses && s.responses.length > 0,
     );
-    const sourceIndex = parseInt(sourceSelect?.value);
-    if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
-      return null;
-    }
+    if (!sourcesWithResponses.length) return null;
 
-    const source = sourcesWithResponses[sourceIndex];
+    const source = sourcesWithResponses[0];
     const sampleResponse = source?.responses?.[0];
     const frequencies =
       frequenciesOverride || sampleResponse?.frequencies || [];
@@ -519,11 +588,13 @@ export function createVisualizationController({
   }
 
   function sliderValueToFrequency(value, frequencyData) {
+    // Convert slider position to frequency
     const ratio = value / polarSliderMax;
     return Math.pow(10, frequencyData.logMin + frequencyData.logRange * ratio);
   }
 
   function findNearestFrequencyIndex(frequencies, targetFrequency) {
+    // Find closest frequency index to a target value
     let closestIndex = 0;
     let closestDistance = Infinity;
     frequencies.forEach((freq, index) => {
@@ -537,6 +608,7 @@ export function createVisualizationController({
   }
 
   function computeLevelRange(levels) {
+    // Compute min/max ignoring nulls
     let min = null;
     let max = null;
     for (const value of levels) {
@@ -550,6 +622,7 @@ export function createVisualizationController({
   }
 
   function updatePolarMeta(slices, frequency) {
+    // Populate metadata chips for polar chart
     const meta = document.getElementById("polar-meta");
     if (!meta) return;
 
@@ -587,6 +660,7 @@ export function createVisualizationController({
   }
 
   function updateBalloonPlaceholder(show) {
+    // Show or hide balloon placeholder
     const container = document.getElementById("balloon-viewer");
     if (!container) return;
     let placeholder = document.getElementById("balloon-placeholder");
@@ -601,12 +675,14 @@ export function createVisualizationController({
   }
 
   function initBalloonScene() {
+    // Initialize Three.js scene for balloon visualization
     const container = document.getElementById("balloon-viewer");
     if (!container || typeof THREE === "undefined") {
       return false;
     }
 
     if (balloonRenderer && balloonScene && balloonCamera && balloonGroup) {
+      // Scene already initialized
       return true;
     }
 
@@ -678,6 +754,7 @@ export function createVisualizationController({
   }
 
   function startBalloonAnimation() {
+    // Drive balloon render loop
     if (!balloonRenderer || !balloonScene || !balloonCamera) {
       return;
     }
@@ -689,6 +766,7 @@ export function createVisualizationController({
     const animate = () => {
       balloonFrameId = requestAnimationFrame(animate);
       if (balloonGroup && balloonGroup.userData.autoRotate) {
+        // Auto-rotate balloon group
         balloonGroup.rotation.y += 0.0035;
       }
       balloonRenderer.render(balloonScene, balloonCamera);
@@ -698,6 +776,7 @@ export function createVisualizationController({
   }
 
   function initBalloonPointerControls(target) {
+    // Pointer controls for rotating and zooming balloon
     if (!target) return;
 
     if (balloonPointerState?.bound) {
@@ -712,6 +791,7 @@ export function createVisualizationController({
     };
 
     const onPointerDown = (event) => {
+      // Begin drag rotation
       state.dragging = true;
       state.lastX = event.clientX;
       state.lastY = event.clientY;
@@ -719,6 +799,7 @@ export function createVisualizationController({
     };
 
     const onPointerMove = (event) => {
+      // Apply drag rotation
       if (!state.dragging || !balloonGroup) return;
       const dx = event.clientX - state.lastX;
       const dy = event.clientY - state.lastY;
@@ -733,11 +814,13 @@ export function createVisualizationController({
     };
 
     const onPointerUp = (event) => {
+      // End drag
       state.dragging = false;
       target.releasePointerCapture?.(event.pointerId);
     };
 
     const onWheel = (event) => {
+      // Zoom camera in/out
       if (!balloonCamera) return;
       event.preventDefault();
       const delta = Math.sign(event.deltaY) * 0.2;
@@ -758,6 +841,7 @@ export function createVisualizationController({
   }
 
   function handleBalloonResize() {
+    // Resize renderer and camera
     if (!balloonRenderer || !balloonCamera) {
       return;
     }
@@ -771,6 +855,7 @@ export function createVisualizationController({
   }
 
   function destroyBalloonScene() {
+    // Dispose balloon renderer and scene
     if (balloonFrameId) {
       cancelAnimationFrame(balloonFrameId);
       balloonFrameId = null;
@@ -798,32 +883,176 @@ export function createVisualizationController({
     updateBalloonPlaceholder(true);
   }
 
+  function buildArrayBalloonGeometry(cached, freqIndex, dbRange, scale, normalize) {
+    // Build balloon geometry from cached array response grid
+    const { merCount, parCount } = cached.grid;
+    const meridianStep = 360 / merCount;
+    const parallelStep = 180 / (parCount - 1);
+
+    const levels = [];
+    let maxLevel = null;
+    let minLevel = null;
+
+    // Grid is stored as merCount * parCount, with meridian-major ordering
+    for (let p = 0; p < parCount; p++) {
+      for (let m = 0; m < merCount; m++) {
+        const result = cached.results[m * parCount + p];
+        const level = result?.level?.[freqIndex];
+        if (level !== null && level !== undefined && !isNaN(level)) {
+          if (maxLevel === null || level > maxLevel) maxLevel = level;
+          if (minLevel === null || level < minLevel) minLevel = level;
+        }
+        levels.push(level ?? null);
+      }
+    }
+
+    if (maxLevel === null) return null;
+
+    const displayMax = normalize ? maxLevel : maxLevel;
+    const displayMin = displayMax - dbRange;
+    const baseRadius = 0.3 * scale;
+    const amplitude = 0.9 * scale;
+
+    const positions = [];
+    const colors = [];
+    const color = new THREE.Color();
+    let vertexIndex = 0;
+
+    for (let p = 0; p < parCount; p++) {
+      const parallelDeg = p * parallelStep;
+      const phi = (parallelDeg * Math.PI) / 180;
+      for (let m = 0; m < merCount; m++) {
+        const azimuthDeg = m * meridianStep;
+        const theta = (azimuthDeg * Math.PI) / 180;
+        const rawLevel = levels[vertexIndex];
+        const level = rawLevel !== null && !isNaN(rawLevel) ? rawLevel : null;
+        const normalized =
+          level === null ? null : Math.min(Math.max((level - displayMin) / dbRange, 0), 1);
+        const radius = normalized !== null ? baseRadius + amplitude * normalized : baseRadius;
+
+        positions.push(
+          radius * Math.sin(phi) * Math.cos(theta),
+          radius * Math.sin(phi) * Math.sin(theta),
+          radius * Math.cos(phi),
+        );
+
+        if (normalized !== null) {
+          color.setHSL(0.67 * (1 - normalized), 0.85, 0.5);
+        } else {
+          color.setRGB(0.5, 0.5, 0.5);
+        }
+        colors.push(color.r, color.g, color.b);
+        vertexIndex++;
+      }
+    }
+
+    // Build triangle indices
+    const indices = [];
+    for (let p = 0; p < parCount - 1; p++) {
+      for (let m = 0; m < merCount; m++) {
+        const m1 = (m + 1) % merCount;
+        const i00 = p * merCount + m;
+        const i01 = p * merCount + m1;
+        const i10 = (p + 1) * merCount + m;
+        const i11 = (p + 1) * merCount + m1;
+        indices.push(i00, i10, i01);
+        indices.push(i01, i10, i11);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setIndex(indices);
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+
+    return {
+      geometry,
+      stats: {
+        frequency: cached.frequencies[freqIndex],
+        minLevel,
+        maxLevel,
+        displayMin,
+        displayMax,
+        dbRange,
+        meridianCount: merCount,
+        parallelCount: parCount,
+        symmetry: 0,
+        symmetryName: "Array",
+        normalized: normalize,
+      },
+    };
+  }
+
   function updateBalloonVisualization() {
-    const sourceSelect = document.getElementById("global-source");
+    // Compute and render the 3D balloon mesh from cached array data or single source
     const freqSelect = document.getElementById("balloon-frequency");
-    if (!sourceSelect || !freqSelect) {
+    if (!freqSelect) {
       return;
     }
+
+    const freqIndex = parseInt(freqSelect.value);
+    if (isNaN(freqIndex)) {
+      updateBalloonPlaceholder(true);
+      updateBalloonMeta(null);
+      return;
+    }
+
+    const cached = getCachedArrayBalloon();
+
+    if (cached?.frequencies?.length) {
+      // Array-driven balloon
+      const frequency = cached.frequencies[freqIndex];
+      if (!frequency) {
+        updateBalloonPlaceholder(true);
+        updateBalloonMeta(null);
+        return;
+      }
+
+      if (typeof THREE === "undefined") {
+        updateBalloonPlaceholder(true);
+        updateBalloonMeta(null);
+        return;
+      }
+
+      const sceneReady = initBalloonScene();
+      if (!sceneReady) {
+        updateBalloonPlaceholder(true);
+        updateBalloonMeta(null);
+        return;
+      }
+      handleBalloonResize();
+      updateBalloonPlaceholder(false);
+
+      updateBalloonSliderFromIndex(freqIndex, cached.frequencies);
+      updateBalloonFrequencyValue(frequency);
+
+      const rangeValue = Number(document.getElementById("balloon-range")?.value);
+      const scaleValue = Number(document.getElementById("balloon-scale")?.value);
+      const normalizeCheckbox = document.getElementById("balloon-normalize");
+      const dbRange = Number.isFinite(rangeValue) ? rangeValue : 40;
+      const scale = Number.isFinite(scaleValue) ? scaleValue : 1;
+      const normalize = normalizeCheckbox?.checked ?? false;
+
+      const geometryData = buildArrayBalloonGeometry(cached, freqIndex, dbRange, scale, normalize);
+      renderBalloonGeometry(geometryData);
+      return;
+    }
+
+    // Fallback to single-source balloon (legacy path)
     const currentData = getCurrentData();
     const sources = currentData?.database?.source_definitions || [];
     const sourcesWithResponses = sources.filter(
       (s) => s.responses && s.responses.length > 0,
     );
 
-    const sourceIndex = parseInt(sourceSelect.value);
-    const freqIndex = parseInt(freqSelect.value);
-
-    if (
-      isNaN(sourceIndex) ||
-      isNaN(freqIndex) ||
-      sourceIndex >= sourcesWithResponses.length
-    ) {
+    if (!sourcesWithResponses.length) {
       updateBalloonPlaceholder(true);
       updateBalloonMeta(null);
       return;
     }
 
-    const source = sourcesWithResponses[sourceIndex];
+    const source = sourcesWithResponses[0];
     const balloon = source?.definition?.balloon_data;
     const ang = balloon?.angular_resolution;
     const grid = getBalloonGrid(source);
@@ -862,7 +1091,7 @@ export function createVisualizationController({
 
     const rangeValue = Number(document.getElementById("balloon-range")?.value);
     const scaleValue = Number(document.getElementById("balloon-scale")?.value);
-    const normalizeCheckbox = document.getElementById("global-normalize");
+    const normalizeCheckbox = document.getElementById("balloon-normalize");
     const dbRange = Number.isFinite(rangeValue) ? rangeValue : 40;
     const scale = Number.isFinite(scaleValue) ? scaleValue : 1;
     const normalize = normalizeCheckbox?.checked ?? false;
@@ -877,7 +1106,12 @@ export function createVisualizationController({
       normalize,
     );
 
+    renderBalloonGeometry(geometryData, source, grid, ang, freqIndex, dbRange, scale, normalize);
+  }
+
+  function renderBalloonGeometry(geometryData, source, grid, ang, freqIndex, dbRange, scale, normalize) {
     if (!geometryData) {
+      // No geometry to render
       if (balloonMesh) {
         balloonScene?.remove(balloonMesh);
         balloonMesh.geometry?.dispose?.();
@@ -909,10 +1143,46 @@ export function createVisualizationController({
     balloonMesh = new THREE.Mesh(geometry, material);
     balloonGroup?.add(balloonMesh);
 
+    // Remove old coverage lines
+    for (const line of coverageLines) {
+      balloonGroup?.remove(line);
+      line.geometry?.dispose();
+      line.material?.dispose();
+    }
+    coverageLines = [];
+
+    // Draw coverage contour lines (only for single-source mode with grid data)
+    if (source && grid && ang && document.getElementById("balloon-coverage")?.checked) {
+      const contours = buildCoverageContours(
+        source,
+        grid,
+        ang,
+        freqIndex,
+        dbRange,
+        scale,
+        normalize,
+      );
+      if (contours) {
+        const colorMap = { 3: 0xffffff, 6: 0xffff00, 9: 0xff4444 };
+        for (const c of contours) {
+          const geom = new THREE.BufferGeometry().setFromPoints(c.points);
+          const mat = new THREE.LineBasicMaterial({
+            color: colorMap[c.threshold] || 0xffffff,
+            linewidth: 2,
+            depthTest: true,
+          });
+          const line = new THREE.Line(geom, mat);
+          balloonGroup?.add(line);
+          coverageLines.push(line);
+        }
+      }
+    }
+
     updateBalloonMeta(stats);
   }
 
   function getSourceGlobalMaxLevel(source) {
+    // Cache max SPL level for normalization reference
     if (!source) return null;
     const cached = balloonMaxCache.get(source);
     if (cached !== undefined) {
@@ -936,7 +1206,109 @@ export function createVisualizationController({
     return maxLevel;
   }
 
-  function buildBalloonGeometry(source, grid, ang, freqIndex, dbRange, scale, normalize = false) {
+  function buildCoverageContours(
+    source,
+    grid,
+    ang,
+    freqIndex,
+    dbRange,
+    scale,
+    normalize = false,
+  ) {
+    const meridianStep = ang.meridian_step;
+    const parallelStep = ang.parallel_step;
+    if (!meridianStep || !parallelStep) return null;
+
+    const meridianCount = Math.max(
+      3,
+      grid?.fullMeridianCount || Math.round(360 / meridianStep),
+    );
+    const parallelCount = Math.max(
+      2,
+      grid?.fullParallelCount || Math.round(180 / parallelStep) + 1,
+    );
+
+    // On-axis reference level
+    const onAxisResp = getResponseWithSymmetry(source, grid, 0, 0);
+    const onAxisLevel = onAxisResp?.level?.[freqIndex];
+    if (onAxisLevel == null || Number.isNaN(onAxisLevel)) return null;
+
+    const globalMaxLevel = getSourceGlobalMaxLevel(source);
+    const displayMax = normalize ? onAxisLevel : globalMaxLevel;
+    if (displayMax === null) return null;
+    const displayMin = displayMax - dbRange;
+    const baseRadius = 0.3 * scale;
+    const amplitude = 0.9 * scale;
+
+    const thresholds = [3, 6, 9];
+    const contours = [];
+
+    for (const cm of thresholds) {
+      const points = [];
+      for (let m = 0; m < meridianCount; m++) {
+        const azimuthDeg = m * meridianStep;
+        for (let p = 1; p < parallelCount; p++) {
+          const pDeg = p * parallelStep;
+          const resp = getResponseWithSymmetry(source, grid, azimuthDeg, pDeg);
+          const level = resp?.level?.[freqIndex];
+          if (level == null || Number.isNaN(level)) continue;
+          const drop = onAxisLevel - level;
+          if (drop > cm) {
+            // Interpolate between p-1 and p
+            const prevDeg = (p - 1) * parallelStep;
+            const prevResp = getResponseWithSymmetry(
+              source,
+              grid,
+              azimuthDeg,
+              prevDeg,
+            );
+            const prevLevel = prevResp?.level?.[freqIndex];
+            let contourDeg;
+            if (prevLevel == null || Number.isNaN(prevLevel)) {
+              contourDeg = pDeg;
+            } else {
+              const prevDrop = onAxisLevel - prevLevel;
+              const frac = (cm - prevDrop) / (drop - prevDrop);
+              contourDeg = prevDeg + frac * parallelStep;
+            }
+            // Compute 3D position with same deformation as mesh
+            const contourLevel = onAxisLevel - cm;
+            const norm = Math.min(
+              Math.max((contourLevel - displayMin) / dbRange, 0),
+              1,
+            );
+            const radius = baseRadius + amplitude * norm;
+            const phi = (contourDeg * Math.PI) / 180;
+            const theta = (azimuthDeg * Math.PI) / 180;
+            points.push(
+              new THREE.Vector3(
+                radius * Math.sin(phi) * Math.cos(theta),
+                radius * Math.sin(phi) * Math.sin(theta),
+                radius * Math.cos(phi),
+              ),
+            );
+            break;
+          }
+        }
+      }
+      if (points.length > 2) {
+        points.push(points[0].clone());
+        contours.push({ threshold: cm, points });
+      }
+    }
+    return contours.length > 0 ? contours : null;
+  }
+
+  function buildBalloonGeometry(
+    source,
+    grid,
+    ang,
+    freqIndex,
+    dbRange,
+    scale,
+    normalize = false,
+  ) {
+    // Build vertex grid and mesh for balloon visualization
     const meridianStep = ang.meridian_step;
     const parallelStep = ang.parallel_step;
 
@@ -965,8 +1337,10 @@ export function createVisualizationController({
     let minLevel = null;
 
     for (let p = 0; p < parallelCount; p += 1) {
+      // Sweep parallels
       const parallelDeg = p * parallelStep;
       for (let m = 0; m < meridianCount; m += 1) {
+        // Sweep meridians
         const azimuthDeg = m * meridianStep;
         const response = getResponseWithSymmetry(
           source,
@@ -985,6 +1359,7 @@ export function createVisualizationController({
     }
 
     if (maxLevel === null) {
+      // No levels found
       if (window?.GLL_DEBUG_BALLOON) {
         console.warn("[Balloon] No level data found for frequency index", {
           freqIndex,
@@ -995,6 +1370,7 @@ export function createVisualizationController({
     }
 
     const globalMaxLevel = getSourceGlobalMaxLevel(source);
+    // Normalize against either local or global max
     const displayMax = normalize ? maxLevel : globalMaxLevel;
     if (displayMax === null) {
       return null;
@@ -1005,15 +1381,17 @@ export function createVisualizationController({
 
     let vertexIndex = 0;
     for (let p = 0; p < parallelCount; p += 1) {
+      // Build vertex positions and colors
       const parallelDeg = p * parallelStep;
       const phi = (parallelDeg * Math.PI) / 180;
       for (let m = 0; m < meridianCount; m += 1) {
         const azimuthDeg = m * meridianStep;
         const theta = (azimuthDeg * Math.PI) / 180;
         const rawLevel = levels[vertexIndex];
-        const level = (rawLevel !== null && rawLevel !== undefined && !Number.isNaN(rawLevel))
-          ? rawLevel
-          : null;
+        const level =
+          rawLevel !== null && rawLevel !== undefined && !Number.isNaN(rawLevel)
+            ? rawLevel
+            : null;
         const normalized =
           level === null
             ? null
@@ -1042,6 +1420,7 @@ export function createVisualizationController({
 
     const indices = [];
     for (let p = 0; p < parallelCount - 1; p += 1) {
+      // Build triangle indices between parallels
       const meridianLimit = wrapMeridian ? meridianCount : meridianCount - 1;
       for (let m = 0; m < meridianLimit; m += 1) {
         const nextM = wrapMeridian ? (m + 1) % meridianCount : m + 1;
@@ -1058,6 +1437,7 @@ export function createVisualizationController({
     }
 
     const geometry = new THREE.BufferGeometry();
+    // Upload position and color attributes
     geometry.setIndex(indices);
     geometry.setAttribute(
       "position",
@@ -1085,6 +1465,7 @@ export function createVisualizationController({
   }
 
   function updateBalloonMeta(stats) {
+    // Populate metadata chips for balloon view
     const meta = document.getElementById("balloon-meta");
     if (!meta) return;
     if (!stats) {
@@ -1115,6 +1496,7 @@ export function createVisualizationController({
   }
 
   function updateBalloonLegend(stats) {
+    // Update min/max labels in legend
     const legend = document.querySelector(".balloon-legend");
     if (!legend) return;
     const labels = legend.querySelectorAll(".balloon-legend-labels span");
@@ -1129,6 +1511,7 @@ export function createVisualizationController({
   }
 
   function resetVisualization() {
+    // Tear down charts and 3D views
     if (polarChart) {
       polarChart.destroy();
       polarChart = null;

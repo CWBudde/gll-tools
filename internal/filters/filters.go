@@ -32,202 +32,172 @@ type FilterResponseResult struct {
 	IsComplex         bool      `json:"is_complex,omitempty"`
 }
 
-// BuildFilterResponse calculates the combined response for a filter definition.
-func BuildFilterResponse(file *gll.File, req FilterResponseRequest) FilterResponseResult {
-	if file.Database == nil {
-		return FilterResponseResult{
-			Success: false,
-			Error:   "no database available in GLL file",
-		}
-	}
+type filterResponseState struct {
+	baseFrequencies   []float64
+	levels            []float64
+	phase             []float64
+	hasPhase          bool
+	usedFilters       int
+	skippedFilters    int
+	mismatchedFilters int
+	totalGain         float64
+	filterKind        string
+	firSampleRate     float64
+	firIsComplex      bool
+}
 
-	if req.GroupIndex < 0 || req.GroupIndex >= len(file.Database.FilterGroups) {
-		return FilterResponseResult{
-			Success: false,
-			Error:   "filter group index out of range",
-		}
-	}
+func (s *filterResponseState) collectFilters(filters []gll.GenericBaseFilter) ([]genericFilterCandidate, []genericIIRCandidate) {
+	var firCandidates []genericFilterCandidate
+	var iirCandidates []genericIIRCandidate
 
-	group := file.Database.FilterGroups[req.GroupIndex]
-	if req.FilterIndex < 0 || req.FilterIndex >= len(group.Filters) {
-		return FilterResponseResult{
-			Success: false,
-			Error:   "filter index out of range",
-		}
-	}
-
-	filterDef := group.Filters[req.FilterIndex]
-	bank := filterDef.Filter
-	if bank == nil {
-		return FilterResponseResult{
-			Success: true,
-			Message: "No filter response data available",
-		}
-	}
-
-	var baseFrequencies []float64
-	var levels []float64
-	var phase []float64
-	hasPhase := false
-	usedFilters := 0
-	skippedFilters := 0
-	mismatchedFilters := 0
-	totalGain := bank.Gain
-	filterKind := "LogSpectrum"
-	firCandidates := make([]genericFilterCandidate, 0, len(bank.Filters))
-	iirCandidates := make([]genericIIRCandidate, 0, len(bank.Filters))
-
-	for _, filter := range bank.Filters {
+	for _, filter := range filters {
 		if filter.ByPass {
 			continue
 		}
-		if filter.Kind != gll.FilterKindLogSpectrum || filter.LogSpectrum == nil {
-			if filter.Kind == gll.FilterKindFIR && filter.FIRData != nil {
+		if filter.Kind == gll.FilterKindLogSpectrum && filter.LogSpectrum != nil {
+			s.processLogSpectrum(filter)
+		} else {
+			switch {
+			case filter.Kind == gll.FilterKindFIR && filter.FIRData != nil:
 				firCandidates = append(firCandidates, genericFilterCandidate{
 					Gain: filter.Gain,
 					FIR:  filter.FIRData,
 				})
-			} else if filter.Kind == gll.FilterKindIIR && filter.IIRParams != nil {
+			case filter.Kind == gll.FilterKindIIR && filter.IIRParams != nil:
 				iirCandidates = append(iirCandidates, genericIIRCandidate{
 					Gain:   filter.Gain,
 					Params: filter.IIRParams,
 				})
-			} else {
-				skippedFilters++
-			}
-			continue
-		}
-
-		spectrum := filter.LogSpectrum
-		frequencies := BuildLogSpectrumFrequencies(spectrum)
-		if len(frequencies) == 0 || len(spectrum.Level) == 0 {
-			skippedFilters++
-			continue
-		}
-
-		if baseFrequencies == nil {
-			baseFrequencies = frequencies
-			levels = make([]float64, len(frequencies))
-			phase = make([]float64, len(frequencies))
-		} else if !frequenciesMatch(baseFrequencies, frequencies) {
-			mismatchedFilters++
-			continue
-		}
-
-		if len(spectrum.Level) == len(levels) {
-			for i, value := range spectrum.Level {
-				levels[i] += value
+			default:
+				s.skippedFilters++
 			}
 		}
+	}
+	return firCandidates, iirCandidates
+}
 
-		if len(spectrum.Phase) == len(phase) {
-			for i, value := range spectrum.Phase {
-				phase[i] += value
-			}
-			hasPhase = true
-		}
-
-		totalGain += filter.Gain
-		usedFilters++
+func (s *filterResponseState) processLogSpectrum(filter gll.GenericBaseFilter) {
+	spectrum := filter.LogSpectrum
+	frequencies := BuildLogSpectrumFrequencies(spectrum)
+	if len(frequencies) == 0 || len(spectrum.Level) == 0 {
+		s.skippedFilters++
+		return
 	}
 
-	var firSampleRate float64
-	var firIsComplex bool
+	if s.baseFrequencies == nil {
+		s.baseFrequencies = frequencies
+		s.levels = make([]float64, len(frequencies))
+		s.phase = make([]float64, len(frequencies))
+	} else if !frequenciesMatch(s.baseFrequencies, frequencies) {
+		s.mismatchedFilters++
+		return
+	}
 
-	if baseFrequencies == nil {
-		filterKind = "FIR"
-		for _, candidate := range firCandidates {
-			frequencies, levelsData, phaseData, ok := buildFIRResponse(candidate.FIR)
+	if len(spectrum.Level) == len(s.levels) {
+		for i, value := range spectrum.Level {
+			s.levels[i] += value
+		}
+	}
+
+	if len(spectrum.Phase) == len(s.phase) {
+		for i, value := range spectrum.Phase {
+			s.phase[i] += value
+		}
+		s.hasPhase = true
+	}
+
+	s.totalGain += filter.Gain
+	s.usedFilters++
+}
+
+func (s *filterResponseState) processFIRCandidates(candidates []genericFilterCandidate) {
+	s.filterKind = "FIR"
+	for _, candidate := range candidates {
+		frequencies, levelsData, phaseData, ok := buildFIRResponse(candidate.FIR)
+		if !ok {
+			s.skippedFilters++
+			continue
+		}
+
+		if s.baseFrequencies == nil {
+			s.baseFrequencies = frequencies
+			s.levels = make([]float64, len(frequencies))
+			s.phase = make([]float64, len(frequencies))
+			s.firSampleRate = candidate.FIR.SampleRate
+			s.firIsComplex = candidate.FIR.IsComplex
+		} else if !frequenciesMatch(s.baseFrequencies, frequencies) {
+			s.mismatchedFilters++
+			continue
+		}
+
+		for i, value := range levelsData {
+			s.levels[i] += value
+		}
+		if len(phaseData) == len(s.phase) {
+			for i, value := range phaseData {
+				s.phase[i] += value
+			}
+			s.hasPhase = true
+		}
+
+		s.totalGain += candidate.Gain
+		s.usedFilters++
+	}
+}
+
+func (s *filterResponseState) processIIRCandidates(candidates []genericIIRCandidate) {
+	s.filterKind = "IIR"
+	s.baseFrequencies = buildStandardLogSpectrumFrequencies()
+	if len(s.baseFrequencies) > 0 {
+		s.levels = make([]float64, len(s.baseFrequencies))
+		s.phase = make([]float64, len(s.baseFrequencies))
+		for _, candidate := range candidates {
+			levelsData, phaseData, ok := buildIIRResponse(candidate.Params, s.baseFrequencies)
 			if !ok {
-				skippedFilters++
+				s.skippedFilters++
 				continue
 			}
-
-			if baseFrequencies == nil {
-				baseFrequencies = frequencies
-				levels = make([]float64, len(frequencies))
-				phase = make([]float64, len(frequencies))
-				firSampleRate = candidate.FIR.SampleRate
-				firIsComplex = candidate.FIR.IsComplex
-			} else if !frequenciesMatch(baseFrequencies, frequencies) {
-				mismatchedFilters++
-				continue
-			}
-
 			for i, value := range levelsData {
-				levels[i] += value
+				s.levels[i] += value
 			}
-			if len(phaseData) == len(phase) {
+			if len(phaseData) == len(s.phase) {
 				for i, value := range phaseData {
-					phase[i] += value
+					s.phase[i] += value
 				}
-				hasPhase = true
+				s.hasPhase = true
 			}
-
-			totalGain += candidate.Gain
-			usedFilters++
+			s.totalGain += candidate.Gain
+			s.usedFilters++
 		}
 	}
+}
 
-	if baseFrequencies == nil && len(iirCandidates) > 0 {
-		filterKind = "IIR"
-		baseFrequencies = buildStandardLogSpectrumFrequencies()
-		if len(baseFrequencies) > 0 {
-			levels = make([]float64, len(baseFrequencies))
-			phase = make([]float64, len(baseFrequencies))
-			for _, candidate := range iirCandidates {
-				levelsData, phaseData, ok := buildIIRResponse(candidate.Params, baseFrequencies)
-				if !ok {
-					skippedFilters++
-					continue
-				}
-				for i, value := range levelsData {
-					levels[i] += value
-				}
-				if len(phaseData) == len(phase) {
-					for i, value := range phaseData {
-						phase[i] += value
-					}
-					hasPhase = true
-				}
-				totalGain += candidate.Gain
-				usedFilters++
-			}
-		}
-	}
-
-	if baseFrequencies == nil || len(levels) == 0 {
-		return FilterResponseResult{
-			Success:        true,
-			Message:        "No LogSpectrum, IIR, or frequency-domain FIR filters available",
-			UsedFilters:    usedFilters,
-			SkippedFilters: skippedFilters,
-		}
-	}
-
+func (s *filterResponseState) finalize(bank *gll.GenericFilterBank) {
 	if bank.ByPass {
-		for i := range levels {
-			levels[i] = 0
+		for i := range s.levels {
+			s.levels[i] = 0
 		}
-		if hasPhase {
-			for i := range phase {
-				phase[i] = 0
+		if s.hasPhase {
+			for i := range s.phase {
+				s.phase[i] = 0
 			}
 		}
-	} else if totalGain != 0 {
-		for i := range levels {
-			levels[i] += totalGain
+	} else if s.totalGain != 0 {
+		for i := range s.levels {
+			s.levels[i] += s.totalGain
 		}
 	}
+}
 
+func (s *filterResponseState) toResult(bank *gll.GenericFilterBank) FilterResponseResult {
 	message := ""
-	if skippedFilters > 0 || mismatchedFilters > 0 {
+	if s.skippedFilters > 0 || s.mismatchedFilters > 0 {
 		parts := make([]string, 0, 2)
-		if skippedFilters > 0 {
-			parts = append(parts, fmt.Sprintf("%d unsupported", skippedFilters))
+		if s.skippedFilters > 0 {
+			parts = append(parts, fmt.Sprintf("%d unsupported", s.skippedFilters))
 		}
-		if mismatchedFilters > 0 {
-			parts = append(parts, fmt.Sprintf("%d mismatched grid", mismatchedFilters))
+		if s.mismatchedFilters > 0 {
+			parts = append(parts, fmt.Sprintf("%d mismatched grid", s.mismatchedFilters))
 		}
 		message = "Skipped " + strings.Join(parts, ", ")
 	}
@@ -235,21 +205,70 @@ func BuildFilterResponse(file *gll.File, req FilterResponseRequest) FilterRespon
 	result := FilterResponseResult{
 		Success:           true,
 		Message:           message,
-		FilterKind:        filterKind,
-		Frequencies:       baseFrequencies,
-		Level:             levels,
-		UsedFilters:       usedFilters,
-		SkippedFilters:    skippedFilters,
-		MismatchedFilters: mismatchedFilters,
+		FilterKind:        s.filterKind,
+		Frequencies:       s.baseFrequencies,
+		Level:             s.levels,
+		UsedFilters:       s.usedFilters,
+		SkippedFilters:    s.skippedFilters,
+		MismatchedFilters: s.mismatchedFilters,
 		Bypassed:          bank.ByPass,
-		SampleRate:        firSampleRate,
-		PointCount:        len(levels),
-		IsComplex:         firIsComplex,
+		SampleRate:        s.firSampleRate,
+		PointCount:        len(s.levels),
+		IsComplex:         s.firIsComplex,
 	}
-	if hasPhase {
-		result.Phase = phase
+	if s.hasPhase {
+		result.Phase = s.phase
 	}
 	return result
+}
+
+// BuildFilterResponse calculates the combined response for a filter definition.
+func BuildFilterResponse(file *gll.File, req FilterResponseRequest) FilterResponseResult {
+	if file.Database == nil {
+		return FilterResponseResult{Success: false, Error: "no database available in GLL file"}
+	}
+
+	if req.GroupIndex < 0 || req.GroupIndex >= len(file.Database.FilterGroups) {
+		return FilterResponseResult{Success: false, Error: "filter group index out of range"}
+	}
+
+	group := file.Database.FilterGroups[req.GroupIndex]
+	if req.FilterIndex < 0 || req.FilterIndex >= len(group.Filters) {
+		return FilterResponseResult{Success: false, Error: "filter index out of range"}
+	}
+
+	filterDef := group.Filters[req.FilterIndex]
+	bank := filterDef.Filter
+	if bank == nil {
+		return FilterResponseResult{Success: true, Message: "No filter response data available"}
+	}
+
+	state := &filterResponseState{
+		filterKind: "LogSpectrum",
+		totalGain:  bank.Gain,
+	}
+	firCandidates, iirCandidates := state.collectFilters(bank.Filters)
+
+	if state.baseFrequencies == nil {
+		state.processFIRCandidates(firCandidates)
+	}
+
+	if state.baseFrequencies == nil && len(iirCandidates) > 0 {
+		state.processIIRCandidates(iirCandidates)
+	}
+
+	if state.baseFrequencies == nil || len(state.levels) == 0 {
+		return FilterResponseResult{
+			Success:        true,
+			Message:        "No LogSpectrum, IIR, or frequency-domain FIR filters available",
+			UsedFilters:    state.usedFilters,
+			SkippedFilters: state.skippedFilters,
+		}
+	}
+
+	state.finalize(bank)
+
+	return state.toResult(bank)
 }
 
 // BuildLogSpectrumFrequencies builds the frequency axis for a stored LogSpectrum response.
@@ -343,11 +362,11 @@ func buildFIRResponse(data *gll.FIRFilterData) ([]float64, []float64, []float64,
 		}
 		phase = make([]float64, points)
 		for i := startIdx; i < count; i++ {
-			real := data.DataIRM[i]
-			imag := data.DataDIP[i]
-			mag := math.Hypot(real, imag)
+			realValue := data.DataIRM[i]
+			imagValue := data.DataDIP[i]
+			mag := math.Hypot(realValue, imagValue)
 			levels[i-startIdx] = magnitudeToDB(mag)
-			phase[i-startIdx] = math.Atan2(imag, real)
+			phase[i-startIdx] = math.Atan2(imagValue, realValue)
 		}
 		hasPhase = true
 	} else {

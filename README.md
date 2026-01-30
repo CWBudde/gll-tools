@@ -17,6 +17,7 @@ GLL files are a proprietary format used by AFMG's EASE acoustic simulation softw
 - Parse database structures (box types, source definitions, filter groups, limits, warnings, presets)
 - Decode acoustic directivity balloon data and frequency responses
 - Export response data to CSV
+- Export plots (polar, response) and 3D balloon meshes
 - JSON output format
 - Convert between GLL binary and XGLL text formats
 
@@ -75,6 +76,28 @@ gllinfo acoustic speaker.gll -s 0 --responses
 
 # Export response data to CSV
 gllinfo acoustic speaker.gll -s 0 --export-csv output.csv
+```
+
+### Visualization exports
+
+```bash
+# Polar directivity plot (SVG)
+gllinfo plot polar speaker.gll --source 0 --frequency 1000 --output polar.svg
+
+# Frequency response plot (SVG)
+gllinfo plot response speaker.gll --source 0 --mode magnitude --output response.svg
+gllinfo plot response speaker.gll --source 0 --mode phase-wrapped --output response_phase_wrapped.svg
+gllinfo plot response speaker.gll --source 0 --mode phase-unwrapped --output response_phase_unwrapped.svg
+gllinfo plot response speaker.gll --source 0 --mode group-delay --output response_group_delay.svg
+
+# 3D balloon mesh (STL/OBJ)
+gllinfo plot balloon speaker.gll --source 0 --frequency 1000 --output balloon.stl
+gllinfo plot balloon speaker.gll --source 0 --frequency 1000 --output balloon.obj
+gllinfo plot balloon speaker.gll --source 0 --frequency 1000 --output balloon_centered.obj --center bbox
+
+# Cabinet/frame geometry export (STL/OBJ)
+gllinfo plot geometry speaker.gll --box 0 --output box_geometry.obj
+gllinfo plot geometry speaker.gll --frame 0 --output frame_geometry.stl
 ```
 
 ### Configuration data

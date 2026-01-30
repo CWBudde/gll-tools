@@ -14,10 +14,12 @@ import (
 )
 
 func TestRoundTripGLLViaXGLL(t *testing.T) {
+	// Guard for expensive, byte-for-byte roundtrip test
 	if os.Getenv("GLL_ROUNDTRIP") != "1" {
 		t.Skip("set GLL_ROUNDTRIP=1 to run full byte-for-byte roundtrip tests")
 	}
 
+	// Find GLL fixtures
 	paths, err := filepath.Glob(filepath.FromSlash("../../testdata/gll/*.gll"))
 	if err != nil {
 		t.Fatalf("glob gll: %v", err)
@@ -26,11 +28,13 @@ func TestRoundTripGLLViaXGLL(t *testing.T) {
 		t.Skip("no .gll files found in testdata/gll")
 	}
 
+	// Use temp output directory
 	outDir := t.TempDir()
 
 	for _, path := range paths {
 		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		t.Run(base, func(t *testing.T) {
+			// Parse original GLL
 			src, err := os.Open(path)
 			if err != nil {
 				t.Fatalf("open gll: %v", err)
@@ -42,26 +46,31 @@ func TestRoundTripGLLViaXGLL(t *testing.T) {
 				t.Fatalf("parse gll: %v", err)
 			}
 
+			// Convert to XGLL
 			doc, err := BuildXGLLDocument(file)
 			if err != nil {
 				t.Fatalf("build xgll: %v", err)
 			}
 
+			// Write XGLL to temp file
 			xgllPath := filepath.Join(outDir, base+".xgll")
 			if err := writeXGLLFile(xgllPath, doc); err != nil {
 				t.Fatalf("write xgll: %v", err)
 			}
 
+			// Parse XGLL back into document
 			roundDoc, err := ParseFile(xgllPath)
 			if err != nil {
 				t.Fatalf("parse xgll: %v", err)
 			}
 
+			// Write roundtripped GLL
 			gllPath := filepath.Join(outDir, base+".gll")
 			if err := writeGLLFile(gllPath, roundDoc); err != nil {
 				t.Fatalf("write gll: %v", err)
 			}
 
+			// Load original and roundtripped bytes
 			origBytes, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read original: %v", err)
@@ -72,6 +81,7 @@ func TestRoundTripGLLViaXGLL(t *testing.T) {
 				t.Fatalf("read roundtrip: %v", err)
 			}
 
+			// Compare byte-for-byte
 			if !bytes.Equal(origBytes, newBytes) {
 				roundFile, err := gllbin.Parse(bytes.NewReader(newBytes))
 				if err != nil {
@@ -94,6 +104,7 @@ func TestRoundTripGLLViaXGLL(t *testing.T) {
 }
 
 func TestRoundTripXGLLSystem(t *testing.T) {
+	// Roundtrip XGLL -> GLL -> XGLL at a system level
 	paths, err := filepath.Glob(filepath.FromSlash("../../testdata/xgll/*.xgll"))
 	if err != nil {
 		t.Fatalf("glob xgll: %v", err)
@@ -105,11 +116,13 @@ func TestRoundTripXGLLSystem(t *testing.T) {
 	for _, path := range paths {
 		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		t.Run(base, func(t *testing.T) {
+			// Parse XGLL input
 			doc, err := ParseFile(path)
 			if err != nil {
 				t.Fatalf("parse xgll: %v", err)
 			}
 
+			// Convert to GLL
 			var buf bytes.Buffer
 			writer, err := GetWriter("gll")
 			if err != nil {
@@ -119,16 +132,19 @@ func TestRoundTripXGLLSystem(t *testing.T) {
 				t.Fatalf("write gll: %v", err)
 			}
 
+			// Parse GLL back
 			file, err := gllbin.Parse(bytes.NewReader(buf.Bytes()))
 			if err != nil {
 				t.Fatalf("parse gll: %v", err)
 			}
 
+			// Convert back to XGLL
 			roundDoc, err := BuildXGLLDocument(file)
 			if err != nil {
 				t.Fatalf("build xgll: %v", err)
 			}
 
+			// Compare a subset of GenSystem metadata
 			origFile, err := BuildGLLFile(doc)
 			if err != nil {
 				t.Fatalf("build gll file: %v", err)
@@ -147,6 +163,7 @@ func TestRoundTripXGLLSystem(t *testing.T) {
 }
 
 func writeXGLLFile(path string, doc *Document) error {
+	// Write XGLL document to file
 	out, err := os.Create(path)
 	if err != nil {
 		return err
@@ -157,6 +174,7 @@ func writeXGLLFile(path string, doc *Document) error {
 }
 
 func writeGLLFile(path string, doc *Document) error {
+	// Write GLL document to file
 	writer, err := GetWriter("gll")
 	if err != nil {
 		return err
@@ -172,6 +190,7 @@ func writeGLLFile(path string, doc *Document) error {
 }
 
 func compareGenSystem(a, b gllbin.GenSystem) error {
+	// Compare a subset of GenSystem fields
 	switch {
 	case a.Label != b.Label:
 		return fmtError("label", a.Label, b.Label)
@@ -201,6 +220,7 @@ func compareGenSystem(a, b gllbin.GenSystem) error {
 }
 
 func fmtError(field string, a, b any) error {
+	// Helper for field mismatch formatting
 	return &fieldMismatch{field: field, a: a, b: b}
 }
 
@@ -211,15 +231,18 @@ type fieldMismatch struct {
 }
 
 func (m *fieldMismatch) Error() string {
+	// Error implements error interface
 	return fmt.Sprintf("field %s mismatch: %v != %v", m.field, m.a, m.b)
 }
 
 func hashBytes(data []byte) string {
+	// Hash bytes for concise comparison output
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
 func formatHeaderDiff(a, b gllbin.Header) string {
+	// Summarize header differences
 	return fmt.Sprintf("fmt=%d/%d sub=%d/%d checksum=%t hash=%t",
 		a.FormatVersion, b.FormatVersion,
 		a.SubVersion, b.SubVersion,
@@ -229,6 +252,7 @@ func formatHeaderDiff(a, b gllbin.Header) string {
 }
 
 func formatGenSystemDiff(a, b gllbin.GenSystem) string {
+	// Summarize gen-system field matches
 	return fmt.Sprintf("label=%t key=%t type=%t company=%t info=%t",
 		a.Label == b.Label,
 		a.Key == b.Key,
@@ -239,6 +263,7 @@ func formatGenSystemDiff(a, b gllbin.GenSystem) string {
 }
 
 func formatDatabaseDiff(a, b *gllbin.Database) string {
+	// Summarize database counts
 	if a == nil && b == nil {
 		return "nil"
 	}
@@ -252,10 +277,12 @@ func formatDatabaseDiff(a, b *gllbin.Database) string {
 }
 
 func formatResourceDiff(a, b []gllbin.Resource) string {
+	// Summarize resource counts
 	return fmt.Sprintf("count=%d/%d", len(a), len(b))
 }
 
 func countDataFiles(db *gllbin.Database) int {
+	// Count data files safely
 	if db == nil {
 		return 0
 	}
@@ -263,6 +290,7 @@ func countDataFiles(db *gllbin.Database) int {
 }
 
 func countBoxTypes(db *gllbin.Database) int {
+	// Count box types safely
 	if db == nil {
 		return 0
 	}
@@ -270,6 +298,7 @@ func countBoxTypes(db *gllbin.Database) int {
 }
 
 func countSourceDefs(db *gllbin.Database) int {
+	// Count source definitions safely
 	if db == nil {
 		return 0
 	}
@@ -277,6 +306,7 @@ func countSourceDefs(db *gllbin.Database) int {
 }
 
 func countFilterGroups(db *gllbin.Database) int {
+	// Count filter groups safely
 	if db == nil {
 		return 0
 	}

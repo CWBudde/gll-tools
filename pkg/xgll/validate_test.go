@@ -6,6 +6,7 @@ import (
 )
 
 func TestValidateSystemConstraintsLA(t *testing.T) {
+	// LA must include Frames and Connectors blocks
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -17,11 +18,13 @@ func TestValidateSystemConstraintsLA(t *testing.T) {
 		"\"Connectors\", 1",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate constraints
 	diags := ValidateSystemConstraints(doc)
 	if len(diags) != 0 {
 		t.Fatalf("expected no diagnostics, got %d", len(diags))
@@ -29,6 +32,7 @@ func TestValidateSystemConstraintsLA(t *testing.T) {
 }
 
 func TestValidateSystemConstraintsMissing(t *testing.T) {
+	// Missing blocks should trigger diagnostics
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -37,11 +41,13 @@ func TestValidateSystemConstraintsMissing(t *testing.T) {
 		"\"Data\"",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate constraints
 	diags := ValidateSystemConstraints(doc)
 	if len(diags) == 0 {
 		t.Fatalf("expected diagnostics for missing blocks")
@@ -49,6 +55,7 @@ func TestValidateSystemConstraintsMissing(t *testing.T) {
 }
 
 func TestValidateSystemConstraintsCL(t *testing.T) {
+	// CL must include Setups block
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -59,11 +66,13 @@ func TestValidateSystemConstraintsCL(t *testing.T) {
 		"\"Setups\", 1",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate constraints
 	diags := ValidateSystemConstraints(doc)
 	if len(diags) != 0 {
 		t.Fatalf("expected no diagnostics, got %d", len(diags))
@@ -71,6 +80,7 @@ func TestValidateSystemConstraintsCL(t *testing.T) {
 }
 
 func TestValidateSystemConstraintsLSWarnings(t *testing.T) {
+	// LS should warn for LA/CL-specific blocks
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -81,22 +91,26 @@ func TestValidateSystemConstraintsLSWarnings(t *testing.T) {
 		"\"Frames\", 1",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate constraints
 	diags := ValidateSystemConstraints(doc)
 	if len(diags) == 0 {
 		t.Fatalf("expected warning diagnostics")
 	}
 
+	// Ensure warning severity
 	if diags[0].Severity != SeverityWarning {
 		t.Fatalf("expected warning severity")
 	}
 }
 
 func TestValidateDataConstraintsCounts(t *testing.T) {
+	// Mismatched counts should trigger diagnostics
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -110,11 +124,13 @@ func TestValidateDataConstraintsCounts(t *testing.T) {
 		"\"Source\", \"A\", \"srcA\", 0,0,0,0,0,0, \"SD_A\"",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate data constraints
 	diags := ValidateDataConstraints(doc)
 	if len(diags) == 0 {
 		t.Fatalf("expected count diagnostics")
@@ -122,6 +138,7 @@ func TestValidateDataConstraintsCounts(t *testing.T) {
 }
 
 func TestValidateDataConstraintsRefs(t *testing.T) {
+	// Missing references should trigger diagnostics
 	input := strings.Join([]string{
 		"\"GLL\"",
 		"\"Format\", \"3D\"",
@@ -139,11 +156,13 @@ func TestValidateDataConstraintsRefs(t *testing.T) {
 		"\"Link\", \"srcMissing\", \"FG_Missing\"",
 	}, "\n")
 
+	// Parse input document
 	doc, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
+	// Validate data constraints
 	diags := ValidateDataConstraints(doc)
 	if len(diags) == 0 {
 		t.Fatalf("expected reference diagnostics")

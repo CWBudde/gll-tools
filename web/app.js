@@ -1,4 +1,5 @@
 // GLL Viewer - WebAssembly Application
+// Three.js core + OrbitControls for 3D previews
 import * as THREE from "three";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js";
 import {
@@ -23,28 +24,39 @@ import {
   hasGeometryData,
   resolveGeometryVertex,
   buildSequentialEdgePairs,
+  triangulateFace,
   buildFrdContent,
   buildCsvFilterContent,
   buildXgfbContent,
 } from "./modules/exporters.js";
 
+// Expose Three.js for modules that rely on global access
 if (window) {
   window.THREE = Object.assign({}, THREE, { OrbitControls });
 }
 
+// Runtime state for parsed data and charts
 let wasmReady = false;
 let currentData = null;
 let currentFileBytes = null;
 let chart = null;
 let sourceResponseCharts = new Map();
+let sourcePolarCharts = new Map();
+let sourceImpedanceCharts = new Map();
+let sourceBalloonStates = new Map();
 let filterGroupResponseCharts = new Map();
 let sourceResponseChartInitialized = new Set();
+let sourcePolarChartInitialized = new Set();
 let filterGroupChartInitialized = new Set();
 let combinedChart = null;
 let combinedChartInitialized = false;
 let responseChartInitialized = false;
 let combinedListenersBound = false;
 let activeConfig = null; // { elements: [{ box_type_key, position: {x,y,z}, angles: {x,y,z}, gain }] }
+let arrayViewer = null;
+let arrayViewerNeedsUpdate = false;
+let cachedArrayBalloon = null; // { frequencies, results: [{ level, phase }], grid: { merCount, parCount } }
+let configDirty = false;
 
 // Theme management
 const THEME_KEY = "gll-viewer-theme";
@@ -61,8 +73,10 @@ let results = null;
 let fileName = null;
 let clearBtn = null;
 
+// Controllers encapsulate visualization and geometry logic
 const visualization = createVisualizationController({
   getCurrentData: () => currentData,
+  getCachedArrayBalloon: () => cachedArrayBalloon,
   formatFrequency,
   formatAngle,
   computePolarSlices,
@@ -103,12 +117,14 @@ function initDOMElements() {
 
 // Theme functions
 function getSystemTheme() {
+  // Match OS-level color scheme
   return window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
 
 function applyTheme(mode) {
+  // Resolve "auto" to actual theme and update DOM
   const theme = mode === "auto" ? getSystemTheme() : mode;
   if (theme === "dark") {
     document.documentElement.setAttribute("data-theme", "dark");
@@ -116,9 +132,19 @@ function applyTheme(mode) {
     document.documentElement.removeAttribute("data-theme");
   }
   geometry?.updateTheme?.();
+  if (arrayViewer?.grid) {
+    applyGridTheme(arrayViewer.grid, readArrayThemeColors());
+  }
+}
+
+function getDarkModeGridColor() {
+  return document.documentElement.getAttribute("data-theme") === "dark"
+    ? "rgba(148, 163, 184, 0.25)"
+    : null;
 }
 
 function updateThemeToggleButton() {
+  // Reflect the current theme mode in the toggle UI
   const themeToggle = document.getElementById("theme-toggle");
   const themeLabel = themeToggle?.querySelector(".theme-toggle-label");
   const themeIcon = themeToggle?.querySelector(".theme-toggle-icon");
@@ -161,6 +187,7 @@ function updateThemeToggleButton() {
 }
 
 function cycleTheme() {
+  // Rotate through auto → light → dark
   const currentIndex = THEME_MODES.indexOf(currentThemeMode);
   const nextIndex = (currentIndex + 1) % THEME_MODES.length;
   currentThemeMode = THEME_MODES[nextIndex];
@@ -171,6 +198,7 @@ function cycleTheme() {
 }
 
 function initTheme() {
+  // Load stored preference and wire system theme changes
   // Load saved theme preference
   const savedTheme = localStorage.getItem(THEME_KEY);
   if (savedTheme && THEME_MODES.includes(savedTheme)) {
@@ -193,6 +221,7 @@ function initTheme() {
 
 // Initialize
 document.addEventListener("DOMContentLoaded", async () => {
+  // Boot sequence: theme, DOM, WASM, then UI bindings
   initTheme();
   initDOMElements();
   await initWasm();
@@ -200,6 +229,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   restoreCardStates();
 });
 
+// Register UI event handlers for controls and visualizations
 function setupEventListeners() {
   // Theme toggle
   const themeToggle = document.getElementById("theme-toggle");
@@ -222,9 +252,24 @@ function setupEventListeners() {
   // Clear button
   clearBtn.addEventListener("click", clearResults);
 
-  const globalSource = document.getElementById("global-source");
-  if (globalSource) {
-    globalSource.addEventListener("change", handleGlobalSourceChange);
+  // Normalize toggles (synced)
+  const balloonNormalize = document.getElementById("balloon-normalize");
+  if (balloonNormalize) {
+    balloonNormalize.addEventListener("change", (e) => {
+      const polarNorm = document.getElementById("polar-normalize");
+      if (polarNorm) polarNorm.checked = e.target.checked;
+      visualization.updateBalloonVisualization();
+      visualization.updatePolarChart();
+    });
+  }
+  const polarNormalize = document.getElementById("polar-normalize");
+  if (polarNormalize) {
+    polarNormalize.addEventListener("change", (e) => {
+      const balloonNorm = document.getElementById("balloon-normalize");
+      if (balloonNorm) balloonNorm.checked = e.target.checked;
+      visualization.updatePolarChart();
+      visualization.updateBalloonVisualization();
+    });
   }
 
   // Response controls
@@ -252,30 +297,9 @@ function setupEventListeners() {
   if (responseEl) {
     responseEl.addEventListener("input", handleResponseAngleInput);
   }
-  const globalSlider = document.getElementById("global-frequency-slider");
-  if (globalSlider) {
-    globalSlider.addEventListener(
-      "input",
-      visualization.handleGlobalSliderInput,
-    );
-  }
-  const globalNormalize = document.getElementById("global-normalize");
-  if (globalNormalize) {
-    globalNormalize.addEventListener("change", () => {
-      visualization.updatePolarChart();
-      visualization.updateBalloonVisualization();
-    });
-  }
   const polarFrequency = document.getElementById("polar-frequency");
   if (polarFrequency) {
     polarFrequency.addEventListener("change", visualization.updatePolarChart);
-  }
-  const balloonSource = document.getElementById("balloon-source");
-  if (balloonSource) {
-    balloonSource.addEventListener(
-      "change",
-      visualization.updateBalloonOptions,
-    );
   }
   const balloonFrequency = document.getElementById("balloon-frequency");
   if (balloonFrequency) {
@@ -305,6 +329,13 @@ function setupEventListeners() {
       visualization.updateBalloonVisualization,
     );
   }
+  const balloonCoverage = document.getElementById("balloon-coverage");
+  if (balloonCoverage) {
+    balloonCoverage.addEventListener(
+      "change",
+      visualization.updateBalloonVisualization,
+    );
+  }
   const balloonAutorotate = document.getElementById("balloon-autorotate");
   if (balloonAutorotate) {
     balloonAutorotate.addEventListener(
@@ -312,9 +343,13 @@ function setupEventListeners() {
       visualization.handleBalloonAutorotateToggle,
     );
   }
-  window.addEventListener("resize", () => geometry.handleGeometryResize());
+  window.addEventListener("resize", () => {
+    geometry.handleGeometryResize();
+    handleArrayViewerResize();
+  });
 }
 
+// Drag/drop UI state handlers
 function handleDragOver(e) {
   e.preventDefault();
   dropZone.classList.add("drag-over");
@@ -325,6 +360,7 @@ function handleDragLeave(e) {
   dropZone.classList.remove("drag-over");
 }
 
+// Accept dropped file and trigger parsing
 function handleDrop(e) {
   e.preventDefault();
   dropZone.classList.remove("drag-over");
@@ -341,6 +377,7 @@ function handleFileSelect(e) {
   }
 }
 
+// Validate selected file and parse with WASM
 async function processFile(file) {
   if (!file.name.toLowerCase().endsWith(".gll")) {
     showError("Please select a .gll file");
@@ -376,6 +413,7 @@ async function processFile(file) {
   }
 }
 
+// UI helpers for loading/error states
 function showLoading() {
   dropZone.classList.add("hidden");
   error.classList.add("hidden");
@@ -390,6 +428,7 @@ function showError(msg) {
   errorMessage.textContent = msg;
 }
 
+// Reset state and tear down charts/visuals
 function clearResults() {
   currentData = null;
   currentFileBytes = null;
@@ -403,13 +442,21 @@ function clearResults() {
   }
   sourceResponseCharts.forEach((localChart) => localChart.destroy());
   sourceResponseCharts = new Map();
+  sourcePolarCharts.forEach((localChart) => localChart.destroy());
+  sourcePolarCharts = new Map();
+  sourceImpedanceCharts.forEach((localChart) => localChart.destroy());
+  sourceImpedanceCharts = new Map();
+  destroySourceBalloonStates();
+  sourceBalloonStates = new Map();
   filterGroupResponseCharts.forEach((localChart) => localChart.destroy());
   filterGroupResponseCharts = new Map();
   sourceResponseChartInitialized = new Set();
+  sourcePolarChartInitialized = new Set();
   filterGroupChartInitialized = new Set();
   resetFilterChart();
   visualization.resetVisualization();
   geometry.resetGeometry();
+  resetArrayViewer();
   responseChartInitialized = false;
   combinedChartInitialized = false;
   activeConfig = null;
@@ -422,6 +469,7 @@ function clearResults() {
 }
 
 function displayResults() {
+  // Show results panel and populate all tabs
   loading.classList.add("hidden");
   dropZone.classList.add("hidden");
   error.classList.add("hidden");
@@ -431,9 +479,10 @@ function displayResults() {
   displaySources();
   displayConfig();
   displayConfigurations();
+  displayTransformers();
   displayResources();
   setupConfigEditor();
-  setupGlobalSourceControls();
+  setupSimulationParams();
   setupCombinedResponseControls();
   setupPolarControls();
   setupBalloonControls();
@@ -443,52 +492,166 @@ function displayResults() {
   switchTab("overview");
 }
 
-function handleGlobalSourceChange(e) {
-  const value = e?.target?.value;
-  if (value === undefined || value === null) {
-    return;
+function setupSimulationParams() {
+  // Wire simulation parameter controls
+  const distance = document.getElementById("sim-receiver-distance");
+  const temperature = document.getElementById("sim-temperature");
+  const humidity = document.getElementById("sim-humidity");
+  const airAtten = document.getElementById("sim-air-atten");
+  const autoRecalc = document.getElementById("sim-auto-recalc");
+  const recalcBtn = document.getElementById("sim-recalculate");
+
+  const onParamChange = () => {
+    markConfigDirty();
+  };
+
+  for (const el of [distance, temperature, humidity]) {
+    if (el) el.addEventListener("input", onParamChange);
   }
-  syncSourceSelectors(value);
-  visualization.updatePolarOptions();
-  visualization.updateBalloonOptions();
+  if (airAtten) airAtten.addEventListener("change", onParamChange);
+
+  if (autoRecalc) {
+    autoRecalc.addEventListener("change", () => {
+      const btn = document.getElementById("sim-recalculate");
+      if (autoRecalc.checked) {
+        if (btn) btn.classList.add("hidden");
+        if (configDirty) triggerFullRecalculation();
+      } else {
+        updateRecalcButtonVisibility();
+      }
+    });
+  }
+
+  if (recalcBtn) {
+    recalcBtn.addEventListener("click", () => {
+      triggerFullRecalculation();
+    });
+  }
 }
 
-function setupGlobalSourceControls() {
-  const globalSelect = document.getElementById("global-source");
-  if (!globalSelect) {
+function getSimulationParams() {
+  return {
+    receiverDistance: Math.max(0.1, parseFloat(document.getElementById("sim-receiver-distance")?.value) || 10),
+    temperature: parseFloat(document.getElementById("sim-temperature")?.value) || 20,
+    humidity: (parseFloat(document.getElementById("sim-humidity")?.value) || 50) / 100,
+    airAttenOn: document.getElementById("sim-air-atten")?.checked || false,
+  };
+}
+
+function markConfigDirty() {
+  configDirty = true;
+  const autoRecalc = document.getElementById("sim-auto-recalc");
+  if (autoRecalc?.checked) {
+    triggerFullRecalculation();
+  } else {
+    updateRecalcButtonVisibility();
+  }
+}
+
+function updateRecalcButtonVisibility() {
+  const btn = document.getElementById("sim-recalculate");
+  if (!btn) return;
+  const autoRecalc = document.getElementById("sim-auto-recalc");
+  if (autoRecalc?.checked || !configDirty) {
+    btn.classList.add("hidden");
+  } else {
+    btn.classList.remove("hidden");
+    btn.classList.add("sim-recalculate-dirty");
+  }
+}
+
+function triggerFullRecalculation() {
+  configDirty = false;
+  const btn = document.getElementById("sim-recalculate");
+  if (btn) {
+    btn.classList.add("hidden");
+    btn.classList.remove("sim-recalculate-dirty");
+  }
+  computeArrayBalloonGrid();
+  updateCombinedResponseChart();
+  visualization.updateBalloonVisualization();
+  visualization.updatePolarChart();
+}
+
+function generateSphericalGrid(distance, merCount, parCount) {
+  // Generate receivers on a spherical grid matching GLL balloon convention
+  // meridian 0-355° (merCount steps), parallel 0-180° (parCount steps)
+  const receivers = [];
+  for (let m = 0; m < merCount; m++) {
+    const azimuthDeg = (m * 360) / merCount;
+    const azimuthRad = (azimuthDeg * Math.PI) / 180;
+    for (let p = 0; p < parCount; p++) {
+      const elevDeg = (p * 180) / (parCount - 1);
+      const elevRad = (elevDeg * Math.PI) / 180;
+      // Convert spherical to cartesian (GLL convention: Z = firing axis)
+      const x = distance * Math.sin(elevRad) * Math.sin(azimuthRad);
+      const y = distance * Math.sin(elevRad) * Math.cos(azimuthRad);
+      const z = distance * Math.cos(elevRad);
+      receivers.push({ x, y, z });
+    }
+  }
+  return receivers;
+}
+
+function computeArrayBalloonGrid() {
+  // Compute array response at a full spherical grid for balloon/polar
+  if (!activeConfig || !currentFileBytes || typeof window.computeArrayBalloon !== "function") {
+    cachedArrayBalloon = null;
     return;
   }
 
-  const sources = currentData.database?.source_definitions || [];
-  const sourcesWithResponses = sources.filter(
-    (s) => s.responses && s.responses.length > 0,
+  const elements = buildElementsFromConfig(activeConfig);
+  if (!elements.length) {
+    cachedArrayBalloon = null;
+    return;
+  }
+
+  // Filter to valid sources
+  const validSources = new Set(
+    (currentData?.database?.source_definitions || []).map((s) => s.key),
   );
-
-  if (!sourcesWithResponses.length) {
-    globalSelect.innerHTML =
-      '<option value="">No response data available</option>';
-    globalSelect.disabled = true;
+  const validElements = elements.filter((elem) => validSources.has(elem.source_key));
+  if (!validElements.length) {
+    cachedArrayBalloon = null;
     return;
   }
 
-  globalSelect.disabled = false;
-  globalSelect.innerHTML = sourcesWithResponses
-    .map(
-      (src, i) =>
-        `<option value="${i}">${escapeHtml(src.definition?.label || src.key)}</option>`,
-    )
-    .join("");
-  syncSourceSelectors(globalSelect.value);
-}
+  const sim = getSimulationParams();
+  const merCount = 72; // 5° steps
+  const parCount = 37; // 5° steps
+  const receivers = generateSphericalGrid(sim.receiverDistance, merCount, parCount);
 
-function syncSourceSelectors(value) {
-  const balloonSelect = document.getElementById("balloon-source");
-  if (balloonSelect) {
-    balloonSelect.value = String(value);
+  const payload = JSON.stringify({
+    elements: validElements,
+    receivers,
+    air_props: {
+      temperature: sim.temperature,
+      humidity: sim.humidity,
+      speed: 0,
+      air_atten_on: sim.airAttenOn,
+    },
+  });
+
+  try {
+    const resultJSON = window.computeArrayBalloon(currentFileBytes, payload);
+    const result = JSON.parse(resultJSON);
+    if (result.success) {
+      cachedArrayBalloon = {
+        frequencies: result.frequencies,
+        results: result.results,
+        grid: { merCount, parCount },
+        receiverDistance: sim.receiverDistance,
+      };
+    } else {
+      cachedArrayBalloon = null;
+    }
+  } catch {
+    cachedArrayBalloon = null;
   }
 }
 
 function switchTab(tabName) {
+  // Toggle active tab button and content panel
   // Update tab buttons
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabName);
@@ -501,10 +664,15 @@ function switchTab(tabName) {
 
   // Initialize chart when switching to visualization tab
   if (tabName === "visualization" && currentData) {
+    if (!cachedArrayBalloon && activeConfig) {
+      computeArrayBalloonGrid();
+    }
     updateCombinedResponseChart();
     visualization.updatePolarChart();
     visualization.updateBalloonVisualization();
     visualization.handleBalloonResize();
+    updateArrayViewer();
+    handleArrayViewerResize();
   }
   if (tabName === "geometry" && currentData) {
     requestAnimationFrame(() => {
@@ -515,6 +683,7 @@ function switchTab(tabName) {
 }
 
 function displayOverview() {
+  // Render system metadata and header information
   const data = currentData;
 
   // System info
@@ -556,59 +725,119 @@ function displayOverview() {
 }
 
 function displaySources() {
+  // Build source cards and response controls
   const sourcesList = document.getElementById("sources-list");
   const sources = currentData.database?.source_definitions || [];
-  const placementsByDef = buildSourcePlacementsMap(
-    currentData.database?.box_types || [],
-  );
 
+  // Empty state for missing sources
   if (sources.length === 0) {
     sourcesList.innerHTML =
       '<div class="empty-state">No source definitions found</div>';
     return;
   }
 
+  // Build source cards markup
   sourcesList.innerHTML = sources
     .map((src, sourceIndex) => {
       const def = src.definition || {};
       const balloon = def.balloon_data;
-      const placements = placementsByDef.get(src.key) || [];
       const responseCount = src.responses?.length || 0;
-      const placementHtml = placements.length
-        ? `
-                    <div class="source-detail">
-                        <strong>Placements:</strong>
-                        <div class="source-placement-list">
-                            ${placements
-                              .map((placement) => {
-                                const source = placement.source || {};
-                                const boxLabel =
-                                  placement.box?.label || "Unknown";
-                                const boxKey = placement.box?.key || "";
-                                const sourceLabel = source.label || "Source";
-                                const sourceKey = source.key || "";
-                                return `
-                                    <div class="source-placement">
-                                        <div class="source-placement-header">
-                                            Box: ${escapeHtml(boxLabel)}${boxKey ? ` (${escapeHtml(boxKey)})` : ""}
-                                        </div>
-                                        <div class="source-placement-detail">
-                                            Source: ${escapeHtml(sourceLabel)}${sourceKey ? ` (${escapeHtml(sourceKey)})` : ""}
-                                        </div>
-                                        <div class="source-placement-detail">
-                                            Position: ${formatPosition(source.position)} mm
-                                        </div>
-                                        <div class="source-placement-detail">
-                                            Angles: H ${formatAngleDegrees(source.angles?.x)}, V ${formatAngleDegrees(source.angles?.y)}, R ${formatAngleDegrees(source.angles?.z)}
-                                        </div>
-                                    </div>
-                                `;
-                              })
-                              .join("")}
-                        </div>
-                    </div>
-                `
-        : "";
+      const directivityLabel = formatDirectivityType(def.directivity_type);
+      const onAxisPoints = def.on_axis_spectrum?.level?.length || 0;
+      const impedancePoints = def.impedance?.level?.length || 0;
+      const hasResponses = responseCount > 0;
+      const hasImpedance = impedancePoints > 0;
+      const identityDetails = [
+        renderSourceDetail("Company", def.company_label),
+        renderSourceDetail("Description", def.description, { wide: true }),
+      ]
+        .filter(Boolean)
+        .join("");
+
+      const coverageDetails = [
+        renderSourceDetail(
+          "Bandwidth",
+          `${formatFrequency(def.nominal_bandwidth_from)} - ${formatFrequency(def.nominal_bandwidth_to)}`,
+        ),
+        renderSourceDetail("Data type", formatDataType(def.data_type)),
+        renderSourceDetail(
+          "Responses",
+          responseCount ? String(responseCount) : "-",
+        ),
+        balloon
+          ? renderSourceDetail(
+              "Resolution",
+              `${balloon.angular_resolution?.meridian_step || 0}° × ${balloon.angular_resolution?.parallel_step || 0}°`,
+            )
+          : "",
+        renderSourceDetail(
+          "Rated coverage",
+          formatCoverageAngles(
+            def.rated_horizontal_angle,
+            def.rated_vertical_angle,
+          ),
+        ),
+        renderSourceDetail("Directivity model", directivityLabel),
+      ]
+        .filter(Boolean)
+        .join("");
+
+      const electricalDetails = [
+        renderSourceDetail(
+          "On-axis level",
+          formatGainNumber(def.on_axis_level),
+        ),
+        renderSourceDetail(
+          "On-axis response",
+          onAxisPoints ? `${onAxisPoints} points` : "-",
+        ),
+        renderSourceDetail("Rated impedance", formatOhms(def.rated_impedance)),
+        renderSourceDetail(
+          "Impedance data",
+          impedancePoints ? `${impedancePoints} points` : "-",
+        ),
+        renderSourceDetail("Max voltage", formatVoltage(def.max_voltage)),
+      ]
+        .filter(Boolean)
+        .join("");
+
+      const measurementDetails = [
+        renderSourceDetail(
+          "Measured voltage",
+          formatVoltage(def.measured_voltage),
+        ),
+        renderSourceDetail(
+          "Measured distance",
+          formatDistance(def.measured_distance),
+        ),
+        renderSourceDetail(
+          "Measured gain",
+          formatGainNumber(def.measured_gain_in_db),
+        ),
+        renderSourceDetail("Temperature", formatTemperature(def.temperature)),
+        renderSourceDetail("Humidity", formatPercent(def.humidity)),
+        renderSourceDetail(
+          "Atmospheric pressure",
+          formatPressure(def.atmospheric_pressure),
+        ),
+      ]
+        .filter(Boolean)
+        .join("");
+
+      const detailsSections = [
+        buildSourceSectionRow([
+          buildSourceSection("Identity", identityDetails, { column: "left" }),
+          buildSourceSection("Electrical", electricalDetails, {
+            column: "right",
+          }),
+        ]),
+        buildSourceSection("Coverage", coverageDetails),
+        buildSourceSection("Measurement", measurementDetails),
+      ]
+        .filter(Boolean)
+        .join("");
+
+      // Response select options with angle labels
       const responseOptions = responseCount
         ? Array.from({ length: responseCount }, (_, i) => {
             const angle = computeResponseAngles(src, i);
@@ -618,7 +847,8 @@ function displaySources() {
             return `<option value="${i}">Response ${i + 1}${angleLabel}</option>`;
           }).join("")
         : "";
-      const responseSection = responseCount
+
+      const responsePanel = hasResponses
         ? `
               <div class="source-response">
                 <div class="response-controls source-response-controls">
@@ -644,6 +874,15 @@ function displaySources() {
                       />
                       Normalized
                     </label>
+                    <div class="dropdown-container source-export-dropdown">
+                      <button class="btn-download btn-source-export" data-source-idx="${sourceIndex}">
+                        Export <span class="dropdown-icon">▼</span>
+                      </button>
+                      <div class="dropdown-menu">
+                        <button class="dropdown-item" data-format="frd">Response .frd</button>
+                        <button class="dropdown-item" data-format="csv">Response .csv</button>
+                      </div>
+                    </div>
                   </div>
                   <div class="response-controls-row">
                     <label class="response-slider">
@@ -690,6 +929,149 @@ function displaySources() {
               </div>
             `
         : '<div class="empty-state">No frequency response data available</div>';
+
+      const polarPanel = hasResponses
+        ? `
+            <div class="source-polar-controls">
+              <label>
+                Frequency:
+                <select id="source-polar-frequency-${sourceIndex}"></select>
+              </label>
+              <label class="response-toggle">
+                <input id="source-polar-normalize-${sourceIndex}" type="checkbox" />
+                Normalize
+              </label>
+            </div>
+            <div class="source-polar-chart">
+              <canvas id="source-polar-chart-${sourceIndex}"></canvas>
+            </div>
+            <div id="source-polar-meta-${sourceIndex}" class="response-meta"></div>
+          `
+        : '<div class="empty-state">No polar data available</div>';
+
+      const balloonPanel = hasResponses
+        ? `
+            <div class="balloon-controls source-balloon-controls">
+              <div class="source-balloon-row">
+                <label>
+                  Frequency:
+                  <select id="source-balloon-frequency-${sourceIndex}"></select>
+                </label>
+                <label class="balloon-slider">
+                  <input
+                    id="source-balloon-frequency-slider-${sourceIndex}"
+                    type="range"
+                    min="0"
+                    max="0"
+                    step="1"
+                    value="0"
+                  />
+                  <span id="source-balloon-frequency-value-${sourceIndex}" class="frequency-value">-</span>
+                </label>
+              </div>
+              <div class="source-balloon-row">
+                <label class="balloon-slider">
+                  Range (dB):
+                  <input
+                    id="source-balloon-range-${sourceIndex}"
+                    type="range"
+                    min="20"
+                    max="80"
+                    step="5"
+                    value="40"
+                  />
+                  <span id="source-balloon-range-value-${sourceIndex}" class="frequency-value">40</span>
+                </label>
+                <label class="balloon-slider">
+                  Scale:
+                  <input
+                    id="source-balloon-scale-${sourceIndex}"
+                    type="range"
+                    min="0.6"
+                    max="1.6"
+                    step="0.1"
+                    value="1"
+                  />
+                  <span id="source-balloon-scale-value-${sourceIndex}" class="frequency-value">1.0×</span>
+                </label>
+                <label class="balloon-toggle">
+                  <input id="source-balloon-wireframe-${sourceIndex}" type="checkbox" />
+                  Wireframe
+                </label>
+                <label class="balloon-toggle">
+                  <input id="source-balloon-coverage-${sourceIndex}" type="checkbox" checked />
+                  Coverage
+                </label>
+                <label class="balloon-toggle">
+                  <input id="source-balloon-autorotate-${sourceIndex}" type="checkbox" checked />
+                  Auto-rotate
+                </label>
+                <label class="balloon-toggle">
+                  <input id="source-balloon-normalize-${sourceIndex}" type="checkbox" />
+                  Normalize
+                </label>
+              </div>
+            </div>
+            <div id="source-balloon-viewer-${sourceIndex}" class="balloon-viewer">
+              <div id="source-balloon-placeholder-${sourceIndex}" class="empty-state">
+                No 3D balloon data available
+              </div>
+              <div class="balloon-legend">
+                <div class="balloon-legend-title">SPL (dB)</div>
+                <div class="balloon-legend-bar"></div>
+                <div class="balloon-legend-labels">
+                  <span>Low</span>
+                  <span>High</span>
+                </div>
+              </div>
+            </div>
+            <div id="source-balloon-meta-${sourceIndex}" class="response-meta"></div>
+          `
+        : '<div class="empty-state">No balloon data available</div>';
+
+      const impedancePanel = hasImpedance
+        ? `
+            <div class="source-impedance-controls">
+              <label>
+                Phase:
+                <select id="source-impedance-phase-${sourceIndex}">
+                  <option value="unwrapped" selected>Unwrapped</option>
+                  <option value="wrapped">Wrapped</option>
+                  <option value="group-delay">Group delay</option>
+                </select>
+              </label>
+            </div>
+            <div class="source-impedance-chart">
+              <canvas id="source-impedance-chart-${sourceIndex}"></canvas>
+            </div>
+            <div id="source-impedance-meta-${sourceIndex}" class="response-meta"></div>
+          `
+        : '<div class="empty-state">No impedance data available</div>';
+
+      const plotTabs = `
+          <div class="source-plot-tabs" role="tablist">
+            <button class="source-plot-tab active" data-plot="response" type="button">Response</button>
+            <button class="source-plot-tab" data-plot="polar" type="button" ${hasResponses ? "" : "disabled"}>Polar</button>
+            <button class="source-plot-tab" data-plot="balloon" type="button" ${hasResponses ? "" : "disabled"}>Balloon</button>
+            <button class="source-plot-tab" data-plot="impedance" type="button" ${hasImpedance ? "" : "disabled"}>Impedance</button>
+          </div>
+        `;
+
+      const plotPanels = `
+          ${plotTabs}
+          <div class="source-plot-panel" data-plot="response">
+            ${responsePanel}
+          </div>
+          <div class="source-plot-panel" data-plot="polar">
+            ${polarPanel}
+          </div>
+          <div class="source-plot-panel" data-plot="balloon">
+            ${balloonPanel}
+          </div>
+          <div class="source-plot-panel" data-plot="impedance">
+            ${impedancePanel}
+          </div>
+        `;
       return `
             <div class="source-card source-collapsible" data-source-idx="${sourceIndex}">
                 <div class="source-header source-header-toggle" onclick="toggleSource(${sourceIndex})">
@@ -700,32 +1082,8 @@ function displaySources() {
                     <span class="source-key">${escapeHtml(src.key)}</span>
                 </div>
                 <div class="source-content" style="display: none;">
-                  <div class="source-details">
-                    <div class="source-detail">
-                        <strong>Bandwidth:</strong>
-                        ${formatFrequency(def.nominal_bandwidth_from)} - ${formatFrequency(def.nominal_bandwidth_to)}
-                    </div>
-                    <div class="source-detail">
-                        <strong>Data Type:</strong>
-                        ${formatDataType(def.data_type)}
-                    </div>
-                    ${
-                      balloon
-                        ? `
-                    <div class="source-detail">
-                        <strong>Responses:</strong>
-                        ${responseCount}
-                    </div>
-                    <div class="source-detail">
-                        <strong>Resolution:</strong>
-                        ${balloon.angular_resolution?.meridian_step || 0}° × ${balloon.angular_resolution?.parallel_step || 0}°
-                    </div>
-                    `
-                        : ""
-                    }
-                    ${placementHtml}
-                  </div>
-                  ${responseSection}
+                  ${detailsSections}
+                  ${plotPanels}
                 </div>
             </div>
         `;
@@ -733,9 +1091,46 @@ function displaySources() {
     .join("");
 
   wireSourceResponseControls();
+  wireSourcePlotControls();
+  wireSourceExportDropdowns();
+}
+
+function renderSourceDetail(label, value, options = {}) {
+  if (value === null || value === undefined || value === "" || value === "-") {
+    return "";
+  }
+  const classes = ["source-detail"];
+  if (options.wide) classes.push("source-detail--wide");
+  return `<div class="${classes.join(" ")}"><strong>${escapeHtml(label)}:</strong><span>${escapeHtml(String(value))}</span></div>`;
+}
+
+function buildSourceSection(title, content, options = {}) {
+  if (!content) return "";
+  const columnClass = options.column
+    ? ` source-section--${options.column}`
+    : "";
+  return `
+    <div class="source-section${columnClass}">
+      <h4 class="source-section-title">${escapeHtml(title)}</h4>
+      <div class="source-details">
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
+function buildSourceSectionRow(sections) {
+  const rowSections = sections.filter(Boolean);
+  if (!rowSections.length) return "";
+  return `
+    <div class="source-section-row">
+      ${rowSections.join("")}
+    </div>
+  `;
 }
 
 function wireSourceResponseControls() {
+  // Attach listeners for per-source response widgets
   const cards = document.querySelectorAll(".source-card[data-source-idx]");
   cards.forEach((card) => {
     const sourceIndex = Number(card.dataset.sourceIdx);
@@ -763,6 +1158,7 @@ function wireSourceResponseControls() {
 }
 
 function getSourceResponseElements(sourceIndex) {
+  // Resolve DOM nodes for a source card
   return {
     indexSelect: document.getElementById(
       `source-response-index-${sourceIndex}`,
@@ -790,35 +1186,255 @@ function getSourceResponseElements(sourceIndex) {
   };
 }
 
-function renderSourceResponseChart(sourceIndex) {
-  const source = currentData.database?.source_definitions?.[sourceIndex];
-  if (!source) {
-    return;
-  }
+function getSourcePlotElements(sourceIndex) {
+  return {
+    plotTabs: document.querySelectorAll(
+      `.source-card[data-source-idx="${sourceIndex}"] .source-plot-tab`,
+    ),
+    panels: document.querySelectorAll(
+      `.source-card[data-source-idx="${sourceIndex}"] .source-plot-panel`,
+    ),
+    polarSelect: document.getElementById(
+      `source-polar-frequency-${sourceIndex}`,
+    ),
+    polarNormalize: document.getElementById(
+      `source-polar-normalize-${sourceIndex}`,
+    ),
+    polarCanvas: document.getElementById(`source-polar-chart-${sourceIndex}`),
+    polarMeta: document.getElementById(`source-polar-meta-${sourceIndex}`),
+    balloonSelect: document.getElementById(
+      `source-balloon-frequency-${sourceIndex}`,
+    ),
+    balloonSlider: document.getElementById(
+      `source-balloon-frequency-slider-${sourceIndex}`,
+    ),
+    balloonSliderValue: document.getElementById(
+      `source-balloon-frequency-value-${sourceIndex}`,
+    ),
+    balloonRange: document.getElementById(
+      `source-balloon-range-${sourceIndex}`,
+    ),
+    balloonRangeValue: document.getElementById(
+      `source-balloon-range-value-${sourceIndex}`,
+    ),
+    balloonScale: document.getElementById(
+      `source-balloon-scale-${sourceIndex}`,
+    ),
+    balloonScaleValue: document.getElementById(
+      `source-balloon-scale-value-${sourceIndex}`,
+    ),
+    balloonWireframe: document.getElementById(
+      `source-balloon-wireframe-${sourceIndex}`,
+    ),
+    balloonCoverage: document.getElementById(
+      `source-balloon-coverage-${sourceIndex}`,
+    ),
+    balloonAutorotate: document.getElementById(
+      `source-balloon-autorotate-${sourceIndex}`,
+    ),
+    balloonNormalize: document.getElementById(
+      `source-balloon-normalize-${sourceIndex}`,
+    ),
+    balloonViewer: document.getElementById(
+      `source-balloon-viewer-${sourceIndex}`,
+    ),
+    balloonPlaceholder: document.getElementById(
+      `source-balloon-placeholder-${sourceIndex}`,
+    ),
+    balloonMeta: document.getElementById(`source-balloon-meta-${sourceIndex}`),
+    impedancePhase: document.getElementById(
+      `source-impedance-phase-${sourceIndex}`,
+    ),
+    impedanceCanvas: document.getElementById(
+      `source-impedance-chart-${sourceIndex}`,
+    ),
+    impedanceMeta: document.getElementById(
+      `source-impedance-meta-${sourceIndex}`,
+    ),
+  };
+}
 
+function setSourcePlotPanel(sourceIndex, plot) {
+  const elements = getSourcePlotElements(sourceIndex);
+  elements.panels.forEach((panel) => {
+    const isActive = panel.dataset.plot === plot;
+    panel.classList.toggle("active", isActive);
+  });
+  elements.plotTabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.plot === plot);
+  });
+
+  if (plot !== "balloon") {
+    stopSourceBalloonLoop(sourceIndex);
+  }
+}
+
+function renderSourcePlot(sourceIndex) {
+  const elements = getSourcePlotElements(sourceIndex);
+  const activeTab =
+    Array.from(elements.plotTabs || []).find((tab) =>
+      tab.classList.contains("active"),
+    ) || elements.plotTabs?.[0];
+  const plot = activeTab?.dataset.plot || "response";
+  setSourcePlotPanel(sourceIndex, plot);
+
+  if (plot === "polar") {
+    renderSourcePolarChart(sourceIndex);
+  } else if (plot === "balloon") {
+    renderSourceBalloon(sourceIndex);
+  } else if (plot === "impedance") {
+    renderSourceImpedanceChart(sourceIndex);
+  } else {
+    renderSourceResponseChart(sourceIndex);
+  }
+}
+
+function wireSourcePlotControls() {
+  const cards = document.querySelectorAll(".source-card[data-source-idx]");
+  cards.forEach((card) => {
+    const sourceIndex = Number(card.dataset.sourceIdx);
+    const elements = getSourcePlotElements(sourceIndex);
+
+    elements.plotTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        if (tab.disabled) return;
+        elements.plotTabs.forEach((item) =>
+          item.classList.toggle("active", item === tab),
+        );
+        renderSourcePlot(sourceIndex);
+      });
+    });
+
+    if (elements.polarSelect) {
+      elements.polarSelect.addEventListener("change", () =>
+        renderSourcePolarChart(sourceIndex),
+      );
+    }
+    elements.polarNormalize?.addEventListener("change", () =>
+      renderSourcePolarChart(sourceIndex),
+    );
+
+    if (elements.balloonSelect) {
+      elements.balloonSelect.addEventListener("change", () =>
+        renderSourceBalloon(sourceIndex),
+      );
+    }
+    if (elements.balloonSelect && elements.balloonSlider) {
+      elements.balloonSelect.addEventListener("change", () => {
+        elements.balloonSlider.value = elements.balloonSelect.value;
+      });
+    }
+    elements.balloonSlider?.addEventListener("input", () =>
+      handleSourceBalloonFrequencySlider(sourceIndex),
+    );
+    elements.balloonRange?.addEventListener("input", () =>
+      handleSourceBalloonRangeInput(sourceIndex),
+    );
+    elements.balloonScale?.addEventListener("input", () =>
+      handleSourceBalloonScaleInput(sourceIndex),
+    );
+    elements.balloonWireframe?.addEventListener("change", () =>
+      renderSourceBalloon(sourceIndex),
+    );
+    elements.balloonCoverage?.addEventListener("change", () =>
+      renderSourceBalloon(sourceIndex),
+    );
+    elements.balloonAutorotate?.addEventListener("change", () =>
+      renderSourceBalloon(sourceIndex),
+    );
+    elements.balloonNormalize?.addEventListener("change", () =>
+      renderSourceBalloon(sourceIndex),
+    );
+
+    elements.impedancePhase?.addEventListener("change", () =>
+      renderSourceImpedanceChart(sourceIndex),
+    );
+
+    const defaultTab = elements.plotTabs?.[0];
+    if (defaultTab) {
+      elements.plotTabs.forEach((item) =>
+        item.classList.toggle("active", item === defaultTab),
+      );
+      setSourcePlotPanel(sourceIndex, defaultTab.dataset.plot || "response");
+    }
+  });
+}
+
+function wireSourceExportDropdowns() {
+  // Attach export dropdown behavior for source responses
+  document.querySelectorAll(".btn-source-export").forEach((button) => {
+    if (button.dataset.bound === "true") return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const container = button.closest(".dropdown-container");
+      const wasOpen = container.classList.contains("show");
+      document.querySelectorAll(".dropdown-container.show").forEach((other) => {
+        other.classList.remove("show");
+      });
+      if (!wasOpen) container.classList.add("show");
+    });
+  });
+
+  document
+    .querySelectorAll(".source-export-dropdown .dropdown-item")
+    .forEach((item) => {
+      if (item.dataset.bound === "true") return;
+      item.dataset.bound = "true";
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const format = item.dataset.format;
+        const button = item
+          .closest(".dropdown-container")
+          .querySelector(".btn-source-export");
+        const sourceIdx = Number(button.dataset.sourceIdx);
+        const exportData = buildSourceResponseExportData(sourceIdx);
+        if (!exportData) return;
+
+        const { frequencies, level, phase, responseIndex } = exportData;
+        if (!frequencies?.length) return;
+
+        const basename = buildSourceExportBasename(sourceIdx, responseIndex);
+        if (format === "frd") {
+          const content = buildFrdContent(frequencies, level, phase);
+          downloadTextFile(`${basename}.frd`, content);
+        } else if (format === "csv") {
+          const content = buildCsvFilterContent(frequencies, level, phase);
+          downloadTextFile(`${basename}.csv`, content);
+        }
+
+        item.closest(".dropdown-container").classList.remove("show");
+      });
+    });
+}
+
+function buildSourceExportBasename(sourceIndex, responseIndex) {
+  const source = currentData?.database?.source_definitions?.[sourceIndex];
+  const gllName = sanitizeFilename(
+    currentData?.gen_system?.model ||
+      currentData?.gen_system?.manufacturer ||
+      "gll",
+  );
+  const sourceLabel = sanitizeFilename(
+    source?.definition?.label || source?.key || `source-${sourceIndex + 1}`,
+  );
+  const respLabel =
+    responseIndex !== null && responseIndex !== undefined
+      ? `resp-${responseIndex + 1}`
+      : "response";
+  return `${gllName}_${sourceLabel}_${respLabel}`;
+}
+
+function buildSourceResponseExportData(sourceIndex) {
+  const source = currentData?.database?.source_definitions?.[sourceIndex];
+  if (!source) return null;
   const elements = getSourceResponseElements(sourceIndex);
   const responseIndex = parseInt(elements.indexSelect?.value);
-  if (Number.isNaN(responseIndex)) {
-    return;
-  }
-
+  if (Number.isNaN(responseIndex)) return null;
   const response = source?.responses?.[responseIndex];
-  if (!response || !elements.chartCanvas) {
-    return;
-  }
-
-  updateSourceResponseAngleControls(source, responseIndex, elements);
-  updateSourceResponseMeta(elements.meta, source, responseIndex);
+  if (!response) return null;
 
   const onAxis = source?.definition?.on_axis_spectrum;
-  if (elements.normalizedToggle) {
-    const hasOnAxis =
-      !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
-    elements.normalizedToggle.disabled = !hasOnAxis;
-    if (!hasOnAxis) {
-      elements.normalizedToggle.checked = false;
-    }
-  }
   const onAxisFreqs = buildLogFrequencies(
     onAxis?.definition,
     onAxis?.level?.length,
@@ -863,10 +1479,96 @@ function renderSourceResponseChart(sourceIndex) {
     delayAdjustedPhase,
     unwrappedPhase,
   );
+
+  return {
+    frequencies: response.frequencies,
+    level: levelSeries,
+    phase: phaseSeries.values,
+    responseIndex,
+  };
+}
+
+function renderSourceResponseChart(sourceIndex) {
+  // Build chart for the selected source response
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) {
+    return;
+  }
+
+  const elements = getSourceResponseElements(sourceIndex);
+  const responseIndex = parseInt(elements.indexSelect?.value);
+  if (Number.isNaN(responseIndex)) {
+    return;
+  }
+
+  const response = source?.responses?.[responseIndex];
+  if (!response || !elements.chartCanvas) {
+    return;
+  }
+
+  updateSourceResponseAngleControls(source, responseIndex, elements);
+  updateSourceResponseMeta(elements.meta, source, responseIndex);
+
+  // Optional on-axis normalization / combination
+  const onAxis = source?.definition?.on_axis_spectrum;
+  if (elements.normalizedToggle) {
+    const hasOnAxis =
+      !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
+    elements.normalizedToggle.disabled = !hasOnAxis;
+    if (!hasOnAxis) {
+      elements.normalizedToggle.checked = false;
+    }
+  }
+  const onAxisFreqs = buildLogFrequencies(
+    onAxis?.definition,
+    onAxis?.level?.length,
+  );
+  const useNormalized = !!elements.normalizedToggle?.checked;
+  const canCombineOnAxis =
+    !useNormalized &&
+    onAxis &&
+    Array.isArray(onAxis.level) &&
+    Array.isArray(onAxisFreqs) &&
+    response.frequencies.length === onAxisFreqs.length &&
+    response.level.length === onAxis.level.length &&
+    frequenciesMatch(response.frequencies, onAxisFreqs);
+  const levelSeries = canCombineOnAxis
+    ? response.level.map((value, i) => value + onAxis.level[i])
+    : response.level;
+
+  // Phase handling with optional on-axis merge and delay
+  const phaseMode = elements.phaseSelect?.value || "unwrapped";
+  const rawPhase = response.phase || [];
+  const onAxisPhase = onAxis?.phase || [];
+  const canCombinePhase =
+    canCombineOnAxis &&
+    Array.isArray(onAxisPhase) &&
+    rawPhase.length > 0 &&
+    rawPhase.length === onAxisPhase.length;
+  const combinedPhase = canCombinePhase
+    ? rawPhase.map((value, i) => value + onAxisPhase[i])
+    : rawPhase;
+  const responseDelay = Number.isFinite(response.delay) ? response.delay : 0;
+  const onAxisDelay =
+    canCombinePhase && Number.isFinite(onAxis?.delay) ? onAxis.delay : 0;
+  const combinedDelay = responseDelay + onAxisDelay;
+  const delayAdjustedPhase = applyDelayToPhase(
+    combinedPhase,
+    response.frequencies,
+    combinedDelay,
+  );
+  const unwrappedPhase = unwrapPhase(delayAdjustedPhase);
+  const phaseSeries = getPhaseSeries(
+    phaseMode,
+    response.frequencies,
+    delayAdjustedPhase,
+    unwrappedPhase,
+  );
   const phaseLabel = canCombinePhase
     ? `${phaseSeries.label} (on-axis + directivity)`
     : phaseSeries.label;
 
+  // Build chart datasets for level/phase
   const frequencyData = buildFrequencyPoints(response.frequencies, levelSeries);
   const phaseData = buildFrequencyPoints(
     response.frequencies,
@@ -882,7 +1584,18 @@ function renderSourceResponseChart(sourceIndex) {
     existingChart.destroy();
   }
 
+  // Animate only on first render for this source
   const shouldAnimate = !sourceResponseChartInitialized.has(sourceIndex);
+
+  const gridColor = getDarkModeGridColor();
+  const xScale = buildLogFrequencyScale(
+    frequencyData.minFrequency,
+    frequencyData.maxFrequency,
+    "Frequency",
+  );
+  if (gridColor) {
+    xScale.grid = { ...(xScale.grid || {}), color: gridColor };
+  }
 
   const localChart = new Chart(ctx, {
     type: "line",
@@ -920,11 +1633,7 @@ function renderSourceResponseChart(sourceIndex) {
         intersect: false,
       },
       scales: {
-        x: buildLogFrequencyScale(
-          frequencyData.minFrequency,
-          frequencyData.maxFrequency,
-          "Frequency",
-        ),
+        x: xScale,
         y: {
           type: "linear",
           display: true,
@@ -933,6 +1642,7 @@ function renderSourceResponseChart(sourceIndex) {
             display: true,
             text: "Level (dB)",
           },
+          grid: gridColor ? { color: gridColor } : undefined,
         },
         y1: {
           type: "linear",
@@ -972,6 +1682,7 @@ function renderSourceResponseChart(sourceIndex) {
 }
 
 function updateSourceResponseAngleControls(source, responseIndex, elements) {
+  // Configure sliders based on available balloon grid
   const azSlider = elements.azSlider;
   const elSlider = elements.elSlider;
   const azValue = elements.azValue;
@@ -1024,11 +1735,13 @@ function updateSourceResponseAngleControls(source, responseIndex, elements) {
 }
 
 function updateSourceResponseMeta(meta, source, responseIndex) {
+  // Update per-response metadata chips
   if (!meta) return;
   meta.innerHTML = buildResponseMetaHtml(source, responseIndex);
 }
 
 function handleSourceResponseAngleInput(sourceIndex) {
+  // Map slider angles back to response index
   const source = currentData.database?.source_definitions?.[sourceIndex];
   if (!source) {
     return;
@@ -1046,10 +1759,7 @@ function handleSourceResponseAngleInput(sourceIndex) {
     return;
   }
 
-  const azimuthDeg = normalizeAzimuthForGrid(
-    Number(azSlider.value),
-    ang,
-  );
+  const azimuthDeg = normalizeAzimuthForGrid(Number(azSlider.value), ang);
   const elevationDeg = Number(elSlider.value);
   const meridianIdx = Math.round(azimuthDeg / ang.meridian_step);
   const parallelIdx = Math.round(elevationDeg / ang.parallel_step);
@@ -1069,7 +1779,960 @@ function handleSourceResponseAngleInput(sourceIndex) {
   renderSourceResponseChart(sourceIndex);
 }
 
+const sourcePolarCompassPlugin = {
+  id: "sourcePolarCompass",
+  afterDraw(chart) {
+    const scale = chart.scales?.r;
+    if (!scale) return;
+    const { xCenter, yCenter, drawingArea } = scale;
+    const ctx = chart.ctx;
+    const sideOffset = 36;
+    const vertOffset = 24;
+
+    ctx.save();
+    ctx.font = "bold 11px sans-serif";
+
+    ctx.fillStyle = "#334155";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText("Front", xCenter + drawingArea + sideOffset, yCenter);
+    ctx.textAlign = "right";
+    ctx.fillText("Back", xCenter - drawingArea - sideOffset, yCenter);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = "#2563eb";
+    ctx.fillText("Right", xCenter - 16, yCenter - drawingArea - vertOffset);
+    ctx.fillStyle = "#dc2626";
+    ctx.fillText("Top", xCenter + 16, yCenter - drawingArea - vertOffset);
+
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#2563eb";
+    ctx.fillText("Left", xCenter - 18, yCenter + drawingArea + vertOffset);
+    ctx.fillStyle = "#dc2626";
+    ctx.fillText("Bottom", xCenter + 18, yCenter + drawingArea + vertOffset);
+
+    ctx.restore();
+  },
+};
+
+function findNearestFrequencyIndex(frequencies, targetFrequency) {
+  let closestIndex = 0;
+  let closestDistance = Infinity;
+  frequencies.forEach((freq, index) => {
+    const distance = Math.abs(freq - targetFrequency);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  return closestIndex;
+}
+
+function computeLevelRange(levels) {
+  let min = null;
+  let max = null;
+  for (const value of levels) {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      continue;
+    }
+    if (min === null || value < min) min = value;
+    if (max === null || value > max) max = value;
+  }
+  return { min, max };
+}
+
+function updateSourcePolarMeta(meta, slices, frequency) {
+  if (!meta) return;
+  meta.innerHTML = "";
+}
+
+function renderSourcePolarChart(sourceIndex) {
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) return;
+  const sampleResponse = source?.responses?.[0];
+  const frequencies = sampleResponse?.frequencies || [];
+
+  const elements = getSourcePlotElements(sourceIndex);
+  if (!elements.polarSelect || !elements.polarCanvas) return;
+
+  if (!frequencies.length) {
+    if (elements.polarMeta) {
+      elements.polarMeta.innerHTML =
+        '<div class="empty-state">No polar data available</div>';
+    }
+    return;
+  }
+
+  if (elements.polarSelect.options.length === 0) {
+    elements.polarSelect.innerHTML = frequencies
+      .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
+      .join("");
+    const nextIndex = findNearestFrequencyIndex(frequencies, 1000);
+    elements.polarSelect.value = String(nextIndex);
+  }
+
+  const freqIndex = parseInt(elements.polarSelect.value);
+  if (Number.isNaN(freqIndex) || freqIndex >= frequencies.length) {
+    return;
+  }
+  const frequency = frequencies[freqIndex];
+  const slices = computePolarSlices(source, freqIndex);
+  if (!slices) return;
+
+  const normalize = elements.polarNormalize?.checked ?? false;
+  let horizontalLevels = slices.horizontal.levels;
+  let verticalLevels = slices.vertical.levels;
+
+  if (normalize) {
+    const hMax = Math.max(
+      ...horizontalLevels.filter((v) => v !== null && !Number.isNaN(v)),
+    );
+    const vMax = Math.max(
+      ...verticalLevels.filter((v) => v !== null && !Number.isNaN(v)),
+    );
+    horizontalLevels = horizontalLevels.map((v) =>
+      v !== null && !Number.isNaN(v) ? v - hMax : v,
+    );
+    verticalLevels = verticalLevels.map((v) =>
+      v !== null && !Number.isNaN(v) ? v - vMax : v,
+    );
+  }
+
+  const levelRange = computeLevelRange([
+    ...horizontalLevels,
+    ...verticalLevels,
+  ]);
+  const suggestedMax = levelRange.max !== null ? levelRange.max + 3 : undefined;
+  const suggestedMin =
+    levelRange.max !== null ? levelRange.max - 40 : undefined;
+
+  const ctx = elements.polarCanvas.getContext("2d");
+  const existing = sourcePolarCharts.get(sourceIndex);
+  if (existing) {
+    existing.destroy();
+  }
+
+  const localChart = new Chart(ctx, {
+    type: "radar",
+    plugins: [sourcePolarCompassPlugin],
+    data: {
+      labels: slices.labels,
+      datasets: [
+        {
+          label: `Horizontal @ ${formatFrequency(frequency)}${normalize ? " (normalized)" : ""}`,
+          data: horizontalLevels,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37, 99, 235, 0.12)",
+          pointRadius: 0,
+          borderWidth: 2,
+          fill: true,
+          tension: 0.2,
+        },
+        {
+          label: `Vertical @ ${formatFrequency(frequency)}${normalize ? " (normalized)" : ""}`,
+          data: verticalLevels,
+          borderColor: "#dc2626",
+          backgroundColor: "rgba(220, 38, 38, 0.12)",
+          pointRadius: 0,
+          borderWidth: 2,
+          fill: true,
+          tension: 0.2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: sourcePolarChartInitialized.has(sourceIndex)
+        ? false
+        : { duration: 700 },
+      layout: {
+        padding: { top: 30, bottom: 30, left: 30, right: 30 },
+      },
+      plugins: {
+        legend: {
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const label = items?.[0]?.label;
+              return label ? `Angle ${label}` : "";
+            },
+            label: (item) => {
+              if (item?.raw === null || item?.raw === undefined) {
+                return `${item.dataset?.label || "Level"}: -`;
+              }
+              return `${item.dataset?.label || "Level"}: ${item.raw.toFixed(1)} dB`;
+            },
+          },
+        },
+      },
+      scales: {
+        r: {
+          suggestedMin,
+          suggestedMax,
+          startAngle: 90,
+          ticks: {
+            backdropColor: "transparent",
+            color: "#64748b",
+          },
+          grid: {
+            color: "rgba(148, 163, 184, 0.25)",
+          },
+          angleLines: {
+            color: "rgba(148, 163, 184, 0.25)",
+          },
+          pointLabels: {
+            color: "#64748b",
+            font: {
+              size: 10,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  sourcePolarCharts.set(sourceIndex, localChart);
+  sourcePolarChartInitialized.add(sourceIndex);
+  updateSourcePolarMeta(elements.polarMeta, slices, frequency);
+}
+
+function getSourceBalloonState(sourceIndex) {
+  if (!sourceBalloonStates.has(sourceIndex)) {
+    sourceBalloonStates.set(sourceIndex, {
+      renderer: null,
+      scene: null,
+      camera: null,
+      group: null,
+      mesh: null,
+      coverageLines: [],
+      controls: null,
+      frameId: null,
+      active: false,
+    });
+  }
+  return sourceBalloonStates.get(sourceIndex);
+}
+
+const sourceBalloonMaxCache = new WeakMap();
+
+function getSourceBalloonMaxLevel(source) {
+  if (!source) return null;
+  const cached = sourceBalloonMaxCache.get(source);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let maxLevel = null;
+  const responses = source.responses || [];
+  for (const resp of responses) {
+    const levels = resp?.level || [];
+    for (let i = 0; i < levels.length; i += 1) {
+      const value = levels[i];
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        continue;
+      }
+      if (maxLevel === null || value > maxLevel) {
+        maxLevel = value;
+      }
+    }
+  }
+  sourceBalloonMaxCache.set(source, maxLevel);
+  return maxLevel;
+}
+
+function initSourceBalloonScene(state, container, autorotate) {
+  if (!container || typeof THREE === "undefined") {
+    return false;
+  }
+  if (state.renderer && state.scene && state.camera && state.group) {
+    return true;
+  }
+
+  if (state.renderer && state.renderer.domElement?.parentNode) {
+    state.renderer.domElement.parentNode.removeChild(state.renderer.domElement);
+  }
+
+  state.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  state.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  state.renderer.setClearColor(0x000000, 0);
+  container.appendChild(state.renderer.domElement);
+
+  state.scene = new THREE.Scene();
+  state.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  state.camera.position.set(0, 0.6, 2.6);
+  state.camera.lookAt(0, 0, 0);
+
+  state.group = new THREE.Group();
+  state.group.userData.autoRotate = !!autorotate;
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+  keyLight.position.set(2, 2, 3);
+  state.scene.add(ambient, keyLight);
+
+  const reference = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 24, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0x94a3b8,
+      wireframe: true,
+      opacity: 0.2,
+      transparent: true,
+    }),
+  );
+  state.group.add(reference);
+  state.group.add(new THREE.AxesHelper(1.2));
+  state.scene.add(state.group);
+
+  state.controls = new OrbitControls(state.camera, state.renderer.domElement);
+  state.controls.enableDamping = true;
+  state.controls.enablePan = false;
+  state.controls.minDistance = 1.2;
+  state.controls.maxDistance = 6;
+
+  return true;
+}
+
+function updateSourceBalloonPlaceholder(elements, show) {
+  if (!elements.balloonViewer) return;
+  if (elements.balloonPlaceholder) {
+    elements.balloonPlaceholder.classList.toggle("hidden", !show);
+  }
+}
+
+function updateSourceBalloonLegend(elements, stats) {
+  if (!elements.balloonViewer) return;
+  const legend = elements.balloonViewer.querySelector(".balloon-legend");
+  if (!legend) return;
+  const labels = legend.querySelectorAll(".balloon-legend-labels span");
+  if (!stats || labels.length < 2 || stats.displayMin === undefined) {
+    labels.forEach((label, idx) => {
+      label.textContent = idx === 0 ? "Low" : "High";
+    });
+    return;
+  }
+  labels[0].textContent = `${stats.displayMin.toFixed(1)} dB`;
+  labels[1].textContent = `${stats.displayMax.toFixed(1)} dB`;
+}
+
+function updateSourceBalloonMeta(elements, stats) {
+  const meta = elements.balloonMeta;
+  if (!meta) return;
+  meta.innerHTML = "";
+  updateSourceBalloonLegend(elements, stats);
+}
+
+function buildSourceBalloonGeometry(
+  source,
+  grid,
+  ang,
+  freqIndex,
+  dbRange,
+  scale,
+  normalize = false,
+) {
+  const meridianStep = ang.meridian_step;
+  const parallelStep = ang.parallel_step;
+  if (!meridianStep || !parallelStep) {
+    return null;
+  }
+
+  const meridianCount = Math.max(
+    3,
+    grid?.fullMeridianCount || Math.round(360 / meridianStep),
+  );
+  const parallelCount = Math.max(
+    2,
+    grid?.fullParallelCount || Math.round(180 / parallelStep) + 1,
+  );
+  const wrapMeridian = true;
+
+  const levels = [];
+  const positions = [];
+  const colors = [];
+  const color = new THREE.Color();
+
+  let maxLevel = null;
+  let minLevel = null;
+
+  for (let p = 0; p < parallelCount; p += 1) {
+    const parallelDeg = p * parallelStep;
+    for (let m = 0; m < meridianCount; m += 1) {
+      const azimuthDeg = m * meridianStep;
+      const response = getResponseWithSymmetry(
+        source,
+        grid,
+        azimuthDeg,
+        parallelDeg,
+      );
+      const level = response?.level?.[freqIndex];
+      if (level !== null && level !== undefined && !Number.isNaN(level)) {
+        if (maxLevel === null || level > maxLevel) maxLevel = level;
+        if (minLevel === null || level < minLevel) minLevel = level;
+      }
+      levels.push(level ?? null);
+    }
+  }
+
+  if (maxLevel === null) {
+    return null;
+  }
+
+  const globalMaxLevel = getSourceBalloonMaxLevel(source);
+  const displayMax = normalize ? maxLevel : globalMaxLevel;
+  if (displayMax === null) {
+    return null;
+  }
+  const displayMin = displayMax - dbRange;
+  const baseRadius = 0.3 * scale;
+  const amplitude = 0.9 * scale;
+
+  let vertexIndex = 0;
+  for (let p = 0; p < parallelCount; p += 1) {
+    const parallelDeg = p * parallelStep;
+    const phi = (parallelDeg * Math.PI) / 180;
+    for (let m = 0; m < meridianCount; m += 1) {
+      const azimuthDeg = m * meridianStep;
+      const theta = (azimuthDeg * Math.PI) / 180;
+      const rawLevel = levels[vertexIndex];
+      const level =
+        rawLevel !== null && rawLevel !== undefined && !Number.isNaN(rawLevel)
+          ? rawLevel
+          : null;
+      const normalized =
+        level === null
+          ? null
+          : Math.min(Math.max((level - displayMin) / dbRange, 0), 1);
+      const radius =
+        normalized === null ? baseRadius : baseRadius + amplitude * normalized;
+
+      const sinPhi = Math.sin(phi);
+      const x = radius * sinPhi * Math.cos(theta);
+      const y = radius * sinPhi * Math.sin(theta);
+      const z = radius * Math.cos(phi);
+      positions.push(x, y, z);
+
+      if (normalized === null) {
+        color.setRGB(0.65, 0.65, 0.65);
+      } else {
+        const hue = (1 - normalized) * 0.66;
+        color.setHSL(hue, 0.75, 0.5);
+      }
+      colors.push(color.r, color.g, color.b);
+      vertexIndex += 1;
+    }
+  }
+
+  const indices = [];
+  for (let p = 0; p < parallelCount - 1; p += 1) {
+    const meridianLimit = wrapMeridian ? meridianCount : meridianCount - 1;
+    for (let m = 0; m < meridianLimit; m += 1) {
+      const nextM = wrapMeridian ? (m + 1) % meridianCount : m + 1;
+      if (nextM >= meridianCount) {
+        continue;
+      }
+      const a = p * meridianCount + m;
+      const b = p * meridianCount + nextM;
+      const c = (p + 1) * meridianCount + m;
+      const d = (p + 1) * meridianCount + nextM;
+      indices.push(a, c, b);
+      indices.push(b, c, d);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setIndex(indices);
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+
+  return {
+    geometry,
+    stats: {
+      frequency: source.responses?.[0]?.frequencies?.[freqIndex],
+      minLevel,
+      maxLevel,
+      displayMin,
+      displayMax,
+      dbRange,
+      meridianCount,
+      parallelCount,
+      symmetry: grid.symmetry,
+      symmetryName: grid.symmetryName,
+      normalized: normalize,
+    },
+  };
+}
+
+function buildSourceCoverageContours(
+  source,
+  grid,
+  ang,
+  freqIndex,
+  dbRange,
+  scale,
+  normalize = false,
+) {
+  const meridianStep = ang.meridian_step;
+  const parallelStep = ang.parallel_step;
+  if (!meridianStep || !parallelStep) return null;
+
+  const meridianCount = Math.max(
+    3,
+    grid?.fullMeridianCount || Math.round(360 / meridianStep),
+  );
+  const parallelCount = Math.max(
+    2,
+    grid?.fullParallelCount || Math.round(180 / parallelStep) + 1,
+  );
+
+  const onAxisResp = getResponseWithSymmetry(source, grid, 0, 0);
+  const onAxisLevel = onAxisResp?.level?.[freqIndex];
+  if (onAxisLevel == null || Number.isNaN(onAxisLevel)) return null;
+
+  const globalMaxLevel = getSourceBalloonMaxLevel(source);
+  const displayMax = normalize ? onAxisLevel : globalMaxLevel;
+  if (displayMax === null) return null;
+  const displayMin = displayMax - dbRange;
+  const baseRadius = 0.3 * scale;
+  const amplitude = 0.9 * scale;
+
+  const thresholds = [3, 6, 9];
+  const contours = [];
+
+  for (const cm of thresholds) {
+    const points = [];
+    for (let m = 0; m < meridianCount; m++) {
+      const azimuthDeg = m * meridianStep;
+      for (let p = 1; p < parallelCount; p++) {
+        const pDeg = p * parallelStep;
+        const resp = getResponseWithSymmetry(source, grid, azimuthDeg, pDeg);
+        const level = resp?.level?.[freqIndex];
+        if (level == null || Number.isNaN(level)) continue;
+        const drop = onAxisLevel - level;
+        if (drop > cm) {
+          const prevDeg = (p - 1) * parallelStep;
+          const prevResp = getResponseWithSymmetry(
+            source,
+            grid,
+            azimuthDeg,
+            prevDeg,
+          );
+          const prevLevel = prevResp?.level?.[freqIndex];
+          let contourDeg;
+          if (prevLevel == null || Number.isNaN(prevLevel)) {
+            contourDeg = pDeg;
+          } else {
+            const prevDrop = onAxisLevel - prevLevel;
+            const frac = (cm - prevDrop) / (drop - prevDrop);
+            contourDeg = prevDeg + frac * parallelStep;
+          }
+          const contourLevel = onAxisLevel - cm;
+          const norm = Math.min(
+            Math.max((contourLevel - displayMin) / dbRange, 0),
+            1,
+          );
+          const radius = baseRadius + amplitude * norm;
+          const phi = (contourDeg * Math.PI) / 180;
+          const theta = (azimuthDeg * Math.PI) / 180;
+          points.push(
+            new THREE.Vector3(
+              radius * Math.sin(phi) * Math.cos(theta),
+              radius * Math.sin(phi) * Math.sin(theta),
+              radius * Math.cos(phi),
+            ),
+          );
+          break;
+        }
+      }
+    }
+    if (points.length > 2) {
+      points.push(points[0].clone());
+      contours.push({ threshold: cm, points });
+    }
+  }
+
+  return contours.length > 0 ? contours : null;
+}
+
+function handleSourceBalloonRangeInput(sourceIndex) {
+  const elements = getSourcePlotElements(sourceIndex);
+  if (!elements.balloonRange || !elements.balloonRangeValue) return;
+  elements.balloonRangeValue.textContent = elements.balloonRange.value;
+  renderSourceBalloon(sourceIndex);
+}
+
+function handleSourceBalloonFrequencySlider(sourceIndex) {
+  const elements = getSourcePlotElements(sourceIndex);
+  if (!elements.balloonSlider || !elements.balloonSelect) return;
+  elements.balloonSelect.value = String(elements.balloonSlider.value);
+  renderSourceBalloon(sourceIndex);
+}
+
+function handleSourceBalloonScaleInput(sourceIndex) {
+  const elements = getSourcePlotElements(sourceIndex);
+  if (!elements.balloonScale || !elements.balloonScaleValue) return;
+  elements.balloonScaleValue.textContent = `${Number(elements.balloonScale.value).toFixed(1)}×`;
+  renderSourceBalloon(sourceIndex);
+}
+
+function renderSourceBalloon(sourceIndex) {
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) return;
+  const elements = getSourcePlotElements(sourceIndex);
+
+  const balloon = source?.definition?.balloon_data;
+  const ang = balloon?.angular_resolution;
+  const grid = getBalloonGrid(source);
+  if (!balloon || !ang || !grid) {
+    updateSourceBalloonPlaceholder(elements, true);
+    updateSourceBalloonMeta(elements, null);
+    return;
+  }
+
+  if (!elements.balloonViewer || !elements.balloonSelect) {
+    return;
+  }
+
+  const sampleResponse = source?.responses?.[0];
+  const frequencies = sampleResponse?.frequencies || [];
+  if (!frequencies.length) {
+    updateSourceBalloonPlaceholder(elements, true);
+    updateSourceBalloonMeta(elements, null);
+    return;
+  }
+
+  if (elements.balloonSelect.options.length === 0) {
+    elements.balloonSelect.innerHTML = frequencies
+      .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
+      .join("");
+    const nextIndex = findNearestFrequencyIndex(frequencies, 1000);
+    elements.balloonSelect.value = String(nextIndex);
+  }
+
+  const freqIndex = parseInt(elements.balloonSelect.value);
+  if (Number.isNaN(freqIndex) || freqIndex >= frequencies.length) {
+    updateSourceBalloonPlaceholder(elements, true);
+    updateSourceBalloonMeta(elements, null);
+    return;
+  }
+
+  if (elements.balloonSlider) {
+    elements.balloonSlider.max = String(Math.max(0, frequencies.length - 1));
+    elements.balloonSlider.value = String(freqIndex);
+  }
+  if (elements.balloonSliderValue) {
+    elements.balloonSliderValue.textContent = formatFrequency(
+      frequencies[freqIndex],
+    );
+  }
+  if (elements.balloonRangeValue && elements.balloonRange) {
+    elements.balloonRangeValue.textContent = elements.balloonRange.value;
+  }
+  if (elements.balloonScaleValue && elements.balloonScale) {
+    elements.balloonScaleValue.textContent = `${Number(elements.balloonScale.value).toFixed(1)}×`;
+  }
+
+  const state = getSourceBalloonState(sourceIndex);
+  const autorotate = elements.balloonAutorotate?.checked ?? true;
+  const sceneReady = initSourceBalloonScene(
+    state,
+    elements.balloonViewer,
+    autorotate,
+  );
+  if (!sceneReady) {
+    updateSourceBalloonPlaceholder(elements, true);
+    updateSourceBalloonMeta(elements, null);
+    return;
+  }
+
+  const width = elements.balloonViewer.clientWidth;
+  const height = elements.balloonViewer.clientHeight;
+  if (width > 0 && height > 0) {
+    state.renderer.setSize(width, height);
+    state.camera.aspect = width / height;
+    state.camera.updateProjectionMatrix();
+  }
+
+  updateSourceBalloonPlaceholder(elements, false);
+  state.group.userData.autoRotate = autorotate;
+
+  const rangeValue = Number(elements.balloonRange?.value);
+  const scaleValue = Number(elements.balloonScale?.value);
+  const normalize = elements.balloonNormalize?.checked ?? false;
+  const dbRange = Number.isFinite(rangeValue) ? rangeValue : 40;
+  const scale = Number.isFinite(scaleValue) ? scaleValue : 1;
+
+  const geometryData = buildSourceBalloonGeometry(
+    source,
+    grid,
+    ang,
+    freqIndex,
+    dbRange,
+    scale,
+    normalize,
+  );
+
+  if (!geometryData) {
+    if (state.mesh) {
+      state.group?.remove(state.mesh);
+      state.mesh.geometry?.dispose?.();
+      state.mesh.material?.dispose?.();
+      state.mesh = null;
+    }
+    if (state.coverageLines?.length) {
+      state.coverageLines.forEach((line) => {
+        state.group?.remove(line);
+        line.geometry?.dispose?.();
+        line.material?.dispose?.();
+      });
+      state.coverageLines = [];
+    }
+    updateSourceBalloonPlaceholder(elements, true);
+    updateSourceBalloonMeta(elements, null);
+    return;
+  }
+
+  const { geometry, stats } = geometryData;
+
+  if (state.mesh) {
+    state.group?.remove(state.mesh);
+    state.mesh.geometry?.dispose?.();
+    state.mesh.material?.dispose?.();
+  }
+
+  const wireframe = !!elements.balloonWireframe?.checked;
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    flatShading: false,
+    metalness: 0.1,
+    roughness: 0.65,
+    wireframe,
+  });
+
+  state.mesh = new THREE.Mesh(geometry, material);
+  state.group?.add(state.mesh);
+
+  for (const line of state.coverageLines || []) {
+    state.group?.remove(line);
+    line.geometry?.dispose?.();
+    line.material?.dispose?.();
+  }
+  state.coverageLines = [];
+
+  if (elements.balloonCoverage?.checked) {
+    const contours = buildSourceCoverageContours(
+      source,
+      grid,
+      ang,
+      freqIndex,
+      dbRange,
+      scale,
+      normalize,
+    );
+    if (contours) {
+      const colorMap = { 3: 0xffffff, 6: 0xffff00, 9: 0xff4444 };
+      for (const c of contours) {
+        const geom = new THREE.BufferGeometry().setFromPoints(c.points);
+        const mat = new THREE.LineBasicMaterial({
+          color: colorMap[c.threshold] || 0xffffff,
+          linewidth: 2,
+          depthTest: true,
+        });
+        const line = new THREE.Line(geom, mat);
+        state.group?.add(line);
+        state.coverageLines.push(line);
+      }
+    }
+  }
+
+  updateSourceBalloonMeta(elements, stats);
+  startSourceBalloonLoop(sourceIndex);
+}
+
+function startSourceBalloonLoop(sourceIndex) {
+  const state = getSourceBalloonState(sourceIndex);
+  if (!state || !state.renderer || !state.scene || !state.camera) return;
+  if (state.frameId) {
+    cancelAnimationFrame(state.frameId);
+  }
+  state.active = true;
+  const animate = () => {
+    if (!state.active) return;
+    state.frameId = requestAnimationFrame(animate);
+    if (state.group && state.group.userData.autoRotate) {
+      state.group.rotation.y += 0.0035;
+    }
+    state.controls?.update();
+    state.renderer.render(state.scene, state.camera);
+  };
+  animate();
+}
+
+function stopSourceBalloonLoop(sourceIndex) {
+  const state = sourceBalloonStates.get(sourceIndex);
+  if (!state) return;
+  state.active = false;
+  if (state.frameId) {
+    cancelAnimationFrame(state.frameId);
+    state.frameId = null;
+  }
+}
+
+function destroySourceBalloonStates() {
+  sourceBalloonStates.forEach((state) => {
+    if (state.frameId) {
+      cancelAnimationFrame(state.frameId);
+    }
+    if (state.mesh) {
+      state.mesh.geometry?.dispose?.();
+      state.mesh.material?.dispose?.();
+      state.mesh = null;
+    }
+    if (state.coverageLines?.length) {
+      state.coverageLines.forEach((line) => {
+        line.geometry?.dispose?.();
+        line.material?.dispose?.();
+      });
+      state.coverageLines = [];
+    }
+    if (state.renderer) {
+      state.renderer.dispose();
+      if (state.renderer.domElement?.parentNode) {
+        state.renderer.domElement.parentNode.removeChild(
+          state.renderer.domElement,
+        );
+      }
+    }
+    state.controls?.dispose?.();
+  });
+}
+
+function renderSourceImpedanceChart(sourceIndex) {
+  const source = currentData.database?.source_definitions?.[sourceIndex];
+  if (!source) return;
+  const impedance = source?.definition?.impedance;
+  if (!impedance || !Array.isArray(impedance.level)) return;
+
+  const elements = getSourcePlotElements(sourceIndex);
+  if (!elements.impedanceCanvas) return;
+
+  const frequencies = buildLogFrequencies(
+    impedance.definition,
+    impedance.level.length,
+  );
+  if (!frequencies) {
+    return;
+  }
+
+  const delay = Number.isFinite(impedance.delay) ? impedance.delay : 0;
+  const rawPhase = impedance.phase || [];
+  const delayAdjustedPhase = applyDelayToPhase(rawPhase, frequencies, delay);
+  const unwrappedPhase = unwrapPhase(delayAdjustedPhase);
+  const phaseMode = elements.impedancePhase?.value || "unwrapped";
+  const phaseSeries = getPhaseSeries(
+    phaseMode,
+    frequencies,
+    delayAdjustedPhase,
+    unwrappedPhase,
+  );
+
+  const levelSeries = buildFrequencyPoints(frequencies, impedance.level);
+  const phaseData = buildFrequencyPoints(frequencies, phaseSeries.values);
+  if (!levelSeries) return;
+
+  const ctx = elements.impedanceCanvas.getContext("2d");
+  const existing = sourceImpedanceCharts.get(sourceIndex);
+  if (existing) {
+    existing.destroy();
+  }
+
+  const localChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "Impedance (level)",
+          data: levelSeries.points,
+          borderColor: "#0f766e",
+          backgroundColor: "rgba(15, 118, 110, 0.1)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          yAxisID: "y",
+        },
+        {
+          label: phaseSeries.label,
+          data: phaseData ? phaseData.points : [],
+          borderColor: "#f97316",
+          backgroundColor: "transparent",
+          tension: 0.3,
+          pointRadius: 0,
+          yAxisID: "y1",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 600 },
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      scales: {
+        x: buildLogFrequencyScale(
+          levelSeries.minFrequency,
+          levelSeries.maxFrequency,
+          "Frequency",
+        ),
+        y: {
+          type: "linear",
+          display: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Level",
+          },
+        },
+        y1: {
+          type: "linear",
+          display: true,
+          position: "right",
+          title: {
+            display: true,
+            text: phaseSeries.axisTitle,
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+        },
+      },
+    },
+  });
+
+  sourceImpedanceCharts.set(sourceIndex, localChart);
+
+  if (elements.impedanceMeta) {
+    const chips = [];
+    chips.push(`<span class="chip">${impedance.level.length} points</span>`);
+    chips.push(
+      `<span class="chip">${formatFrequency(frequencies[0])} - ${formatFrequency(frequencies[frequencies.length - 1])}</span>`,
+    );
+    if (delay) {
+      chips.push(`<span class="chip">Delay ${formatDelay(delay)}</span>`);
+    }
+    elements.impedanceMeta.innerHTML = chips.join("");
+  }
+}
+
 function buildSourcePlacementsMap(boxTypes) {
+  // Group placements by source definition key
   const map = new Map();
   boxTypes.forEach((box) => {
     const placements = box?.source_placements || [];
@@ -1085,6 +2748,7 @@ function buildSourcePlacementsMap(boxTypes) {
 }
 
 function displayConfig() {
+  // Render box types, frames, filters, limits, and warnings
   const db = currentData.database;
 
   // Box Types
@@ -1233,6 +2897,7 @@ function displayConfig() {
   wireFilterGroupResponses();
   wireFilterExportDropdowns();
 
+  // Render limits section
   // Limits
   const limitsList = document.getElementById("limits-list");
   const limits = db?.limits || [];
@@ -1255,6 +2920,7 @@ function displayConfig() {
       .join("");
   }
 
+  // Render warnings section
   // Warnings
   const warningsList = document.getElementById("warnings-list");
   const warnings = db?.warnings || [];
@@ -1287,6 +2953,7 @@ function displayConfig() {
 }
 
 function displayConfigurations() {
+  // Show cluster setups, connectors, and defaults
   const db = currentData?.database;
   const clusterSetups = db?.cluster_setups || [];
 
@@ -1340,14 +3007,84 @@ function displayConfigurations() {
   // Connectors
   displayConnectors(db);
 
+  // Populate frame selector for auto-generation
+  populateFrameSelect();
+
   // Auto-select default configuration
   autoSelectDefaultConfig();
 
-  // Demo configuration if no setup data exists
-  ensureDemoConfiguration();
+  // Default configuration if no setup data exists
+  ensureDefaultConfiguration();
+}
+
+function displayTransformers() {
+  // Render transformer metadata and tap settings
+  const transformersList = document.getElementById("transformers-list");
+  if (!transformersList) return;
+
+  const transformers = currentData?.database?.transformers || [];
+  if (transformers.length === 0) {
+    transformersList.innerHTML =
+      '<div class="empty-state">No transformer settings defined</div>';
+    return;
+  }
+
+  transformersList.innerHTML = transformers
+    .map((transformer) => {
+      const taps = transformer.tap_settings || [];
+      const maxPower = transformer.max_power;
+      const tapRows = taps.length
+        ? `<table class="transformer-table">
+            <thead>
+              <tr>
+                <th>Tap</th>
+                <th>Key</th>
+                <th>Power Ratio</th>
+                <th>Power (W)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${taps
+                .map((tap) => {
+                  const ratio = Number.isFinite(tap.power_ratio)
+                    ? tap.power_ratio
+                    : null;
+                  const power =
+                    Number.isFinite(maxPower) && Number.isFinite(ratio)
+                      ? maxPower * ratio
+                      : null;
+                  return `<tr>
+                    <td>${escapeHtml(tap.label || "(unnamed)")}</td>
+                    <td>${escapeHtml(tap.key || "—")}</td>
+                    <td>${ratio === null ? "—" : formatNumber(ratio, 2)}</td>
+                    <td>${power === null ? "—" : formatNumber(power, 1)}</td>
+                  </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>`
+        : '<div class="empty-state">No tap settings defined</div>';
+
+      return `
+        <div class="config-item">
+          <div class="config-item-header">${escapeHtml(transformer.label || "Transformer")}</div>
+          <div class="config-item-detail">
+            ${transformer.key ? `Key: ${escapeHtml(transformer.key)} • ` : ""}
+            Max Power: ${formatNumber(transformer.max_power, 1)} W
+            • Net Voltage: ${formatNumber(transformer.net_voltage, 1)} V
+            • Impedance: ${formatNumber(transformer.lspk_impedance, 1)} Ω
+          </div>
+          <div class="transformer-taps">
+            ${tapRows}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function displayConnectors(db) {
+  // Render connector table grouped by frame
   const connectors = db?.connectors || [];
   const connectorsEl = document.getElementById("connectors-list");
   if (!connectorsEl) return;
@@ -1390,18 +3127,80 @@ function displayConnectors(db) {
 }
 
 function toDeg(rad) {
+  // Convert radians to degrees
   return (rad * 180) / Math.PI;
 }
 
 function toRad(deg) {
+  // Convert degrees to radians
   return (deg * Math.PI) / 180;
 }
 
+function populateFrameSelect() {
+  const select = document.getElementById("config-frame-select");
+  if (!select) return;
+  const frames = currentData?.database?.frames || [];
+  if (frames.length === 0) {
+    select.innerHTML = '<option value="">No frames</option>';
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  select.innerHTML = frames
+    .map(
+      (f, i) =>
+        `<option value="${i}">${escapeHtml(f.label || f.key)} (${f.type_flown ? "flown" : "GS"})</option>`,
+    )
+    .join("");
+}
+
+function autoGenerateFromFrame() {
+  const select = document.getElementById("config-frame-select");
+  const db = currentData?.database;
+  if (!select || !db) return;
+  const frameIndex = parseInt(select.value, 10);
+  const frames = db.frames || [];
+  const frame = frames[frameIndex];
+  if (!frame) return;
+
+  const config = buildFrameConfig(db, frame);
+  if (!config || !config.rows.length) {
+    updateConfigEditorHint(
+      `No valid configuration could be generated for frame "${frame.label || frame.key}".`,
+    );
+    return;
+  }
+
+  const tbody = document.getElementById("config-editor-body");
+  if (tbody) {
+    tbody.innerHTML = "";
+    config.rows.forEach((row) =>
+      addConfigEditorRow(row.box_type_key, row.splay_deg),
+    );
+  }
+
+  const elements = buildArrayElementsFromRows(config.rows);
+  activeConfig = {
+    elements,
+    label: config.label,
+    isDemo: false,
+  };
+
+  updateConfigEditorHint(config.label);
+  updateCombinedResponseChart();
+  scheduleArrayViewerUpdate();
+}
+
 function setupConfigEditor() {
+  // Wire config editor buttons
   const addBtn = document.getElementById("config-add-element");
   const clearBtn = document.getElementById("config-clear");
   const applyBtn = document.getElementById("config-apply");
+  const autogenBtn = document.getElementById("config-autogen");
 
+  if (autogenBtn) {
+    autogenBtn.onclick = () => autoGenerateFromFrame();
+  }
   if (addBtn) {
     addBtn.onclick = () => addConfigEditorRow();
   }
@@ -1409,15 +3208,29 @@ function setupConfigEditor() {
     clearBtn.onclick = () => {
       document.getElementById("config-editor-body").innerHTML = "";
       activeConfig = null;
+      cachedArrayBalloon = null;
       updateConfigEditorHint("Add elements to build a configuration.");
+      scheduleArrayViewerUpdate();
+      markConfigDirty();
     };
   }
   if (applyBtn) {
     applyBtn.onclick = () => applyConfigFromEditor();
   }
+
+  const table = document.getElementById("config-editor-table");
+  if (table) {
+    table.addEventListener("input", () => {
+      scheduleArrayViewerUpdate();
+    });
+    table.addEventListener("change", () => {
+      scheduleArrayViewerUpdate();
+    });
+  }
 }
 
 function getBoxTypeOptions() {
+  // Build select options for box types
   const boxTypes = currentData?.database?.box_types || [];
   return boxTypes
     .map(
@@ -1427,7 +3240,8 @@ function getBoxTypeOptions() {
     .join("");
 }
 
-function addConfigEditorRow(boxTypeKey, pos, angles, gain) {
+function addConfigEditorRow(boxTypeKey, splayDeg) {
+  // Insert an editable config row into the table
   const tbody = document.getElementById("config-editor-body");
   if (!tbody) return;
   const boxTypes = currentData?.database?.box_types || [];
@@ -1440,20 +3254,36 @@ function addConfigEditorRow(boxTypeKey, pos, angles, gain) {
     .join("");
   row.innerHTML = `
     <td><select class="cfg-box-type">${options}</select></td>
-    <td><input type="number" class="cfg-x" value="${pos?.x ?? 0}" step="1"></td>
-    <td><input type="number" class="cfg-y" value="${pos?.y ?? 0}" step="1"></td>
-    <td><input type="number" class="cfg-z" value="${pos?.z ?? 0}" step="1"></td>
-    <td><input type="number" class="cfg-h" value="${formatNumber(toDeg(angles?.x ?? 0))}" step="0.5"></td>
-    <td><input type="number" class="cfg-v" value="${formatNumber(toDeg(angles?.y ?? 0))}" step="0.5"></td>
-    <td><input type="number" class="cfg-r" value="${formatNumber(toDeg(angles?.z ?? 0))}" step="0.5"></td>
-    <td><input type="number" class="cfg-gain" value="${gain ?? 0}" step="0.5"></td>
+    <td><input type="number" class="cfg-splay" value="${formatNumber(splayDeg ?? 0)}" step="0.5"></td>
     <td><button class="btn-remove" onclick="this.closest('tr').remove()">X</button></td>
   `;
   tbody.appendChild(row);
+  scheduleArrayViewerUpdate();
+}
+
+function readConfigEditorRows() {
+  // Parse editor table rows into splay-only rows
+  const tbody = document.getElementById("config-editor-body");
+  if (!tbody) return [];
+
+  const rows = tbody.querySelectorAll("tr");
+  const elements = [];
+  for (const row of rows) {
+    const boxTypeKey = row.querySelector(".cfg-box-type")?.value;
+    const splay = parseFloat(row.querySelector(".cfg-splay")?.value) || 0;
+    if (boxTypeKey) {
+      elements.push({
+        box_type_key: boxTypeKey,
+        splay_deg: splay,
+      });
+    }
+  }
+  return elements;
 }
 
 // Load a cluster setup into the editor
 window.loadClusterSetupToEditor = function (clusterIndex) {
+  // Populate editor rows from a stored cluster setup
   const clusterSetups = currentData?.database?.cluster_setups || [];
   const cs = clusterSetups[clusterIndex];
   if (!cs) return;
@@ -1463,47 +3293,32 @@ window.loadClusterSetupToEditor = function (clusterIndex) {
   updateConfigEditorHint("");
 
   for (const box of cs.setup?.boxes || []) {
-    addConfigEditorRow(box.box_type_key, box.position, box.angles, 0);
+    const splay = toDeg(box.angles?.y || 0);
+    addConfigEditorRow(box.box_type_key, -splay);
   }
+  scheduleArrayViewerUpdate();
 };
 
 function applyConfigFromEditor() {
-  const tbody = document.getElementById("config-editor-body");
-  if (!tbody) return;
-
-  const rows = tbody.querySelectorAll("tr");
-  const elements = [];
-  for (const row of rows) {
-    const boxTypeKey = row.querySelector(".cfg-box-type")?.value;
-    const x = parseFloat(row.querySelector(".cfg-x")?.value) || 0;
-    const y = parseFloat(row.querySelector(".cfg-y")?.value) || 0;
-    const z = parseFloat(row.querySelector(".cfg-z")?.value) || 0;
-    const h = parseFloat(row.querySelector(".cfg-h")?.value) || 0;
-    const v = parseFloat(row.querySelector(".cfg-v")?.value) || 0;
-    const r = parseFloat(row.querySelector(".cfg-r")?.value) || 0;
-    const gain = parseFloat(row.querySelector(".cfg-gain")?.value) || 0;
-    if (boxTypeKey) {
-      elements.push({
-        box_type_key: boxTypeKey,
-        position: { x, y, z },
-        angles: { x: toRad(h), y: toRad(v), z: toRad(r) },
-        gain,
-      });
-    }
-  }
+  // Convert editor rows into active configuration
+  const rows = readConfigEditorRows();
+  const elements = buildArrayElementsFromRows(rows);
 
   if (elements.length === 0) {
     activeConfig = null;
+    cachedArrayBalloon = null;
     updateConfigEditorHint("Add elements to build a configuration.");
   } else {
     activeConfig = { elements, label: `Config (${elements.length} boxes)` };
     updateConfigEditorHint("");
   }
 
-  updateCombinedResponseChart();
+  scheduleArrayViewerUpdate();
+  markConfigDirty();
 }
 
 function autoSelectDefaultConfig() {
+  // Choose a reasonable default configuration per system type
   const db = currentData?.database;
   const systemType = currentData?.gen_system?.type;
 
@@ -1529,27 +3344,114 @@ function autoSelectDefaultConfig() {
     }
   }
   // For Loudspeaker (type 2), the existing box-type dropdown works fine
-  // For LineArray (type 0), full support needs Frame/Connector parsing (not yet implemented)
+  // For LineArray (type 0), frame-based config is built in ensureDefaultConfiguration
 }
 
-function ensureDemoConfiguration() {
-  const db = currentData?.database;
-  if (!db) return;
+function findConnectableBoxTypes(db, previousKey, frameKey, isFlown) {
+  // Mimic legacy ArrayBuilder.DetermineNextPossibleBoxTypes:
+  // Find box types that can connect after previousKey for the given frame.
+  const connectors = db?.connectors || [];
+  const boxTypes = db?.box_types || [];
+  const boxKeys = new Set(boxTypes.map((bt) => bt.key));
+  const result = [];
+  for (const bt of boxTypes) {
+    const candidateKey = bt.key;
+    // For flown: previous=upper, candidate=lower
+    // For ground-stacked: previous=lower, candidate=upper
+    const upper = isFlown ? previousKey : candidateKey;
+    const lower = isFlown ? candidateKey : previousKey;
+    const found = connectors.some(
+      (c) =>
+        c.upper_box === upper &&
+        c.lower_box === lower &&
+        (c.frame === frameKey || c.frame === ""),
+    );
+    if (found) result.push(candidateKey);
+  }
+  return result;
+}
 
-  const clusterSetups = db.cluster_setups || [];
-  const connectors = db.connectors || [];
-  if (clusterSetups.length || connectors.length) {
-    return;
+function getDefaultSplayAngles(count) {
+  // Legacy default splay pattern: [0, 0, 0, 0, 2, 4, 6, 8] degrees
+  const defaults = [0, 0, 0, 0, 2, 4, 6, 8];
+  const result = [];
+  for (let i = 0; i < count; i++) {
+    result.push(
+      i < defaults.length ? defaults[i] : defaults[defaults.length - 1],
+    );
+  }
+  return result;
+}
+
+function buildFrameConfig(db, frame) {
+  // Build a default config for a specific frame, mirroring legacy SwitchToFrame logic.
+  const connectors = db?.connectors || [];
+  const boxTypes = db?.box_types || [];
+  if (!connectors.length || !boxTypes.length) return null;
+
+  const isFlown = frame.type_flown;
+  const frameKey = frame.key;
+  const desiredCount = isFlown ? 8 : 4;
+
+  // TODO: when limits are parsed, clamp desiredCount to [min, max]
+  const count = desiredCount;
+
+  const splayAngles = getDefaultSplayAngles(count);
+  const rows = [];
+
+  // Build elements iteratively like legacy _E001 method
+  let previousKey = frameKey; // First element connects to frame
+  for (let i = 0; i < count; i++) {
+    const remaining = count - i;
+    const possible = findConnectableBoxTypes(
+      db,
+      previousKey,
+      frameKey,
+      isFlown,
+    );
+    if (possible.length === 0) {
+      if (rows.length === 0) return null; // Frame has no valid connections
+      break; // Partial config is ok
+    }
+    // Prefer same box type as previous if compatible, otherwise first match
+    const boxKey = possible.includes(previousKey) ? previousKey : possible[0];
+    rows.push({ box_type_key: boxKey, splay_deg: splayAngles[i] });
+    previousKey = boxKey;
   }
 
-  if (activeConfig?.elements?.length) {
-    return;
+  if (rows.length === 0) return null;
+
+  const typeLabel = isFlown ? "flown" : "ground-stacked";
+  return {
+    rows,
+    label: `${frame.label} (${rows.length} boxes, ${typeLabel})`,
+    frameKey,
+    isDemo: false,
+  };
+}
+
+function buildConnectorDefaultConfig(db) {
+  // Build a default array config by trying each frame in order (like legacy SwitchToDefaultConfig).
+  const frames = db?.frames || [];
+  const connectors = db?.connectors || [];
+  const boxTypes = db?.box_types || [];
+  if (!connectors.length || !boxTypes.length) return null;
+
+  // Try each frame, return first one that produces a valid config
+  for (const frame of frames) {
+    const config = buildFrameConfig(db, frame);
+    if (config && config.rows.length > 0) return config;
   }
 
-  const boxTypes = db.box_types || [];
+  return null;
+}
+
+function buildFallbackDefaultConfig(db) {
+  // Create a demo config when no setup data exists
+  const boxTypes = db?.box_types || [];
   if (!boxTypes.length) {
     updateConfigEditorHint("No box types available for demo configuration.");
-    return;
+    return null;
   }
 
   const demoBox = boxTypes.find((box) => {
@@ -1560,51 +3462,74 @@ function ensureDemoConfiguration() {
 
   if (!demoBox) {
     updateConfigEditorHint("No box types with sources available for demo.");
-    return;
+    return null;
   }
 
-  const spacingMm = 500;
   const splayDeg = 5;
-  const elements = Array.from({ length: 4 }, (_, i) => ({
+  const rows = Array.from({ length: 4 }, (_, i) => ({
     box_type_key: demoBox.key,
-    position: { x: 0, y: i * spacingMm, z: 0 },
-    angles: { x: 0, y: toRad(-splayDeg * i), z: 0 },
-    gain: 0,
+    splay_deg: splayDeg * Math.max(0, i - 1),
   }));
 
-  activeConfig = {
-    elements,
+  return {
+    rows,
     label: "Demo Config (4 boxes)",
     isDemo: true,
   };
+}
 
-  if (buildElementsFromConfig(activeConfig).length === 0) {
-    activeConfig = null;
-    updateConfigEditorHint(
-      "Demo configuration could not be generated from available sources.",
-    );
+function ensureDefaultConfiguration() {
+  // Ensure the editor always starts with a basic configuration
+  const db = currentData?.database;
+  if (!db) return;
+
+  if (activeConfig?.elements?.length) {
+    scheduleArrayViewerUpdate();
     return;
   }
+
+  let config = buildConnectorDefaultConfig(db);
+  let hint = config
+    ? `Default configuration for frame "${config.frameKey || "?"}".`
+    : "";
+  if (!config) {
+    config = buildFallbackDefaultConfig(db);
+    hint = "Demo configuration created (no setup data found in file).";
+  }
+
+  if (!config) return;
 
   const tbody = document.getElementById("config-editor-body");
   if (tbody) {
     tbody.innerHTML = "";
-    elements.forEach((elem) =>
-      addConfigEditorRow(
-        elem.box_type_key,
-        elem.position,
-        elem.angles,
-        elem.gain,
-      ),
+    config.rows.forEach((row) =>
+      addConfigEditorRow(row.box_type_key, row.splay_deg),
     );
   }
 
-  updateConfigEditorHint(
-    "Demo configuration created (no setup data found in file).",
-  );
+  const elements = buildArrayElementsFromRows(config.rows);
+  if (!elements.length || buildElementsFromConfig({ elements }).length === 0) {
+    activeConfig = null;
+    updateConfigEditorHint(
+      "Demo configuration could not be generated from available sources.",
+    );
+    scheduleArrayViewerUpdate();
+    return;
+  }
+
+  activeConfig = {
+    elements,
+    label: config.label,
+    isDemo: config.isDemo,
+  };
+
+  updateConfigEditorHint(hint);
+  scheduleArrayViewerUpdate();
+  markConfigDirty();
 }
 
 function updateConfigEditorHint(message) {
+  // Show or hide the hint under the editor
   const hint = document.getElementById("config-editor-hint");
   if (!hint) return;
   if (message) {
@@ -1617,6 +3542,7 @@ function updateConfigEditorHint(message) {
 }
 
 function buildElementsFromConfig(config) {
+  // Expand a config into concrete source elements
   if (!config?.elements?.length) return [];
 
   const boxTypes = currentData?.database?.box_types || [];
@@ -1680,7 +3606,627 @@ function buildElementsFromConfig(config) {
   return allElements;
 }
 
+function scheduleArrayViewerUpdate() {
+  // Debounce array viewer redraws
+  if (arrayViewerNeedsUpdate) return;
+  arrayViewerNeedsUpdate = true;
+  requestAnimationFrame(() => {
+    arrayViewerNeedsUpdate = false;
+    updateArrayViewer();
+  });
+}
+
+function toViewPoint(point) {
+  // Convert GLL Z-up to Three.js Y-up
+  if (!point) return null;
+  const x = Number(point.x);
+  const y = Number(point.y);
+  const z = Number(point.z);
+  if (![x, y, z].every(Number.isFinite)) return null;
+  return { x, y: z, z: y };
+}
+
+function buildArrayElementsFromRows(rows) {
+  // Expand splay-only rows into positioned elements
+  if (!rows?.length) return [];
+  const boxTypes = currentData?.database?.box_types || [];
+  const elements = [];
+  const position = { x: 0, y: 0, z: 0 };
+  let cumulativeSplayDeg = 0;
+
+  rows.forEach((row, index) => {
+    const boxType = boxTypes.find((bt) => bt.key === row.box_type_key);
+    if (!boxType) return;
+    const splayDeg = Number(row.splay_deg) || 0;
+    if (index > 0) {
+      cumulativeSplayDeg += splayDeg;
+    }
+    const angles = { x: 0, y: toRad(-cumulativeSplayDeg), z: 0 };
+    elements.push({
+      box_type_key: boxType.key,
+      position: { x: position.x, y: position.y, z: position.z },
+      angles,
+      gain: 0,
+    });
+
+    const pivot = boxType?.next_pivot;
+    let step = null;
+    if (
+      pivot &&
+      [pivot.x, pivot.y, pivot.z].every((value) => Number.isFinite(value))
+    ) {
+      step = { x: pivot.x, y: pivot.y, z: pivot.z };
+    } else {
+      const height = estimateBoxHeightMm(boxType);
+      step = { x: 0, y: 0, z: height };
+    }
+
+    const rotatedStep = rotateVectorFromAngles(angles, step);
+    position.x += rotatedStep.x;
+    position.y -= rotatedStep.y;
+    position.z += rotatedStep.z;
+  });
+
+  return elements;
+}
+
+function rotateVectorFromAngles(angles, vector) {
+  // Rotate vector by GLL Euler angles (H,V,R)
+  const h = Number(angles?.x) || 0;
+  const v = Number(angles?.y) || 0;
+  const r = Number(angles?.z) || 0;
+  const sh = Math.sin(h);
+  const ch = Math.cos(h);
+  const sv = Math.sin(v);
+  const cv = Math.cos(v);
+  const sr = Math.sin(r);
+  const cr = Math.cos(r);
+
+  const m00 = ch * cr - sv * sh * sr;
+  const m01 = sh * cr + sv * ch * sr;
+  const m02 = cv * sr;
+  const m10 = -cv * sh;
+  const m11 = cv * ch;
+  const m12 = -sv;
+  const m20 = -ch * sr - sv * sh * cr;
+  const m21 = -sh * sr + sv * ch * cr;
+  const m22 = cv * cr;
+
+  const x = Number(vector?.x) || 0;
+  const y = Number(vector?.y) || 0;
+  const z = Number(vector?.z) || 0;
+
+  return {
+    x: m00 * x + m01 * y + m02 * z,
+    y: m10 * x + m11 * y + m12 * z,
+    z: m20 * x + m21 * y + m22 * z,
+  };
+}
+
+function toViewQuaternion(angles) {
+  // Convert GLL Euler angles to view quaternion (forward vector only)
+  if (!angles || typeof THREE === "undefined") return null;
+  const h = Number(angles.x) || 0;
+  const v = Number(angles.y) || 0;
+  const r = Number(angles.z) || 0;
+  const sh = Math.sin(h);
+  const ch = Math.cos(h);
+  const sv = Math.sin(v);
+  const cv = Math.cos(v);
+  const sr = Math.sin(r);
+  const cr = Math.cos(r);
+
+  const rotMatrix = new THREE.Matrix4().set(
+    ch * cr - sv * sh * sr,
+    sh * cr + sv * ch * sr,
+    cv * sr,
+    0,
+    -cv * sh,
+    cv * ch,
+    -sv,
+    0,
+    -ch * sr - sv * sh * cr,
+    -sh * sr + sv * ch * cr,
+    cv * cr,
+    0,
+    0,
+    0,
+    0,
+    1,
+  );
+
+  const forward = new THREE.Vector3(0, 1, 0);
+  forward.applyMatrix4(rotMatrix);
+  const forwardView = new THREE.Vector3(forward.x, forward.z, forward.y);
+  if (forwardView.lengthSq() === 0) return null;
+  forwardView.normalize();
+  const quat = new THREE.Quaternion();
+  quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), forwardView);
+  return quat;
+}
+
+function toViewQuaternionNoSwap(angles) {
+  // Convert GLL Euler angles without Y/Z swap (for already-swapped geometry)
+  if (!angles || typeof THREE === "undefined") return null;
+  const h = Number(angles.x) || 0;
+  const v = Number(angles.y) || 0;
+  const r = Number(angles.z) || 0;
+  const sh = Math.sin(h);
+  const ch = Math.cos(h);
+  const sv = Math.sin(v);
+  const cv = Math.cos(v);
+  const sr = Math.sin(r);
+  const cr = Math.cos(r);
+
+  const rotMatrix = new THREE.Matrix4().set(
+    ch * cr - sv * sh * sr,
+    sh * cr + sv * ch * sr,
+    cv * sr,
+    0,
+    -cv * sh,
+    cv * ch,
+    -sv,
+    0,
+    -ch * sr - sv * sh * cr,
+    -sh * sr + sv * ch * cr,
+    cv * cr,
+    0,
+    0,
+    0,
+    0,
+    1,
+  );
+
+  const forward = new THREE.Vector3(0, 1, 0);
+  forward.applyMatrix4(rotMatrix);
+  if (forward.lengthSq() === 0) return null;
+  forward.normalize();
+  const quat = new THREE.Quaternion();
+  quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), forward);
+  return quat;
+}
+
+function readThemeVar(name, fallback) {
+  // Read CSS variable with fallback
+  if (typeof window === "undefined" || !document?.documentElement) {
+    return fallback;
+  }
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return value || fallback;
+}
+
+function readArrayThemeColors() {
+  // Collect theme-specific colors for array viewer
+  return {
+    gridMajor: readThemeVar("--geom-grid-major", "#94a3b8"),
+    gridMinor: readThemeVar("--geom-grid-minor", "#e2e8f0"),
+    gridOpacity: parseFloat(readThemeVar("--geom-grid-opacity", "0.45")),
+  };
+}
+
+function applyGridTheme(grid, colors) {
+  // Apply CSS-driven grid styling
+  if (!grid || !colors) return;
+  const materials = Array.isArray(grid.material)
+    ? grid.material
+    : [grid.material];
+  materials.forEach((material, index) => {
+    if (!material) return;
+    material.transparent = true;
+    material.opacity = Number.isFinite(colors.gridOpacity)
+      ? colors.gridOpacity
+      : 0.45;
+    const color = index === 0 ? colors.gridMajor : colors.gridMinor;
+    if (color && material.color?.setStyle) {
+      material.color.setStyle(color);
+    } else if (color && material.color?.set) {
+      material.color.set(color);
+    }
+    material.needsUpdate = true;
+  });
+}
+
+function computeGeometryBounds(geometry, transform = null) {
+  // Compute geometry bounds in local or transformed space
+  const vertices = geometry?.vertices || [];
+  if (!geometry || vertices.length === 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let i = 1; i <= vertices.length; i += 1) {
+    const vertex = resolveGeometryVertex(geometry, vertices, i, 1);
+    if (!vertex) continue;
+    const point = transform ? transform(vertex) : vertex;
+    if (!point) continue;
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    minZ = Math.min(minZ, point.z);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+    maxZ = Math.max(maxZ, point.z);
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+  return { minX, minY, minZ, maxX, maxY, maxZ };
+}
+
+function estimateBoxHeightMm(boxType) {
+  // Estimate vertical height for spacing (Z axis)
+  const bounds = computeGeometryBounds(boxType?.case_geometry);
+  if (bounds) {
+    return Math.max(bounds.maxZ - bounds.minZ, 1);
+  }
+  const pivot = boxType?.next_pivot;
+  if (pivot && Number.isFinite(pivot.z) && Math.abs(pivot.z) > 0) {
+    return Math.abs(pivot.z);
+  }
+  return 500;
+}
+
+function estimateBoxSizeMm(boxType) {
+  // Estimate box size for fallback rendering
+  const bounds = computeGeometryBounds(boxType?.case_geometry);
+  if (bounds) {
+    return {
+      x: Math.max(bounds.maxX - bounds.minX, 1),
+      y: Math.max(bounds.maxY - bounds.minY, 1),
+      z: Math.max(bounds.maxZ - bounds.minZ, 1),
+    };
+  }
+  const height = estimateBoxHeightMm(boxType);
+  return {
+    x: height * 0.6,
+    y: height * 0.4,
+    z: height,
+  };
+}
+
+function buildBoxMeshesFromGeometry(geometry, color) {
+  // Build mesh/line objects from case geometry
+  const vertices = geometry?.vertices || [];
+  const faces = geometry?.faces || [];
+  const edges = geometry?.edges || [];
+  let bounds = null;
+
+  const updateBounds = (point) => {
+    if (!point) return;
+    if (!bounds) {
+      bounds = {
+        minX: point.x,
+        minY: point.y,
+        minZ: point.z,
+        maxX: point.x,
+        maxY: point.y,
+        maxZ: point.z,
+      };
+      return;
+    }
+    bounds.minX = Math.min(bounds.minX, point.x);
+    bounds.minY = Math.min(bounds.minY, point.y);
+    bounds.minZ = Math.min(bounds.minZ, point.z);
+    bounds.maxX = Math.max(bounds.maxX, point.x);
+    bounds.maxY = Math.max(bounds.maxY, point.y);
+    bounds.maxZ = Math.max(bounds.maxZ, point.z);
+  };
+
+  let mesh = null;
+  if (faces.length > 0) {
+    const positions = [];
+    for (const face of faces) {
+      const indices = Array.isArray(face.vertices) ? face.vertices : [];
+      if (indices.length < 3) continue;
+      const triangles = triangulateFace(indices);
+      for (const tri of triangles) {
+        for (const idx of tri) {
+          const vertex = resolveGeometryVertex(geometry, vertices, idx, 1);
+          const point = vertex ? toViewPoint(vertex) : null;
+          if (!point) continue;
+          positions.push(point.x, point.y, point.z);
+          updateBounds(point);
+        }
+      }
+    }
+    if (positions.length > 0) {
+      const buffer = new THREE.BufferGeometry();
+      buffer.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      buffer.computeBoundingBox();
+      buffer.computeBoundingSphere();
+      buffer.computeVertexNormals();
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        transparent: true,
+        opacity: 0.85,
+        roughness: 0.5,
+        metalness: 0.08,
+        side: THREE.DoubleSide,
+      });
+      mesh = new THREE.Mesh(buffer, material);
+    }
+  }
+
+  let lines = null;
+  if (edges.length > 0) {
+    const positions = [];
+    for (const edge of edges) {
+      const v1 = resolveGeometryVertex(geometry, vertices, edge.v1, 1);
+      const v2 = resolveGeometryVertex(geometry, vertices, edge.v2, 1);
+      const p1 = v1 ? toViewPoint(v1) : null;
+      const p2 = v2 ? toViewPoint(v2) : null;
+      if (!p1 || !p2) continue;
+      positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      updateBounds(p1);
+      updateBounds(p2);
+    }
+    if (positions.length > 0) {
+      const buffer = new THREE.BufferGeometry();
+      buffer.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      buffer.computeBoundingBox();
+      buffer.computeBoundingSphere();
+      const material = new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.7,
+      });
+      lines = new THREE.LineSegments(buffer, material);
+    }
+  }
+
+  return { mesh, lines, bounds };
+}
+
+function initArrayViewer() {
+  // Initialize array viewer scene if needed
+  if (arrayViewer || typeof THREE === "undefined") return;
+  const container = document.getElementById("array-view-canvas");
+  if (!container) return;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(container.clientWidth || 1, container.clientHeight || 1);
+  renderer.setClearColor(0x000000, 0);
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(
+    45,
+    (container.clientWidth || 1) / (container.clientHeight || 1),
+    0.01,
+    2000,
+  );
+  camera.position.set(0, 0.4, 2.2);
+  camera.lookAt(0, 0, 0);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.screenSpacePanning = true;
+  controls.enablePan = true;
+  controls.enableZoom = true;
+  controls.rotateSpeed = 0.6;
+  controls.panSpeed = 0.9;
+  controls.autoRotate = true;
+  controls.minDistance = 0.2;
+  controls.maxDistance = 25;
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN,
+  };
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+  keyLight.position.set(2.5, 2.5, 2);
+  scene.add(ambient, keyLight);
+
+  const grid = new THREE.GridHelper(2, 12, 0x94a3b8, 0xe2e8f0);
+  applyGridTheme(grid, readArrayThemeColors());
+  const axes = new THREE.AxesHelper(0.8);
+  axes.material.transparent = true;
+  axes.material.opacity = 0.5;
+  scene.add(grid, axes);
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  const viewer = {
+    renderer,
+    scene,
+    camera,
+    controls,
+    group,
+    grid,
+    frameId: null,
+    container,
+  };
+
+  const animate = () => {
+    viewer.frameId = requestAnimationFrame(animate);
+    viewer.controls.update();
+    viewer.renderer.render(viewer.scene, viewer.camera);
+  };
+  animate();
+
+  arrayViewer = viewer;
+
+  const autoToggle = document.getElementById("array-view-autorotate");
+  if (autoToggle) {
+    autoToggle.addEventListener("change", (e) => {
+      if (!arrayViewer?.controls) return;
+      arrayViewer.controls.autoRotate = !!e.target.checked;
+    });
+  }
+  const facesToggle = document.getElementById("array-view-faces");
+  if (facesToggle) {
+    facesToggle.addEventListener("change", () => scheduleArrayViewerUpdate());
+  }
+  const edgesToggle = document.getElementById("array-view-edges");
+  if (edgesToggle) {
+    edgesToggle.addEventListener("change", () => scheduleArrayViewerUpdate());
+  }
+}
+
+function resetArrayViewer() {
+  // Destroy array viewer instance
+  if (!arrayViewer) return;
+  if (arrayViewer.frameId) cancelAnimationFrame(arrayViewer.frameId);
+  if (arrayViewer.controls?.dispose) arrayViewer.controls.dispose();
+  if (arrayViewer.renderer) {
+    arrayViewer.renderer.dispose();
+    if (arrayViewer.renderer.domElement?.parentNode) {
+      arrayViewer.renderer.domElement.parentNode.removeChild(
+        arrayViewer.renderer.domElement,
+      );
+    }
+  }
+  arrayViewer = null;
+}
+
+function handleArrayViewerResize() {
+  // Resize array viewer renderer
+  if (!arrayViewer) return;
+  const width = arrayViewer.container.clientWidth || 1;
+  const height = arrayViewer.container.clientHeight || 1;
+  arrayViewer.renderer.setSize(width, height);
+  arrayViewer.camera.aspect = width / height;
+  arrayViewer.camera.updateProjectionMatrix();
+  arrayViewer.controls.update();
+}
+
+function updateArrayViewer() {
+  // Render array configuration in 3D
+  const container = document.getElementById("array-view-canvas");
+  const placeholder = document.getElementById("array-view-placeholder");
+  if (!container) return;
+
+  const rows = readConfigEditorRows();
+  const elements = buildArrayElementsFromRows(rows);
+  const disposeGroup = (group) => {
+    if (!group) return;
+    group.traverse((obj) => {
+      if (obj.geometry?.dispose) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach((mat) => mat?.dispose?.());
+        } else if (obj.material?.dispose) {
+          obj.material.dispose();
+        }
+      }
+    });
+    group.clear();
+  };
+
+  if (!elements.length) {
+    if (placeholder) placeholder.style.display = "flex";
+    disposeGroup(arrayViewer?.group);
+    return;
+  }
+
+  initArrayViewer();
+  if (!arrayViewer) return;
+
+  if (placeholder) placeholder.style.display = "none";
+
+  const showFaces =
+    document.getElementById("array-view-faces")?.checked ?? true;
+  const showEdges =
+    document.getElementById("array-view-edges")?.checked ?? true;
+
+  disposeGroup(arrayViewer.group);
+
+  const boxTypes = currentData?.database?.box_types || [];
+  elements.forEach((elem, index) => {
+    const boxType = boxTypes.find((bt) => bt.key === elem.box_type_key);
+    const color = new THREE.Color().setHSL((index * 0.16) % 1, 0.55, 0.55);
+
+    const boxGroup = new THREE.Group();
+    const geometry = boxType?.case_geometry;
+
+    if (geometry && (geometry.faces?.length || geometry.edges?.length)) {
+      const { mesh, lines } = buildBoxMeshesFromGeometry(geometry, color);
+      if (mesh && showFaces) boxGroup.add(mesh);
+      if (lines && showEdges) boxGroup.add(lines);
+    } else {
+      const size = estimateBoxSizeMm(boxType);
+      const viewSize = {
+        x: size.x,
+        y: size.z,
+        z: size.y,
+      };
+      const boxGeom = new THREE.BoxGeometry(viewSize.x, viewSize.y, viewSize.z);
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        transparent: true,
+        opacity: 0.6,
+        roughness: 0.5,
+        metalness: 0.08,
+      });
+      if (showFaces) {
+        boxGroup.add(new THREE.Mesh(boxGeom, material));
+      }
+      if (showEdges) {
+        const edges = new THREE.EdgesGeometry(boxGeom);
+        const lineMat = new THREE.LineBasicMaterial({
+          color: color.clone().multiplyScalar(0.6),
+          transparent: true,
+          opacity: 0.6,
+        });
+        boxGroup.add(new THREE.LineSegments(edges, lineMat));
+      }
+    }
+
+    const viewPos = toViewPoint(elem.position);
+    if (viewPos) {
+      boxGroup.position.set(viewPos.x, viewPos.y, viewPos.z);
+    }
+    const quat = toViewQuaternionNoSwap(elem.angles);
+    if (quat) {
+      boxGroup.setRotationFromQuaternion(quat);
+    }
+
+    arrayViewer.group.add(boxGroup);
+  });
+
+  arrayViewer.group.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(arrayViewer.group);
+  if (!bounds.isEmpty()) {
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    bounds.getSize(size);
+    bounds.getCenter(center);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const targetSize = 1.6;
+    const scale = maxDim > 0 ? targetSize / maxDim : 1;
+    arrayViewer.group.scale.setScalar(scale);
+    arrayViewer.group.position.set(
+      -center.x * scale,
+      -center.y * scale,
+      -center.z * scale,
+    );
+
+    const cameraDistance = Math.max(targetSize * 1.4, 1.2);
+    arrayViewer.camera.position.set(0, targetSize * 0.5, cameraDistance);
+  }
+
+  arrayViewer.controls.target.set(0, 0, 0);
+  arrayViewer.controls.update();
+  applyGridTheme(arrayViewer.grid, readArrayThemeColors());
+}
+
 function wireFilterGroupResponses() {
+  // Bind filter group chart controls
   const groups = currentData?.database?.filter_groups || [];
   groups.forEach((group, groupIndex) => {
     const elements = getFilterGroupResponseElements(groupIndex);
@@ -1702,6 +4248,7 @@ function wireFilterGroupResponses() {
 }
 
 function wireFilterExportDropdowns() {
+  // Attach export dropdown behavior for filter groups
   document.querySelectorAll(".btn-filter-export").forEach((button) => {
     if (button.dataset.bound === "true") return;
     button.dataset.bound = "true";
@@ -1781,6 +4328,7 @@ function wireFilterExportDropdowns() {
 }
 
 function getFilterGroupResponseElements(groupIndex) {
+  // Resolve DOM nodes for filter group charts
   return {
     filterSelect: document.getElementById(
       `filter-group-response-filter-${groupIndex}`,
@@ -1799,6 +4347,7 @@ function getFilterGroupResponseElements(groupIndex) {
 }
 
 function renderFilterGroupResponse(groupIndex) {
+  // Compute and render the filter group response chart
   const data = currentData;
   const bytes = currentFileBytes;
   const groups = data?.database?.filter_groups || [];
@@ -1811,6 +4360,7 @@ function renderFilterGroupResponse(groupIndex) {
 
   const filterIndex = parseInt(elements.filterSelect.value);
   if (!group || Number.isNaN(filterIndex)) {
+    // Invalid selection or missing group
     updateFilterGroupResponseMeta(
       groupIndex,
       "No filter response data available",
@@ -1824,6 +4374,7 @@ function renderFilterGroupResponse(groupIndex) {
   }
 
   if (!bytes || typeof computeFilterResponse !== "function") {
+    // Missing WASM helper for filter response
     updateFilterGroupResponseMeta(
       groupIndex,
       "Filter response helper not available",
@@ -1842,6 +4393,7 @@ function renderFilterGroupResponse(groupIndex) {
   });
   let response;
   try {
+    // Delegate response computation to WASM
     const responseJSON = computeFilterResponse(bytes, payload);
     response = JSON.parse(responseJSON);
   } catch (err) {
@@ -1858,6 +4410,7 @@ function renderFilterGroupResponse(groupIndex) {
   }
 
   if (!response.success) {
+    // Surface computation errors
     const message = response.error || "Failed to compute filter response";
     updateFilterGroupResponseMeta(groupIndex, message);
     setFilterGroupResponsePlaceholder(groupIndex, message);
@@ -1866,6 +4419,7 @@ function renderFilterGroupResponse(groupIndex) {
   }
 
   if (!response.frequencies?.length || !response.level?.length) {
+    // Response missing usable data
     const message = response.message || "No filter response data available";
     updateFilterGroupResponseMeta(
       groupIndex,
@@ -1878,6 +4432,7 @@ function renderFilterGroupResponse(groupIndex) {
   }
 
   if (elements.phaseSelect) {
+    // Disable phase selector when no phase data exists
     const hasPhase = Array.isArray(response.phase) && response.phase.length > 0;
     elements.phaseSelect.disabled = !hasPhase;
     if (!hasPhase) {
@@ -1890,6 +4445,7 @@ function renderFilterGroupResponse(groupIndex) {
     response.level,
   );
   if (!frequencyData) {
+    // Abort if points cannot be built
     updateFilterGroupResponseMeta(
       groupIndex,
       "No filter response data available",
@@ -1903,6 +4459,7 @@ function renderFilterGroupResponse(groupIndex) {
   }
 
   setFilterGroupResponsePlaceholder(groupIndex, "");
+  // Compose chart datasets
   const datasets = [
     {
       label: "Level (dB)",
@@ -1918,6 +4475,7 @@ function renderFilterGroupResponse(groupIndex) {
 
   let phaseAxisTitle = "Phase (rad)";
   if (response.phase && response.phase.length === response.level.length) {
+    // Add phase series when available
     const phaseMode = elements.phaseSelect?.value || "unwrapped";
     const phaseSeries = getPhaseSeries(
       phaseMode,
@@ -1943,12 +4501,18 @@ function renderFilterGroupResponse(groupIndex) {
     }
   }
 
+  const gridColor = getDarkModeGridColor();
+  const xScale = buildLogFrequencyScale(
+    frequencyData.minFrequency,
+    frequencyData.maxFrequency,
+    "Frequency",
+  );
+  if (gridColor) {
+    xScale.grid = { ...(xScale.grid || {}), color: gridColor };
+  }
+
   const scales = {
-    x: buildLogFrequencyScale(
-      frequencyData.minFrequency,
-      frequencyData.maxFrequency,
-      "Frequency",
-    ),
+    x: xScale,
     y: {
       type: "linear",
       display: true,
@@ -1957,6 +4521,7 @@ function renderFilterGroupResponse(groupIndex) {
         display: true,
         text: "Level (dB)",
       },
+      grid: gridColor ? { color: gridColor } : undefined,
     },
   };
 
@@ -1977,6 +4542,7 @@ function renderFilterGroupResponse(groupIndex) {
 
   const ctx = elements.chartCanvas.getContext("2d");
   destroyFilterGroupChart(groupIndex);
+  // Create chart instance
   const localChart = new Chart(ctx, {
     type: "line",
     data: {
@@ -2023,6 +4589,7 @@ function renderFilterGroupResponse(groupIndex) {
 }
 
 function destroyFilterGroupChart(groupIndex) {
+  // Tear down any existing chart for this group
   const existingChart = filterGroupResponseCharts.get(groupIndex);
   if (existingChart) {
     existingChart.destroy();
@@ -2031,6 +4598,7 @@ function destroyFilterGroupChart(groupIndex) {
 }
 
 function buildFilterGroupMetaChips(group, filterDef, response) {
+  // Build metadata chips describing response details
   const chips = [];
   if (group) {
     chips.push(
@@ -2080,6 +4648,7 @@ function buildFilterGroupMetaChips(group, filterDef, response) {
 }
 
 function updateFilterGroupResponseMeta(groupIndex, message, chips = null) {
+  // Update metadata chip list beneath the chart
   const meta = document.getElementById(
     `filter-group-response-meta-${groupIndex}`,
   );
@@ -2098,6 +4667,7 @@ function updateFilterGroupResponseMeta(groupIndex, message, chips = null) {
 }
 
 function setFilterGroupResponsePlaceholder(groupIndex, message) {
+  // Show or hide the chart placeholder
   const placeholder = document.getElementById(
     `filter-group-response-placeholder-${groupIndex}`,
   );
@@ -2111,6 +4681,7 @@ function setFilterGroupResponsePlaceholder(groupIndex, message) {
 }
 
 function formatGeometryDetail(geometry) {
+  // Render a brief geometry summary line
   if (!geometry) {
     return "";
   }
@@ -2130,6 +4701,7 @@ function formatGeometryDetail(geometry) {
 }
 
 function formatBoxTypeDetail(box) {
+  // Render box metadata with safe sanitization
   if (!box) {
     return "";
   }
@@ -2140,10 +4712,13 @@ function formatBoxTypeDetail(box) {
     const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
     if (!cleaned) return "";
     const maxLen = 120;
-    return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 3)}...` : cleaned;
+    return cleaned.length > maxLen
+      ? `${cleaned.slice(0, maxLen - 3)}...`
+      : cleaned;
   };
 
   const formatSafeList = (values) => {
+    // Sanitize and join a list of labels
     if (!Array.isArray(values) || values.length === 0) return "-";
     const items = values
       .map((value) => sanitizeDisplayText(value))
@@ -2159,7 +4734,9 @@ function formatBoxTypeDetail(box) {
     Array.isArray(box.source_placements) && box.source_placements.length > 0
       ? box.source_placements
           .map((placement) => {
-            const label = sanitizeDisplayText(placement?.label || placement?.key);
+            const label = sanitizeDisplayText(
+              placement?.label || placement?.key,
+            );
             const defKey = sanitizeDisplayText(placement?.source_def_key);
             if (label && defKey) {
               return `${escapeHtml(label)} (${escapeHtml(defKey)})`;
@@ -2192,6 +4769,7 @@ function formatBoxTypeDetail(box) {
 }
 
 function formatGeometryActions(kind, index, geometry, label) {
+  // Build export dropdown for geometry assets
   if (!hasGeometryData(geometry)) {
     return "";
   }
@@ -2200,7 +4778,7 @@ function formatGeometryActions(kind, index, geometry, label) {
         <div class="config-item-actions">
             <div class="dropdown-container">
                 <button class="btn-download btn-geom-export" data-geom-type="${kind}" data-geom-index="${index}" data-geom-filename="${escapeHtml(filename)}">
-                    Download <span class="dropdown-icon">▼</span>
+                    Download 3D Model <span class="dropdown-icon">▼</span>
                 </button>
                 <div class="dropdown-menu">
                     <button class="dropdown-item" data-format="xed">${escapeHtml(filename)}.xed</button>
@@ -2213,39 +4791,48 @@ function formatGeometryActions(kind, index, geometry, label) {
 }
 
 function formatInlineGeometryViewer(kind, index, caseGeometry) {
+  // Inline geometry viewer markup for a config item
   if (!hasGeometryData(caseGeometry)) {
     return "";
   }
   const id = `geometry-inline-${kind}-${index}`;
   return `
         <div class="inline-geometry-viewer" id="${id}" data-geom-kind="${kind}" data-geom-index="${index}">
-            <div class="inline-geometry-controls">
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-faces" checked /> Faces
-                </label>
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-edges" checked /> Edges
-                </label>
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-autorotate" checked /> Auto-rotate
-                </label>
-            </div>
-            <div class="inline-geometry-legend">
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-ref" checked />
-                    <span class="geom-legend-swatch swatch-ref"></span>
-                    Reference Point
-                </label>
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-com" checked />
-                    <span class="geom-legend-swatch swatch-com"></span>
-                    Center of Mass
-                </label>
-                <label class="geometry-toggle">
-                    <input type="checkbox" class="inline-geom-pivot" checked />
-                    <span class="geom-legend-swatch swatch-pivot"></span>
-                    Next Pivot
-                </label>
+            <div class="inline-geometry-toolbar">
+                <div class="inline-geometry-controls">
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-faces" checked /> Faces
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-edges" checked /> Edges
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-autorotate" checked /> Auto-rotate
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-center-ref" checked /> Center reference
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-sources" /> Sources
+                    </label>
+                </div>
+                <div class="inline-geometry-legend">
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-ref" checked />
+                        <span class="geom-legend-swatch swatch-ref"></span>
+                        Reference Point
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-com" checked />
+                        <span class="geom-legend-swatch swatch-com"></span>
+                        Center of Mass
+                    </label>
+                    <label class="geometry-toggle">
+                        <input type="checkbox" class="inline-geom-pivot" />
+                        <span class="geom-legend-swatch swatch-pivot"></span>
+                        Next Pivot
+                    </label>
+                </div>
             </div>
             <div class="inline-geometry-canvas"></div>
         </div>
@@ -2277,50 +4864,55 @@ function wireGeometryDownloads() {
   });
 
   // Wire dropdown menu items
-  document.querySelectorAll(".dropdown-item").forEach((item) => {
-    if (item.dataset.bound === "true") {
-      return;
-    }
-    item.dataset.bound = "true";
-    item.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const format = item.dataset.format;
-      const button = item
-        .closest(".dropdown-container")
-        .querySelector(".btn-geom-export");
-      const kind = button.dataset.geomType;
-      const index = Number(button.dataset.geomIndex);
-      const datasetFilename = button.dataset.geomFilename;
-      const db = currentData?.database;
-      const dataItem =
-        kind === "frame" ? db?.frames?.[index] : db?.box_types?.[index];
-      const geometry = dataItem?.case_geometry;
-
-      if (!hasGeometryData(geometry)) {
+  document.querySelectorAll(".dropdown-container").forEach((container) => {
+    const button = container.querySelector(".btn-geom-export");
+    if (!button) return;
+    container.querySelectorAll(".dropdown-item").forEach((item) => {
+      if (item.dataset.bound === "true") {
         return;
       }
+      item.dataset.bound = "true";
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const format = item.dataset.format;
+        const kind = button.dataset.geomType;
+        const index = Number(button.dataset.geomIndex);
+        const datasetFilename = button.dataset.geomFilename;
+        const db = currentData?.database;
+        const dataItem =
+          kind === "frame" ? db?.frames?.[index] : db?.box_types?.[index];
+        const geometry = dataItem?.case_geometry;
 
-      const label = dataItem?.label || dataItem?.key || `${kind}-${index + 1}`;
-      const filename = datasetFilename || sanitizeFilename(label);
-
-      // Generate and download based on format
-      if (format === "xed") {
-        const content = buildXedContent(geometry, { units: "m", precision: 6 });
-        downloadTextFile(`${filename}.xed`, content);
-      } else if (format === "stl") {
-        const buffer = buildStlBinary(geometry, {});
-        if (buffer.length > 0) {
-          downloadBinaryFile(`${filename}.stl`, buffer);
+        if (!hasGeometryData(geometry)) {
+          return;
         }
-      } else if (format === "obj") {
-        const content = buildObjContent(geometry, {});
-        if (content) {
-          downloadTextFile(`${filename}.obj`, content);
-        }
-      }
 
-      // Close dropdown
-      item.closest(".dropdown-container").classList.remove("show");
+        const label =
+          dataItem?.label || dataItem?.key || `${kind}-${index + 1}`;
+        const filename = datasetFilename || sanitizeFilename(label);
+
+        // Generate and download based on format
+        if (format === "xed") {
+          const content = buildXedContent(geometry, {
+            units: "m",
+            precision: 6,
+          });
+          downloadTextFile(`${filename}.xed`, content);
+        } else if (format === "stl") {
+          const buffer = buildStlBinary(geometry, {});
+          if (buffer.length > 0) {
+            downloadBinaryFile(`${filename}.stl`, buffer);
+          }
+        } else if (format === "obj") {
+          const content = buildObjContent(geometry, {});
+          if (content) {
+            downloadTextFile(`${filename}.obj`, content);
+          }
+        }
+
+        // Close dropdown
+        item.closest(".dropdown-container").classList.remove("show");
+      });
     });
   });
 
@@ -2346,6 +4938,7 @@ function displayResources() {
     (dataFiles || []).map((f) => cleanFilename(f.filename).toLowerCase()),
   );
   const filteredResources = resources.filter((res) => {
+    // Skip resources that are already represented elsewhere
     if (res.type === "PNG" && res.name) {
       return !dataFileNames.has(cleanFilename(res.name).toLowerCase());
     }
@@ -2362,6 +4955,7 @@ function displayResources() {
     dataFiles.length > 0 ||
     filteredResources.length > 0;
   if (resourcesTab && resourcesContent) {
+    // Hide resources tab when empty
     resourcesTab.classList.toggle("hidden", !hasResources);
     resourcesContent.classList.toggle("hidden", !hasResources);
     if (!hasResources && resourcesTab.classList.contains("active")) {
@@ -2370,6 +4964,7 @@ function displayResources() {
   }
 
   if (!hasResources) {
+    // Empty-state for all resource lists
     includeFilesList.innerHTML =
       '<div class="empty-state">No documentation files found</div>';
     const dataFilesList = document.getElementById("data-files-list");
@@ -2381,6 +4976,7 @@ function displayResources() {
   }
 
   if (includeFiles.length === 0) {
+    // Render documentation list
     includeFilesList.innerHTML =
       '<div class="empty-state">No documentation files found</div>';
   } else {
@@ -2417,6 +5013,7 @@ function displayResources() {
 
   // Data Files (images, geometry)
   const dataFilesList = document.getElementById("data-files-list");
+  // Render data files list
   if (dataFiles.length === 0) {
     dataFilesList.innerHTML =
       '<div class="empty-state">No data files found</div>';
@@ -2461,6 +5058,7 @@ function displayResources() {
   const resourcesCard = document.getElementById("other-resources-card");
   const resourcesList = document.getElementById("resources-list");
   if (resourcesCard && resourcesList) {
+    // Render remaining embedded resources
     resourcesCard.classList.toggle("hidden", filteredResources.length === 0);
     if (filteredResources.length > 0) {
       resourcesList.innerHTML = filteredResources
@@ -2495,11 +5093,13 @@ function displayResources() {
 }
 
 function cleanFilename(path) {
+  // Normalize to basename for downloads
   // Remove Windows path separators and get base name
   return path.replace(/\\/g, "/").split("/").pop() || path;
 }
 
 function setupResponseControls() {
+  // Populate response controls for single-response view
   const sourceSelect = document.getElementById("response-source");
   const sources = currentData.database?.source_definitions || [];
 
@@ -2509,6 +5109,7 @@ function setupResponseControls() {
   );
 
   if (sourcesWithResponses.length === 0) {
+    // No response data available
     sourceSelect.innerHTML =
       '<option value="">No response data available</option>';
     document.getElementById("response-index").innerHTML = "";
@@ -2524,7 +5125,7 @@ function setupResponseControls() {
     )
     .join("");
 
-  const globalSelect = document.getElementById("global-source");
+  const globalSelect = document.getElementById("balloon-source");
   const defaultIndex = parseInt(globalSelect?.value);
   if (
     !Number.isNaN(defaultIndex) &&
@@ -2537,10 +5138,12 @@ function setupResponseControls() {
 }
 
 function setupPolarControls() {
+  // Initialize polar chart controls
   visualization.updatePolarOptions();
 }
 
 function setupBalloonControls() {
+  // Initialize balloon sliders and options
   const rangeValue = document.getElementById("balloon-range");
   const scaleValue = document.getElementById("balloon-scale");
   if (rangeValue) {
@@ -2549,51 +5152,34 @@ function setupBalloonControls() {
   if (scaleValue) {
     visualization.handleBalloonScaleInput({ target: scaleValue });
   }
-  visualization.updateBalloonSourceOptions();
   visualization.updateBalloonOptions();
 }
 
 function setupGeometryControls() {
+  // Reset geometry view state
   geometry.resetGeometry();
   // Inline viewers are initialized when the geometry tab is shown
 }
 
 function setupCombinedResponseControls() {
-  const boxSelect = document.getElementById("combined-box");
+  // Wire combined response controls and populate options
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
-  const gainInput = document.getElementById("combined-gain");
-  const distanceInput = document.getElementById("combined-distance");
   const phaseSelect = document.getElementById("combined-phase-mode");
-  if (!boxSelect || !groupSelect || !filterSelect) {
+  if (!groupSelect || !filterSelect) {
     return;
   }
 
   if (!combinedListenersBound) {
-    boxSelect.addEventListener("change", updateCombinedResponseChart);
+    // Bind listeners once per session
     groupSelect.addEventListener("change", updateCombinedFilterOptions);
     filterSelect.addEventListener("change", updateCombinedResponseChart);
-    gainInput?.addEventListener("input", updateCombinedResponseChart);
-    distanceInput?.addEventListener("input", updateCombinedResponseChart);
     phaseSelect?.addEventListener("change", updateCombinedResponseChart);
     combinedListenersBound = true;
   }
 
-  const boxTypes = currentData?.database?.box_types || [];
-  if (!boxTypes.length) {
-    boxSelect.innerHTML = '<option value="">No box types</option>';
-    boxSelect.disabled = true;
-  } else {
-    boxSelect.disabled = false;
-    boxSelect.innerHTML = boxTypes
-      .map(
-        (box, i) =>
-          `<option value="${i}">${escapeHtml(box.label || box.key || `Box ${i + 1}`)}</option>`,
-      )
-      .join("");
-  }
-
   const groups = currentData?.database?.filter_groups || [];
+  // Populate filter group dropdown
   if (!groups.length) {
     groupSelect.innerHTML = '<option value="">No filter groups</option>';
     groupSelect.disabled = true;
@@ -2612,6 +5198,7 @@ function setupCombinedResponseControls() {
 }
 
 function updateCombinedFilterOptions() {
+  // Populate filter dropdown for selected group
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
   if (!groupSelect || !filterSelect) {
@@ -2648,6 +5235,7 @@ function updateCombinedFilterOptions() {
 }
 
 function updateResponseOptions() {
+  // Update response list for selected source
   const sourceSelect = document.getElementById("response-source");
   const indexSelect = document.getElementById("response-index");
   const onAxisToggle = document.getElementById("response-use-onaxis");
@@ -2657,11 +5245,12 @@ function updateResponseOptions() {
   );
 
   const sourceIndex = parseInt(sourceSelect.value);
-  const globalSelect = document.getElementById("global-source");
+  const globalSelect = document.getElementById("balloon-source");
   if (globalSelect && !Number.isNaN(sourceIndex)) {
     globalSelect.value = String(sourceIndex);
   }
   if (isNaN(sourceIndex) || sourceIndex >= sourcesWithResponses.length) {
+    // Clear options when selection is invalid
     indexSelect.innerHTML = "";
     updateResponseAngleControls(null, null);
     return;
@@ -2670,6 +5259,7 @@ function updateResponseOptions() {
   const source = sourcesWithResponses[sourceIndex];
   const responseCount = source.responses?.length || 0;
 
+  // Build response option list with angle labels
   indexSelect.innerHTML = Array.from({ length: responseCount }, (_, i) => {
     const angle = computeResponseAngles(source, i);
     const angleLabel = angle
@@ -2679,6 +5269,7 @@ function updateResponseOptions() {
   }).join("");
 
   if (onAxisToggle) {
+    // Enable normalization only when on-axis data exists
     const onAxis = source?.definition?.on_axis_spectrum;
     const hasOnAxis =
       !!onAxis && Array.isArray(onAxis.level) && onAxis.level.length > 0;
@@ -2694,6 +5285,7 @@ function updateResponseOptions() {
 }
 
 function updateResponseChart() {
+  // Render the single-source response chart
   const sourceSelect = document.getElementById("response-source");
   const indexSelect = document.getElementById("response-index");
   const onAxisToggle = document.getElementById("response-use-onaxis");
@@ -2706,6 +5298,7 @@ function updateResponseChart() {
   const respIndex = parseInt(indexSelect.value);
 
   if (isNaN(sourceIndex) || isNaN(respIndex)) {
+    // Invalid selection
     return;
   }
 
@@ -2713,6 +5306,7 @@ function updateResponseChart() {
   const response = source?.responses?.[respIndex];
 
   if (!response) {
+    // Missing response data
     updateResponseAngleControls(null, null);
     return;
   }
@@ -2724,10 +5318,12 @@ function updateResponseChart() {
   const ctx = document.getElementById("response-chart").getContext("2d");
 
   if (chart) {
+    // Replace previous chart instance
     chart.destroy();
   }
 
   const onAxis = source?.definition?.on_axis_spectrum;
+  // Combine on-axis level data when available
   const onAxisFreqs = buildLogFrequencies(
     onAxis?.definition,
     onAxis?.level?.length,
@@ -2746,6 +5342,7 @@ function updateResponseChart() {
 
   const phaseMode =
     document.getElementById("response-phase-mode")?.value || "unwrapped";
+  // Combine phase and apply delay if needed
   const rawPhase = response.phase || [];
   const onAxisPhase = onAxis?.phase || [];
   const canCombinePhase =
@@ -2782,7 +5379,21 @@ function updateResponseChart() {
     phaseSeries.values,
   );
   if (!frequencyData) {
+    // Abort if chart points cannot be built
     return;
+  }
+
+  const responseGridColor = getDarkModeGridColor();
+  const responseXScale = buildLogFrequencyScale(
+    frequencyData.minFrequency,
+    frequencyData.maxFrequency,
+    "Frequency",
+  );
+  if (responseGridColor) {
+    responseXScale.grid = {
+      ...(responseXScale.grid || {}),
+      color: responseGridColor,
+    };
   }
 
   chart = new Chart(ctx, {
@@ -2821,11 +5432,7 @@ function updateResponseChart() {
         intersect: false,
       },
       scales: {
-        x: buildLogFrequencyScale(
-          frequencyData.minFrequency,
-          frequencyData.maxFrequency,
-          "Frequency",
-        ),
+        x: responseXScale,
         y: {
           type: "linear",
           display: true,
@@ -2834,6 +5441,7 @@ function updateResponseChart() {
             display: true,
             text: "Level (dB)",
           },
+          grid: responseGridColor ? { color: responseGridColor } : undefined,
         },
         y1: {
           type: "linear",
@@ -2873,48 +5481,39 @@ function updateResponseChart() {
 }
 
 function updateCombinedResponseChart() {
-  const boxSelect = document.getElementById("combined-box");
+  // Compute and render combined array response
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
-  const gainInput = document.getElementById("combined-gain");
-  const distanceInput = document.getElementById("combined-distance");
   const phaseSelect = document.getElementById("combined-phase-mode");
   const meta = document.getElementById("combined-response-meta");
   const ctx = document
     .getElementById("combined-response-chart")
     ?.getContext("2d");
 
-  if (!boxSelect || !ctx || !meta) {
+  if (!ctx || !meta) {
+    // Missing DOM nodes
     return;
   }
 
   if (!currentFileBytes || typeof computeArrayResponse !== "function") {
+    // Missing WASM helper
     meta.innerHTML =
       '<span class="chip">Array response helper not available</span>';
     destroyCombinedChart();
     return;
   }
 
-  const boxTypes = currentData?.database?.box_types || [];
-  let elements;
-  let box;
-
-  if (activeConfig) {
-    // Use active configuration from editor/cluster setup
-    elements = buildElementsFromConfig(activeConfig);
-    box = null;
-  } else {
-    const boxIndex = parseInt(boxSelect.value);
-    if (Number.isNaN(boxIndex) || boxIndex >= boxTypes.length) {
-      meta.innerHTML = '<span class="chip">Select a box type</span>';
-      destroyCombinedChart();
-      return;
-    }
-    box = boxTypes[boxIndex];
-    elements = buildCombinedElements(box);
+  if (!activeConfig) {
+    meta.innerHTML =
+      '<span class="chip">Build a configuration above to see combined response</span>';
+    destroyCombinedChart();
+    return;
   }
 
+  let elements = buildElementsFromConfig(activeConfig);
+
   if (elements.length) {
+    // Filter elements to valid sources
     const validSources = new Set(
       (currentData?.database?.source_definitions || []).map((s) => s.key),
     );
@@ -2922,27 +5521,29 @@ function updateCombinedResponseChart() {
   }
 
   if (!elements.length) {
+    // Nothing to compute
     meta.innerHTML =
       '<span class="chip">No valid sources found for this configuration</span>';
     destroyCombinedChart();
     return;
   }
 
-  const gainOffset = parseFloat(gainInput?.value) || 0;
-  const receiverDistance = parseFloat(distanceInput?.value) || 1;
+  const sim = getSimulationParams();
+  // Prepare payload for array response (on-axis point)
   const arrayPayload = JSON.stringify({
     elements,
-    receiver: { x: 0, y: 0, z: Math.max(receiverDistance, 0.1) },
+    receiver: { x: 0, y: 0, z: sim.receiverDistance },
     air_props: {
-      temperature: 20,
-      humidity: 0.5,
+      temperature: sim.temperature,
+      humidity: sim.humidity,
       speed: 0,
-      air_atten_on: false,
+      air_atten_on: sim.airAttenOn,
     },
   });
 
   let arrayResponse;
   try {
+    // Delegate array response computation to WASM
     const responseJSON = computeArrayResponse(currentFileBytes, arrayPayload);
     arrayResponse = JSON.parse(responseJSON);
   } catch (err) {
@@ -2953,6 +5554,7 @@ function updateCombinedResponseChart() {
   }
 
   if (!arrayResponse.success) {
+    // Surface computation errors
     meta.innerHTML = `<span class="chip">${escapeHtml(arrayResponse.error || "Failed to compute array response")}</span>`;
     destroyCombinedChart();
     return;
@@ -2960,6 +5562,7 @@ function updateCombinedResponseChart() {
 
   let combinedLevel = arrayResponse.level?.slice() || [];
   let combinedPhase = arrayResponse.phase?.slice() || [];
+  // Optional filter group application
   let filterMessage = null;
   let filterLabel = null;
   let groupLabel = null;
@@ -2967,6 +5570,7 @@ function updateCombinedResponseChart() {
   const filterIndex = parseInt(filterSelect?.value);
 
   if (!Number.isNaN(groupIndex) && !filterSelect?.disabled) {
+    // Apply filter response to combined array response
     const groups = currentData?.database?.filter_groups || [];
     const group = groups[groupIndex];
     groupLabel = group?.label || group?.key || "Filter Group";
@@ -3004,11 +5608,10 @@ function updateCombinedResponseChart() {
     filterMessage = "No filters in group";
   }
 
-  if (Number.isFinite(gainOffset) && gainOffset !== 0) {
-    combinedLevel = combinedLevel.map((value) => value + gainOffset);
-  }
+  // gainOffset removed - gain is now per-element in config
 
   if (phaseSelect) {
+    // Disable phase selector when phase data is missing
     const hasPhase =
       Array.isArray(combinedPhase) &&
       combinedPhase.length === combinedLevel.length;
@@ -3023,6 +5626,7 @@ function updateCombinedResponseChart() {
     combinedLevel,
   );
   if (!frequencyData) {
+    // No data to chart
     meta.innerHTML = '<span class="chip">No combined response data</span>';
     destroyCombinedChart();
     return;
@@ -3034,6 +5638,7 @@ function updateCombinedResponseChart() {
     Array.isArray(combinedPhase) &&
     combinedPhase.length === combinedLevel.length
   ) {
+    // Build phase series when available
     phaseSeries = getPhaseSeries(
       phaseMode,
       arrayResponse.frequencies,
@@ -3043,7 +5648,21 @@ function updateCombinedResponseChart() {
   }
 
   if (combinedChart) {
+    // Replace existing chart instance
     combinedChart.destroy();
+  }
+
+  const combinedGridColor = getDarkModeGridColor();
+  const combinedXScale = buildLogFrequencyScale(
+    frequencyData.minFrequency,
+    frequencyData.maxFrequency,
+    "Frequency",
+  );
+  if (combinedGridColor) {
+    combinedXScale.grid = {
+      ...(combinedXScale.grid || {}),
+      color: combinedGridColor,
+    };
   }
 
   combinedChart = new Chart(ctx, {
@@ -3088,11 +5707,7 @@ function updateCombinedResponseChart() {
         intersect: false,
       },
       scales: {
-        x: buildLogFrequencyScale(
-          frequencyData.minFrequency,
-          frequencyData.maxFrequency,
-          "Frequency",
-        ),
+        x: combinedXScale,
         y: {
           type: "linear",
           display: true,
@@ -3101,6 +5716,7 @@ function updateCombinedResponseChart() {
             display: true,
             text: "Level (dB)",
           },
+          grid: combinedGridColor ? { color: combinedGridColor } : undefined,
         },
         y1: phaseSeries
           ? {
@@ -3138,15 +5754,18 @@ function updateCombinedResponseChart() {
   });
 
   combinedChartInitialized = true;
-  const configBox = activeConfig
-    ? { label: activeConfig.label || `Config (${activeConfig.elements.length} boxes)` }
-    : box;
+  // Update metadata chips
+  const configBox = {
+    label:
+      activeConfig.label ||
+      `Config (${activeConfig.elements.length} boxes)`,
+  };
   updateCombinedResponseMeta(
     meta,
     configBox,
     elements.length,
-    gainOffset,
-    receiverDistance,
+    0,
+    sim.receiverDistance,
     groupLabel,
     filterLabel,
     filterMessage,
@@ -3154,6 +5773,7 @@ function updateCombinedResponseChart() {
 }
 
 function computeCombinedFilterResponse(groupIndex, filterIndex) {
+  // Request filter response from WASM and validate
   if (!currentFileBytes || typeof computeFilterResponse !== "function") {
     return { error: "Filter response helper not available" };
   }
@@ -3181,6 +5801,7 @@ function computeCombinedFilterResponse(groupIndex, filterIndex) {
 }
 
 function buildCombinedElements(box) {
+  // Build elements from placements or fallback sources
   const placements = box?.source_placements || [];
   if (placements.length > 0) {
     return placements
@@ -3228,6 +5849,7 @@ function updateCombinedResponseMeta(
   filterLabel,
   filterMessage,
 ) {
+  // Compose metadata chip list for combined response
   const chips = [];
   if (box) {
     chips.push(
@@ -3254,6 +5876,7 @@ function updateCombinedResponseMeta(
 }
 
 function destroyCombinedChart() {
+  // Tear down the combined response chart
   if (combinedChart) {
     combinedChart.destroy();
     combinedChart = null;
@@ -3261,6 +5884,7 @@ function destroyCombinedChart() {
 }
 
 function applyDelayToPhase(phaseValues, frequencies, delaySeconds) {
+  // Shift phase by delay (seconds)
   if (!delaySeconds) {
     return phaseValues;
   }
@@ -3275,6 +5899,7 @@ function applyDelayToPhase(phaseValues, frequencies, delaySeconds) {
 }
 
 function handleResponseIndexInput(e) {
+  // Slider-driven response selection
   const sourceSelect = document.getElementById("response-source");
   const sources = currentData.database?.source_definitions || [];
   const sourcesWithResponses = sources.filter(
@@ -3300,6 +5925,7 @@ function handleResponseIndexInput(e) {
 }
 
 function updateResponseAngleControls(source, responseIndex) {
+  // Configure response angle sliders based on grid
   const azSlider = document.getElementById("response-azimuth-slider");
   const elSlider = document.getElementById("response-elevation-slider");
   const azValue = document.getElementById("response-azimuth-value");
@@ -3348,6 +5974,7 @@ function updateResponseAngleControls(source, responseIndex) {
 }
 
 function handleResponseAngleInput() {
+  // Update response index based on slider angles
   const sourceSelect = document.getElementById("response-source");
   const sources = currentData.database?.source_definitions || [];
   const sourcesWithResponses = sources.filter(
@@ -3368,10 +5995,7 @@ function handleResponseAngleInput() {
 
   const azSlider = document.getElementById("response-azimuth-slider");
   const elSlider = document.getElementById("response-elevation-slider");
-  const azimuthDeg = normalizeAzimuthForGrid(
-    Number(azSlider.value),
-    ang,
-  );
+  const azimuthDeg = normalizeAzimuthForGrid(Number(azSlider.value), ang);
   const elevationDeg = Number(elSlider.value);
   const meridianIdx = Math.round(azimuthDeg / ang.meridian_step);
   const parallelIdx = Math.round(elevationDeg / ang.parallel_step);
@@ -3388,6 +6012,7 @@ function handleResponseAngleInput() {
 }
 
 function setResponseSelectValue(indexSelect, source, responseIndex) {
+  // Ensure select contains and selects response index
   const existingCustom = indexSelect.querySelector(
     'option[data-custom="true"]',
   );
@@ -3454,6 +6079,69 @@ function formatDataType(type) {
     2: "Octave",
   };
   return types[type] || `Unknown (${type})`;
+}
+
+function formatDirectivityType(type) {
+  if (type === null || type === undefined || Number.isNaN(type)) return "";
+  const types = {
+    0: "Point",
+    1: "Line",
+    2: "Circular Piston",
+    3: "Rectangular Piston",
+  };
+  return types[type] || `Unknown (${type})`;
+}
+
+function formatGainNumber(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return formatGain(Number(value));
+}
+
+function formatVoltage(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 2)} V`;
+}
+
+function formatDistance(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 2)} m`;
+}
+
+function formatTemperature(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 1)} °C`;
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 1)} %`;
+}
+
+function formatPressure(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 2)} kPa`;
+}
+
+function formatOhms(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${formatNumber(value, 2)} ohm`;
+}
+
+function formatCoverageAngles(horizontal, vertical) {
+  const hValid = !(
+    horizontal === null ||
+    horizontal === undefined ||
+    Number.isNaN(horizontal)
+  );
+  const vValid = !(
+    vertical === null ||
+    vertical === undefined ||
+    Number.isNaN(vertical)
+  );
+  if (!hValid && !vValid) return "-";
+  const hText = hValid ? `${formatAngle(horizontal)}°` : "-";
+  const vText = vValid ? `${formatAngle(vertical)}°` : "-";
+  return `H ${hText} / V ${vText}`;
 }
 
 function formatLimitType(type) {
@@ -3540,6 +6228,7 @@ function formatSampleRate(hz) {
 }
 
 function renderFilterDetails(filter) {
+  // Render filter bank details for UI
   if (!filter) return "";
 
   const bank = filter.filter;
@@ -3576,6 +6265,7 @@ function renderFilterDetails(filter) {
 }
 
 function renderSingleFilter(f) {
+  // Render a single filter summary row
   const kindName = formatFilterKind(f.kind);
   const flags = [];
   if (f.bypass) flags.push("Bypassed");
@@ -3784,6 +6474,7 @@ function formatPolarLabel(angleDeg) {
 }
 
 function computePolarSlices(source, freqIndex) {
+  // Build horizontal/vertical polar slices for a frequency index
   const grid = getBalloonGrid(source);
   if (!grid) {
     return null;
@@ -3826,6 +6517,7 @@ function computePolarSlices(source, freqIndex) {
   //   negative chart angles → meridian=180° (bottom), parallel = |angle|
 
   angles.forEach((angle) => {
+    // Horizontal slice sample
     // Horizontal slice: great circle through front-right-back-left.
     const hParallelDeg = Math.abs(angle);
     const hMeridianDeg = angle >= 0 ? 90 : 270;
@@ -3888,6 +6580,7 @@ function computePolarSlices(source, freqIndex) {
 }
 
 function getBalloonGrid(source) {
+  // Calculate balloon grid dimensions and symmetry
   const balloon = source?.definition?.balloon_data;
   const ang = balloon?.angular_resolution;
   if (!ang || !ang.meridian_step || !ang.parallel_step) {
@@ -4004,6 +6697,7 @@ function getBalloonGrid(source) {
 
 // Get response at given azimuth/parallel angles, applying symmetry mirroring
 function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
+  // Map azimuth/parallel to stored response using symmetry rules
   const responses = source?.responses || [];
   const ang = source?.definition?.balloon_data?.angular_resolution;
 
@@ -4054,6 +6748,7 @@ function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
   }
 
   if (lookupParallel > grid.measuredParallelDeg) {
+    // Mirror elevation if symmetry allows it
     if (canMirrorParallel) {
       // Mirror elevation across the horizontal plane (parallel=90°).
       const mirrored = 180 - lookupParallel;
@@ -4140,6 +6835,7 @@ function balloonResponseIndex(
 }
 
 function responseIndexToBalloonIndices(responseIndex, grid) {
+  // Map response index back to meridian/parallel indices
   if (!grid || !grid.meridianCount || !grid.parallelCount) {
     return null;
   }
@@ -4156,6 +6852,7 @@ function responseIndexToBalloonIndices(responseIndex, grid) {
   }
 
   if (responseIndex < parallelCount) {
+    // First meridian includes poles and all parallels
     return {
       meridianIdx: 0,
       parallelIdx: responseIndex,
@@ -4188,7 +6885,7 @@ function normalizeAzimuthForGrid(azimuthDeg, ang) {
     return azimuthDeg;
   }
   if (ang?.symmetry === 2) {
-    return ((azimuthDeg - 90) % 360 + 360) % 360;
+    return (((azimuthDeg - 90) % 360) + 360) % 360;
   }
   return azimuthDeg;
 }
@@ -4200,6 +6897,7 @@ function getResponseIndex(
   ang,
   overrides = null,
 ) {
+  // Compute response index for given angles or overrides
   if (!grid || !grid.meridianCount || !grid.parallelCount) {
     return null;
   }
@@ -4208,6 +6906,7 @@ function getResponseIndex(
   let localParallelIdx = null;
 
   if (overrides) {
+    // Allow explicit overrides for indices and azimuth
     if (overrides.parallelIdx !== undefined) {
       localParallelIdx = overrides.parallelIdx;
     }
@@ -4222,6 +6921,7 @@ function getResponseIndex(
   }
 
   if (localParallelIdx === null) {
+    // Derive parallel index from degrees
     if (parallelDeg === null || parallelDeg === undefined) {
       return null;
     }
@@ -4363,11 +7063,12 @@ function toggleSource(idx) {
     content.style.display = "block";
     toggle.textContent = "▼";
     card.classList.add("expanded");
-    renderSourceResponseChart(idx);
+    renderSourcePlot(idx);
   } else {
     content.style.display = "none";
     toggle.textContent = "▶";
     card.classList.remove("expanded");
+    stopSourceBalloonLoop(idx);
   }
 }
 

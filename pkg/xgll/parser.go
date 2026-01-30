@@ -15,11 +15,13 @@ type parser struct {
 }
 
 func newParser(input string) *parser {
+	// Initialize lexer and parser
 	lex := newLexer(input)
 	return &parser{lex: lex}
 }
 
 func (p *parser) parse() *Document {
+	// Parse tokens into statements
 	for {
 		stmt, ok := p.parseStatement()
 		if !ok {
@@ -33,8 +35,10 @@ func (p *parser) parse() *Document {
 		p.statements = append(p.statements, stmt)
 	}
 
+	// Merge lexer diagnostics
 	p.diags = append(p.diags, p.lex.diags...)
 
+	// Build document with blocks and validation
 	doc := &Document{
 		Statements:  p.statements,
 		Diagnostics: p.diags,
@@ -46,6 +50,7 @@ func (p *parser) parse() *Document {
 }
 
 func (p *parser) parseStatement() (Statement, bool) {
+	// Consume tokens until a statement is formed
 	for {
 		tok := p.next()
 		switch tok.Kind {
@@ -62,6 +67,7 @@ func (p *parser) parseStatement() (Statement, bool) {
 				Column:  tok.Column,
 			}
 			stmt.IsComment = tok.Value == ";"
+			// Parse argument list
 			args := p.parseArgs()
 			stmt.Args = args
 
@@ -69,6 +75,7 @@ func (p *parser) parseStatement() (Statement, bool) {
 
 			return stmt, true
 		default:
+			// Non-quoted keyword is invalid
 			p.diag(tok, "expected quoted keyword")
 			p.consumeLineEnd()
 
@@ -78,6 +85,7 @@ func (p *parser) parseStatement() (Statement, bool) {
 }
 
 func (p *parser) parseArgs() []Value {
+	// Parse comma-separated values
 	var args []Value
 
 	expectValue := true
@@ -125,6 +133,7 @@ func (p *parser) parseArgs() []Value {
 
 			expectValue = false
 		default:
+			// Unexpected token inside args
 			p.diag(tok, fmt.Sprintf("unexpected token %q", tok.Value))
 			p.next()
 
@@ -134,6 +143,7 @@ func (p *parser) parseArgs() []Value {
 }
 
 func (p *parser) consumeLineEnd() {
+	// Consume tokens until newline/EOF
 	for {
 		tok := p.peek()
 		if tok.Kind == tokenNewline {
@@ -150,6 +160,7 @@ func (p *parser) consumeLineEnd() {
 }
 
 func (p *parser) next() token {
+	// Read next token (honor lookahead)
 	if p.consumed {
 		p.consumed = false
 		return p.lookahead
@@ -161,6 +172,7 @@ func (p *parser) next() token {
 }
 
 func (p *parser) peek() token {
+	// Peek next token without consuming
 	if !p.consumed {
 		p.lookahead = p.lex.nextToken()
 		p.consumed = true
@@ -170,6 +182,7 @@ func (p *parser) peek() token {
 }
 
 func (p *parser) diag(tok token, msg string) {
+	// Append parser diagnostic
 	p.diags = append(p.diags, Diagnostic{
 		Severity: SeverityError,
 		Message:  msg,
@@ -179,6 +192,7 @@ func (p *parser) diag(tok token, msg string) {
 }
 
 func buildBlocks(statements []Statement) []Block {
+	// Partition statements into header/system/layout/data blocks
 	var blocks []Block
 	if len(statements) == 0 {
 		return blocks
@@ -189,6 +203,7 @@ func buildBlocks(statements []Statement) []Block {
 	systemIdx := indexOfKeyword(statements, "System")
 
 	appendBlock := func(typ BlockType, start, end int) {
+		// Append slice if bounds are valid
 		if start < 0 || end < 0 || start >= end || start >= len(statements) {
 			return
 		}
@@ -211,6 +226,7 @@ func buildBlocks(statements []Statement) []Block {
 	appendBlock(BlockHeader, 0, headerEnd)
 
 	if systemIdx >= 0 {
+		// System block up to next layout/data
 		systemEnd := len(statements)
 		if layoutIdx >= 0 && layoutIdx > systemIdx {
 			systemEnd = layoutIdx
@@ -222,6 +238,7 @@ func buildBlocks(statements []Statement) []Block {
 	}
 
 	if layoutIdx >= 0 {
+		// Layout block up to data
 		layoutEnd := len(statements)
 		if dataIdx >= 0 && dataIdx > layoutIdx {
 			layoutEnd = dataIdx
@@ -231,6 +248,7 @@ func buildBlocks(statements []Statement) []Block {
 	}
 
 	if dataIdx >= 0 {
+		// Data block to end
 		appendBlock(BlockData, dataIdx, len(statements))
 	}
 
@@ -242,6 +260,7 @@ func buildBlocks(statements []Statement) []Block {
 }
 
 func indexOfKeyword(statements []Statement, keyword string) int {
+	// Case-insensitive lookup of keyword
 	for i, stmt := range statements {
 		if strings.EqualFold(stmt.Keyword, keyword) {
 			return i
@@ -252,6 +271,7 @@ func indexOfKeyword(statements []Statement, keyword string) int {
 }
 
 func validateBlocks(doc *Document) []Diagnostic {
+	// Validate presence and ordering of key blocks
 	var diags []Diagnostic
 	if len(doc.Statements) == 0 {
 		return diags
@@ -259,6 +279,7 @@ func validateBlocks(doc *Document) []Diagnostic {
 
 	first := doc.Statements[0]
 	if first.Keyword != "GLL" {
+		// First line must be GLL signature
 		diags = append(diags, Diagnostic{
 			Severity: SeverityError,
 			Message:  "file must start with \"GLL\"",
@@ -273,6 +294,7 @@ func validateBlocks(doc *Document) []Diagnostic {
 	formatIdx, versionIdx, systemIdx, layoutIdx, dataIdx := -1, -1, -1, -1, -1
 
 	for i, stmt := range doc.Statements {
+		// Track indices of key statements
 		switch stmt.Keyword {
 		case "Format":
 			hasFormat = true
@@ -290,34 +312,42 @@ func validateBlocks(doc *Document) []Diagnostic {
 	}
 
 	if !hasFormat {
+		// Required header line
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "missing \"Format\" line"})
 	}
 
 	if !hasFormatVersion {
+		// Required header line
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "missing \"FormatVersion\" line"})
 	}
 
 	if systemIdx < 0 {
+		// Required system block
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "missing \"System\" line"})
 	}
 
 	if layoutIdx < 0 {
+		// Optional but recommended block
 		diags = append(diags, Diagnostic{Severity: SeverityWarning, Message: "missing \"Layout\" block"})
 	}
 
 	if dataIdx < 0 {
+		// Required data block
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "missing \"Data\" block"})
 	}
 
 	if formatIdx >= 0 && systemIdx >= 0 && formatIdx > systemIdx {
+		// Enforce ordering
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "\"Format\" must precede \"System\""})
 	}
 
 	if versionIdx >= 0 && systemIdx >= 0 && versionIdx > systemIdx {
+		// Enforce ordering
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "\"FormatVersion\" must precede \"System\""})
 	}
 
 	if layoutIdx >= 0 && dataIdx >= 0 && layoutIdx > dataIdx {
+		// Enforce ordering
 		diags = append(diags, Diagnostic{Severity: SeverityError, Message: "\"Layout\" must precede \"Data\""})
 	}
 

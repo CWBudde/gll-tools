@@ -38,6 +38,7 @@ Thumbs.db
 
 # Keep legacy viewer files but ignore new extractions
 testdata/gll/
+!testdata/gll/example*.gll
 legacy/
 
 # Generated documentation

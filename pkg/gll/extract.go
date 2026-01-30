@@ -1,11 +1,13 @@
 package gll
 
 import (
-	"bytes"
 	"compress/zlib"
 	"fmt"
 	"io"
 )
+
+// maxDecompressedSize limits zlib decompression output to prevent zip bombs (256 MB).
+const maxDecompressedSize = 256 << 20
 
 // ExtractResource extracts a resource from the file
 // For zlib resources, returns the compressed data. Use DecompressResource for decompressed data.
@@ -22,7 +24,8 @@ func ExtractResource(r io.ReadSeeker, res Resource) ([]byte, error) {
 	return data, nil
 }
 
-// DecompressResource extracts and decompresses a zlib resource
+// DecompressResource extracts and decompresses a zlib resource.
+// Decompression output is limited to maxDecompressedSize to prevent zip bombs.
 func DecompressResource(r io.ReadSeeker, res Resource) ([]byte, error) {
 	if res.Type != ResourceTypeZlib {
 		return ExtractResource(r, res)
@@ -32,30 +35,23 @@ func DecompressResource(r io.ReadSeeker, res Resource) ([]byte, error) {
 		return nil, err
 	}
 
-	// Read enough data to decompress (use full remaining file as upper bound)
-	fileSize, err := r.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := r.Seek(res.Offset, io.SeekStart); err != nil {
-		return nil, err
-	}
-
-	compressedData := make([]byte, fileSize-res.Offset)
-	if _, err := io.ReadFull(r, compressedData); err != nil && err != io.ErrUnexpectedEOF {
-		return nil, err
-	}
-
-	reader, err := zlib.NewReader(bytes.NewReader(compressedData))
+	// Stream directly from the current position — zlib.NewReader stops at stream end
+	zr, err := zlib.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("creating zlib reader: %w", err)
 	}
-	defer reader.Close()
+	defer zr.Close()
 
-	decompressed, err := io.ReadAll(reader)
+	// Limit decompressed output to prevent zip bombs
+	limited := io.LimitReader(zr, int64(maxDecompressedSize)+1)
+
+	decompressed, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("decompressing: %w", err)
+	}
+
+	if len(decompressed) > maxDecompressedSize {
+		return nil, fmt.Errorf("decompressed size exceeds limit of %d bytes", maxDecompressedSize)
 	}
 
 	return decompressed, nil

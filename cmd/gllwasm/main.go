@@ -52,6 +52,7 @@ type WASMDatabase struct {
 	ClusterSetups     []gll.ClusterSetupItem `json:"cluster_setups,omitempty"`
 	Connectors        []gll.Connector        `json:"connectors,omitempty"`
 	SourceDefinitions []WASMSourceDefinition `json:"source_definitions,omitempty"`
+	Transformers      []gll.Transformer      `json:"transformers,omitempty"`
 }
 
 // WASMDataFile is a data file with optional inline data for download.
@@ -95,6 +96,9 @@ func main() {
 
 	// Register the computeFilterResponse function
 	js.Global().Set("computeFilterResponse", js.FuncOf(computeFilterResponse))
+
+	// Register the computeArrayBalloon function
+	js.Global().Set("computeArrayBalloon", js.FuncOf(computeArrayBalloon))
 
 	// Keep the program running
 	select {}
@@ -141,6 +145,7 @@ func parseGLL(_ js.Value, args []js.Value) any {
 			FilterGroups:  file.Database.FilterGroups,
 			ClusterSetups: file.Database.ClusterSetups,
 			Connectors:    file.Database.Connectors,
+			Transformers:  file.Database.Transformers,
 		}
 
 		// Convert source definitions and load responses
@@ -512,6 +517,169 @@ func computeFilterResponse(_ js.Value, args []js.Value) any {
 }
 
 func marshalFilterResult(result filters.FilterResponseResult) string {
+	jsonBytes, _ := json.Marshal(result)
+	return string(jsonBytes)
+}
+
+// ArrayBalloonRequest is the input for computeArrayBalloon.
+type ArrayBalloonRequest struct {
+	Elements  []ArrayElementInput `json:"elements"`
+	Receivers []ReceiverInput     `json:"receivers"`
+	AirProps  AirPropsInput       `json:"air_props"`
+}
+
+// ArrayBalloonResult is the output of computeArrayBalloon.
+type ArrayBalloonResult struct {
+	Success     bool                      `json:"success"`
+	Error       string                    `json:"error,omitempty"`
+	Frequencies []float64                 `json:"frequencies,omitempty"`
+	Results     []ArrayBalloonPointResult `json:"results,omitempty"`
+}
+
+// ArrayBalloonPointResult is one receiver point's response.
+type ArrayBalloonPointResult struct {
+	Level []float64 `json:"level"`
+	Phase []float64 `json:"phase"`
+}
+
+// computeArrayBalloon calculates array response at multiple receiver positions in one call.
+func computeArrayBalloon(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return marshalBalloonResult(ArrayBalloonResult{
+			Success: false,
+			Error:   "requires 2 arguments: gll_data (Uint8Array) and config (JSON string)",
+		})
+	}
+
+	// Get the GLL data
+	jsArray := args[0]
+	length := jsArray.Get("length").Int()
+	data := make([]byte, length)
+	js.CopyBytesToGo(data, jsArray)
+
+	// Parse the GLL file once
+	reader := bytes.NewReader(data)
+	file, err := gll.Parse(reader)
+	if err != nil {
+		return marshalBalloonResult(ArrayBalloonResult{
+			Success: false,
+			Error:   "failed to parse GLL: " + err.Error(),
+		})
+	}
+
+	// Parse the configuration
+	configJSON := args[1].String()
+	var req ArrayBalloonRequest
+	if err := json.Unmarshal([]byte(configJSON), &req); err != nil {
+		return marshalBalloonResult(ArrayBalloonResult{
+			Success: false,
+			Error:   "failed to parse config: " + err.Error(),
+		})
+	}
+
+	// Build array config (same as computeArrayResponse)
+	config := &gll.ArrayConfig{
+		Elements: make([]gll.ArrayElement, 0, len(req.Elements)),
+	}
+
+	for _, elemInput := range req.Elements {
+		var srcDef *gll.SourceDefinition
+		for _, src := range file.Database.SourceDefinitions {
+			if src.Key == elemInput.SourceKey {
+				srcDef = src.Definition
+				break
+			}
+		}
+		if srcDef == nil {
+			continue
+		}
+
+		// Load balloon responses if needed
+		if srcDef.BalloonData != nil && len(srcDef.BalloonData.Responses) == 0 {
+			reader.Seek(0, 0)
+			_ = gll.LoadBalloonResponses(reader, srcDef.BalloonData)
+		}
+
+		elem := gll.ArrayElement{
+			Position: gll.Vector3D{
+				X: elemInput.Position.X,
+				Y: elemInput.Position.Y,
+				Z: elemInput.Position.Z,
+			},
+			Angles: gll.Vector3D{
+				X: elemInput.Angles.X,
+				Y: elemInput.Angles.Y,
+				Z: elemInput.Angles.Z,
+			},
+			Gain:       elemInput.Gain,
+			SourceDefs: []*gll.SourceDefinition{srcDef},
+		}
+		config.Elements = append(config.Elements, elem)
+	}
+
+	if len(config.Elements) == 0 {
+		return marshalBalloonResult(ArrayBalloonResult{
+			Success: false,
+			Error:   "no valid elements in configuration",
+		})
+	}
+
+	// Build receivers
+	receivers := make([]gll.Vector3D, len(req.Receivers))
+	for i, r := range req.Receivers {
+		receivers[i] = gll.Vector3D{X: r.X, Y: r.Y, Z: r.Z}
+	}
+
+	// Set up air properties
+	airProps := gll.AirProperties{
+		Temperature: req.AirProps.Temperature,
+		Humidity:    req.AirProps.Humidity,
+		Speed:       req.AirProps.Speed,
+	}
+	if airProps.Speed == 0 {
+		airProps.Speed = 343.0
+	}
+	if airProps.Temperature == 0 {
+		airProps.Temperature = 20.0
+	}
+
+	// Compute grid
+	responses := gll.ComputeSystemResponseGrid(config, receivers, airProps, req.AirProps.AirAttenOn)
+
+	// Build result
+	result := ArrayBalloonResult{
+		Success: true,
+		Results: make([]ArrayBalloonPointResult, len(responses)),
+	}
+
+	for i, resp := range responses {
+		if resp == nil {
+			result.Results[i] = ArrayBalloonPointResult{
+				Level: []float64{},
+				Phase: []float64{},
+			}
+			continue
+		}
+
+		// Set frequencies from first non-nil response
+		if result.Frequencies == nil {
+			freqs := make([]float64, len(resp.Level))
+			for j := range freqs {
+				freqs[j] = resp.Definition.GetFrequency(j)
+			}
+			result.Frequencies = freqs
+		}
+
+		result.Results[i] = ArrayBalloonPointResult{
+			Level: resp.Level,
+			Phase: resp.Phase,
+		}
+	}
+
+	return marshalBalloonResult(result)
+}
+
+func marshalBalloonResult(result ArrayBalloonResult) string {
 	jsonBytes, _ := json.Marshal(result)
 	return string(jsonBytes)
 }

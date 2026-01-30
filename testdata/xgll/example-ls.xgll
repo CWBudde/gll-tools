@@ -2,45 +2,72 @@
 "Format", "3D"
 "FormatVersion", "1.0"
 
-"System", "Example Single Box", "sysExampleSingleBox", "LS"
+"System", "Example Two-Way", "sysExampleTwoWay", "LS"
 "SystemVersion", "1"
 "Company", "ExampleCo"
-"InfoText", "Minimal example for docs/nNot a compiled file"
+"InfoText", "Two-way passive loudspeaker example/nLF 12-inch woofer + HF 1-inch compression driver"
+"CopyrightText", "(c) 2026 ExampleCo"
+"WebsiteText", "https://example.com"
 
 "Layout"
 "Logo1", "logos/logo_left.png"
 "Logo2", "logos/logo_right.png"
-"BackgroundColor", 0.8, 0.8, 0.8
+"BackgroundColor", 0.2, 0.2, 0.25
 
 "Data"
 
-";","Box type definition"
+";","Cabinet definition - two-way passive box"
 "BoxTypes", 1
-"BoxType", "Example Cabinet", "bxExampleCab"
-"Sources", 1
-"Source", "LF Driver", "srcLow", 0, 0, 0, 0, 0, 0, "SD_Low"
+"BoxType", "Two-Way Cabinet", "bxTwoWay"
+"Sources", 2
+"Source", "LF 12in", "srcLF", 0, 0, -0.05, 0, 0, 0, "SD_LF"
+"Source", "HF 1in", "srcHF", 0, 0, 0.15, 0, 0, 0, "SD_HF"
 "Input Configurations", 1
-"Input Configuration", "Default", "icDefault"
+"Input Configuration", "Passive", "icPassive"
 "Inputs", 1
-"Input", "In1"
+"Input", "SpeakonIn"
 "Rated Impedance", 8
-"Links", 1
-"Link", "srcLow", "FG_Default"
+"Links", 2
+"Link", "srcLF", "FG_LowPass"
+"Link", "srcHF", "FG_HighPass"
 "GeometryFiles", 1
-"GeometryFile", "geometry/box.xed"
+"GeometryFile", "geometry/twoway_cab.xed"
 "ReferencePoint", 0, 0, 0
 "NextPivot", 0, 0, 0
-"CenterOfMass", 0, 0, 0
-"Weight", 10.0
+"CenterOfMass", 0, -0.05, 0
+"Weight", 18.5
+"Dimensions", 0.35, 0.56, 0.30
 
-";","Source data"
-"SourceDefinitions", 1
-"SourceDefinition", "SD_Low"
+";","Source definitions"
+"SourceDefinitions", 2
+
+"SourceDefinition", "SD_LF"
+"CompanyLabel", "ExampleCo"
+"NominalBandwidth", 45, 2500
+"DataType", "Measured"
 "File", ""
 
-";","Filter group for the input"
-"FilterGroups", 1
-"FilterGroup", "Flat", "FG_Default"
+"SourceDefinition", "SD_HF"
+"CompanyLabel", "ExampleCo"
+"NominalBandwidth", 1200, 20000
+"DataType", "Measured"
+"File", ""
+
+";","Crossover filter groups"
+"FilterGroups", 2
+
+"FilterGroup", "Low Pass 2.5kHz", "FG_LowPass"
 "FilterDefinitions", 1
-"FilterDefinition", "Flat", "FD_Flat"
-"File", "filters/flat.xgfb"
+"FilterDefinition", "LP 2500Hz BW12", "FD_LP2500"
+"File", ""
+
+"FilterGroup", "High Pass 1.2kHz", "FG_HighPass"
+"FilterDefinitions", 1
+"FilterDefinition", "HP 1200Hz BW12", "FD_HP1200"
+"File", ""
+
+";","Electrical limits"
+"Limits", 1
+"Limit", "Max Power"
+"ContinuousPower", 300
+"PeakPower", 1200

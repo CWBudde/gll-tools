@@ -50,19 +50,21 @@ func init() {
 }
 
 func runExtract(cmd *cobra.Command, args []string) error {
-	filename := args[0]
-	outputDir := viper.GetString("extract.output")
-	imagesOnly := viper.GetBool("extract.images")
-	dataOnly := viper.GetBool("extract.data")
-	docsOnly := viper.GetBool("extract.docs")
-	decompress := viper.GetBool("extract.decompress")
+	ctx := &extractCtx{
+		outputDir:      viper.GetString("extract.output"),
+		imagesOnly:     viper.GetBool("extract.images"),
+		dataOnly:       viper.GetBool("extract.data"),
+		docsOnly:       viper.GetBool("extract.docs"),
+		decompress:     viper.GetBool("extract.decompress"),
+		extractedNames: make(map[string]bool),
+	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(ctx.outputDir, 0o755); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
-	f, err := os.Open(filename)
+	f, err := os.Open(args[0])
 	if err != nil {
 		return fmt.Errorf("opening file: %w", err)
 	}
@@ -74,152 +76,182 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing GLL file: %w", err)
 	}
 
-	extracted := 0
-	extractedNames := make(map[string]bool) // Track extracted files to avoid duplicates
-
 	// Extract DataFiles (these are the primary source, extracted from database)
-	if !imagesOnly && !docsOnly && file.Database != nil {
-		for _, df := range file.Database.DataFiles {
-			if dataOnly || (!imagesOnly && !dataOnly && !docsOnly) {
-				data, err := gll.ExtractDataFile(f, df)
-				if err != nil {
-					slog.Warn("failed to extract data file", "file", df.Filename, "err", err)
-					continue
-				}
-
-				// Clean filename (remove leading .\ or ./ and convert to base name)
-				cleanName := cleanFilename(df.Filename)
-
-				if extractedNames[cleanName] {
-					continue // Skip duplicates
-				}
-
-				outPath := filepath.Join(outputDir, cleanName)
-				//nolint:gosec // G306: Extracted resources should be world-readable
-				if err := os.WriteFile(outPath, data, 0o644); err != nil {
-					slog.Warn("failed to write extracted data file", "path", outPath, "err", err)
-					continue
-				}
-
-				fmt.Printf("Extracted: %s (%d bytes)\n", outPath, len(data))
-
-				extractedNames[cleanName] = true
-				extracted++
-			}
-		}
-	}
-
-	// Extract IncludeFiles (PDFs, technical drawings, documentation)
-	if !imagesOnly && !dataOnly && file.Database != nil {
-		for _, inc := range file.Database.IncludeFiles {
-			if docsOnly || (!imagesOnly && !dataOnly && !docsOnly) {
-				data, err := gll.ExtractIncludeFile(f, inc)
-				if err != nil {
-					slog.Warn("failed to extract include file", "file", inc.Filename, "err", err)
-					continue
-				}
-
-				// Clean filename (remove leading .\ or ./ and convert to base name)
-				cleanName := cleanFilename(inc.Filename)
-
-				if extractedNames[cleanName] {
-					continue // Skip duplicates
-				}
-
-				outPath := filepath.Join(outputDir, cleanName)
-				//nolint:gosec // G306: Extracted resources should be world-readable
-				if err := os.WriteFile(outPath, data, 0o644); err != nil {
-					slog.Warn("failed to write include file", "path", outPath, "err", err)
-					continue
-				}
-
-				fmt.Printf("Extracted: %s (%d bytes) [%s]\n", outPath, len(data), inc.Label)
-
-				extractedNames[cleanName] = true
-				extracted++
-			}
-		}
+	if file.Database != nil {
+		ctx.extractDataFiles(f, file)
+		ctx.extractIncludeFiles(f, file)
 	}
 
 	// Extract resources (only non-PNG or PNG not already extracted via DataFiles)
-	if !dataOnly && !docsOnly {
-		for i, res := range file.Resources {
-			// Filter by type if requested
-			if imagesOnly && res.Type != gll.ResourceTypePNG {
+	ctx.extractResources(f, file)
+
+	fmt.Printf("\nTotal extracted: %d files\n", ctx.extractedCount)
+
+	return nil
+}
+
+type extractCtx struct {
+	outputDir      string
+	imagesOnly     bool
+	dataOnly       bool
+	docsOnly       bool
+	decompress     bool
+	extractedNames map[string]bool
+	extractedCount int
+}
+
+func (ctx *extractCtx) extractDataFiles(f *os.File, file *gll.File) {
+	if ctx.imagesOnly || ctx.docsOnly {
+		return
+	}
+	for _, df := range file.Database.DataFiles {
+		if ctx.dataOnly || (!ctx.imagesOnly && !ctx.dataOnly && !ctx.docsOnly) {
+			data, err := gll.ExtractDataFile(f, df)
+			if err != nil {
+				slog.Warn("failed to extract data file", "file", df.Filename, "err", err)
 				continue
 			}
 
-			var (
-				data    []byte
-				outName string
-			)
+			// Clean filename (remove leading .\ or ./ and convert to base name)
+			cleanName := cleanFilename(df.Filename)
 
-			if res.Type == gll.ResourceTypePNG {
-				// Skip if already extracted from DataFiles
-				if res.Name != "" {
-					cleanName := cleanFilename(res.Name)
-					if extractedNames[cleanName] {
-						continue
-					}
-				}
-
-				data, err = gll.ExtractResource(f, res)
-				if err != nil {
-					slog.Warn("failed to extract PNG resource", "index", i, "err", err)
-					continue
-				}
-
-				if res.Name != "" {
-					outName = cleanFilename(res.Name)
-				} else {
-					outName = fmt.Sprintf("resource_%d.png", i)
-				}
-			} else if res.Type == gll.ResourceTypeZlib {
-				if decompress {
-					data, err = gll.DecompressResource(f, res)
-					if err != nil {
-						slog.Warn("failed to decompress resource", "index", i, "err", err)
-						continue
-					}
-
-					ext := getExtensionForContent(res.Name)
-					outName = fmt.Sprintf("zlib_%d%s", i, ext)
-				} else {
-					data, err = gll.ExtractResource(f, res)
-					if err != nil {
-						slog.Warn("failed to extract zlib resource", "index", i, "err", err)
-						continue
-					}
-
-					outName = fmt.Sprintf("zlib_%d.zlib", i)
-				}
+			if ctx.extractedNames[cleanName] {
+				continue // Skip duplicates
 			}
 
-			if len(data) == 0 {
-				continue
-			}
-
-			if extractedNames[outName] {
-				continue
-			}
-
-			outPath := filepath.Join(outputDir, outName)
+			outPath := filepath.Join(ctx.outputDir, cleanName)
 			//nolint:gosec // G306: Extracted resources should be world-readable
 			if err := os.WriteFile(outPath, data, 0o644); err != nil {
-				slog.Warn("failed to write extracted resource", "path", outPath, "err", err)
+				slog.Warn("failed to write extracted data file", "path", outPath, "err", err)
 				continue
 			}
 
 			fmt.Printf("Extracted: %s (%d bytes)\n", outPath, len(data))
 
-			extractedNames[outName] = true
-			extracted++
+			ctx.extractedNames[cleanName] = true
+			ctx.extractedCount++
+		}
+	}
+}
+
+func (ctx *extractCtx) extractIncludeFiles(f *os.File, file *gll.File) {
+	if ctx.imagesOnly || ctx.dataOnly {
+		return
+	}
+	for _, inc := range file.Database.IncludeFiles {
+		if ctx.docsOnly || (!ctx.imagesOnly && !ctx.dataOnly && !ctx.docsOnly) {
+			data, err := gll.ExtractIncludeFile(f, inc)
+			if err != nil {
+				slog.Warn("failed to extract include file", "file", inc.Filename, "err", err)
+				continue
+			}
+
+			// Clean filename (remove leading .\ or ./ and convert to base name)
+			cleanName := cleanFilename(inc.Filename)
+
+			if ctx.extractedNames[cleanName] {
+				continue // Skip duplicates
+			}
+
+			outPath := filepath.Join(ctx.outputDir, cleanName)
+			//nolint:gosec // G306: Extracted resources should be world-readable
+			if err := os.WriteFile(outPath, data, 0o644); err != nil {
+				slog.Warn("failed to write include file", "path", outPath, "err", err)
+				continue
+			}
+
+			fmt.Printf("Extracted: %s (%d bytes) [%s]\n", outPath, len(data), inc.Label)
+
+			ctx.extractedNames[cleanName] = true
+			ctx.extractedCount++
+		}
+	}
+}
+
+func (ctx *extractCtx) extractResources(f *os.File, file *gll.File) {
+	if ctx.dataOnly || ctx.docsOnly {
+		return
+	}
+	for i, res := range file.Resources {
+		// Filter by type if requested
+		if ctx.imagesOnly && res.Type != gll.ResourceTypePNG {
+			continue
+		}
+
+		var (
+			data    []byte
+			outName string
+			err     error
+		)
+
+		switch res.Type {
+		case gll.ResourceTypePNG:
+			data, outName, err = ctx.processPNGResource(f, res, i)
+		case gll.ResourceTypeZlib:
+			data, outName, err = ctx.processZlibResource(f, res, i)
+		}
+
+		if err != nil || len(data) == 0 || outName == "" || ctx.extractedNames[outName] {
+			if err != nil {
+				slog.Warn("failed to process resource", "type", res.Type, "index", i, "err", err)
+			}
+			continue
+		}
+
+		outPath := filepath.Join(ctx.outputDir, outName)
+		//nolint:gosec // G306: Extracted resources should be world-readable
+		if err := os.WriteFile(outPath, data, 0o644); err != nil {
+			slog.Warn("failed to write extracted resource", "path", outPath, "err", err)
+			continue
+		}
+
+		fmt.Printf("Extracted: %s (%d bytes)\n", outPath, len(data))
+
+		ctx.extractedNames[outName] = true
+		ctx.extractedCount++
+	}
+}
+
+func (ctx *extractCtx) processPNGResource(f *os.File, res gll.Resource, index int) ([]byte, string, error) {
+	// Skip if already extracted from DataFiles
+	if res.Name != "" {
+		cleanName := cleanFilename(res.Name)
+		if ctx.extractedNames[cleanName] {
+			return nil, "", nil
 		}
 	}
 
-	fmt.Printf("\nTotal extracted: %d files\n", extracted)
+	data, err := gll.ExtractResource(f, res)
+	if err != nil {
+		return nil, "", err
+	}
 
-	return nil
+	outName := ""
+	if res.Name != "" {
+		outName = cleanFilename(res.Name)
+	} else {
+		outName = fmt.Sprintf("resource_%d.png", index)
+	}
+	return data, outName, nil
+}
+
+func (ctx *extractCtx) processZlibResource(f *os.File, res gll.Resource, index int) ([]byte, string, error) {
+	if ctx.decompress {
+		data, err := gll.DecompressResource(f, res)
+		if err != nil {
+			return nil, "", err
+		}
+
+		ext := getExtensionForContent(res.Name)
+		return data, fmt.Sprintf("zlib_%d%s", index, ext), nil
+	}
+
+	data, err := gll.ExtractResource(f, res)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return data, fmt.Sprintf("zlib_%d.zlib", index), nil
 }
 
 // cleanFilename normalizes a Windows-style path to just the base filename

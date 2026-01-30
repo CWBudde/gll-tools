@@ -8,83 +8,6 @@ import (
 	"github.com/cwbudde/gll-tools/internal/gll"
 )
 
-// LimitType represents the type of mechanical/electrical limit
-type LimitType int32
-
-const (
-	LimitTypeMaxCount     LimitType = 0
-	LimitTypeMaxCountType LimitType = 1
-	LimitTypeMaxWeightKg  LimitType = 2
-	LimitTypeMaxTiltAngle LimitType = 4
-	LimitTypeMinTiltAngle LimitType = 5
-	LimitTypeMinCount     LimitType = 6
-)
-
-//nolint:goconst // Enum String() methods intentionally use string literals
-func (t LimitType) String() string {
-	switch t {
-	case LimitTypeMaxCount:
-		return "MaxCount"
-	case LimitTypeMaxCountType:
-		return "MaxCountType"
-	case LimitTypeMaxWeightKg:
-		return "MaxWeightKg"
-	case LimitTypeMaxTiltAngle:
-		return "MaxTiltAngle"
-	case LimitTypeMinTiltAngle:
-		return "MinTiltAngle"
-	case LimitTypeMinCount:
-		return "MinCount"
-	default:
-		return "Unknown"
-	}
-}
-
-// Limit represents a mechanical or electrical limit for array configurations
-type Limit struct {
-	Frame      string    `json:"frame,omitempty"`    // Frame key this applies to
-	Type       LimitType `json:"type"`               // Type of limit
-	BoxType    string    `json:"box_type,omitempty"` // Box type key this applies to
-	LimitValue float64   `json:"limit_value"`        // The limit value
-}
-
-// WarningType represents the type of configuration warning
-type WarningType int32
-
-const (
-	WarningTypeMaxCount     WarningType = 0
-	WarningTypeMinCount     WarningType = 1
-	WarningTypeMaxWeightKg  WarningType = 2
-	WarningTypeMaxTiltAngle WarningType = 3
-	WarningTypeMinTiltAngle WarningType = 4
-)
-
-//nolint:goconst // Enum String() methods intentionally use string literals
-func (t WarningType) String() string {
-	switch t {
-	case WarningTypeMaxCount:
-		return "MaxCount"
-	case WarningTypeMinCount:
-		return "MinCount"
-	case WarningTypeMaxWeightKg:
-		return "MaxWeightKg"
-	case WarningTypeMaxTiltAngle:
-		return "MaxTiltAngle"
-	case WarningTypeMinTiltAngle:
-		return "MinTiltAngle"
-	default:
-		return "Unknown"
-	}
-}
-
-// Warning represents a configuration warning message
-type Warning struct {
-	Frame      string      `json:"frame,omitempty"` // Frame key this applies to
-	Type       WarningType `json:"type"`            // Type of warning
-	Text       string      `json:"text,omitempty"`  // Warning message text
-	LimitValue float64     `json:"limit_value"`     // The limit value that triggers warning
-}
-
 // FilterGroup contains DSP filter definitions
 type FilterGroup struct {
 	Label         string             `json:"label"`
@@ -202,333 +125,9 @@ type TransferFunctionLP struct {
 	Delay           float64   `json:"delay"`           // seconds
 }
 
-// parseLimitBuffer parses the Limits buffer
-func parseLimitBuffer(br *gll.ByteReader, maxOffset int64) ([]Limit, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// Limits buffer has a block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	// Read count
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading limit count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	limits := make([]Limit, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		limit, err := parseLimit(br)
-		if err != nil {
-			break
-		}
-
-		limits = append(limits, *limit)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return limits, nil
-}
-
-func parseLimit(br *gll.ByteReader) (*Limit, error) {
-	// Read block size
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, fmt.Errorf("invalid block size: %d", blockSize)
-	}
-
-	endOffset := br.Offset() + int64(blockSize) - 4
-
-	// Read version check
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("unsupported version: %d", versionCheck)
-	}
-
-	// Read sub-version
-	_, err = br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	limit := &Limit{}
-
-	// Read Frame
-	limit.Frame, err = br.ReadString()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading frame: %w", err)
-	}
-
-	// Read Type
-	typeVal, err := br.ReadInt32()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading type: %w", err)
-	}
-
-	limit.Type = LimitType(typeVal)
-
-	// Read BoxType
-	limit.BoxType, err = br.ReadString()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading box type: %w", err)
-	}
-
-	// Read LimitValue
-	limit.LimitValue, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading limit value: %w", err)
-	}
-
-	_, _ = br.Seek(endOffset, io.SeekStart)
-
-	return limit, nil
-}
-
-// parseWarningBuffer parses the Warnings buffer
-func parseWarningBuffer(br *gll.ByteReader, maxOffset int64) ([]Warning, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// Warnings buffer has a block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	// Read count
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading warning count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	warnings := make([]Warning, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		warning, err := parseWarning(br)
-		if err != nil {
-			break
-		}
-
-		warnings = append(warnings, *warning)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return warnings, nil
-}
-
-func parseWarning(br *gll.ByteReader) (*Warning, error) {
-	// Read block size
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, fmt.Errorf("invalid block size: %d", blockSize)
-	}
-
-	endOffset := br.Offset() + int64(blockSize) - 4
-
-	// Read version check
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("unsupported version: %d", versionCheck)
-	}
-
-	// Read sub-version
-	_, err = br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	warning := &Warning{}
-
-	// Read Frame
-	warning.Frame, err = br.ReadString()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading frame: %w", err)
-	}
-
-	// Read Type
-	typeVal, err := br.ReadInt32()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading type: %w", err)
-	}
-
-	warning.Type = WarningType(typeVal)
-
-	// Read Text
-	warning.Text, err = br.ReadString()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading text: %w", err)
-	}
-
-	// Read LimitValue
-	warning.LimitValue, err = br.ReadDouble()
-	if err != nil {
-		_, _ = br.Seek(endOffset, io.SeekStart)
-		return nil, fmt.Errorf("reading limit value: %w", err)
-	}
-
-	_, _ = br.Seek(endOffset, io.SeekStart)
-
-	return warning, nil
-}
-
 // parseFilterGroupBuffer parses the FilterGroups buffer
 func parseFilterGroupBuffer(br *gll.ByteReader, maxOffset int64) ([]FilterGroup, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// FilterGroups buffer has a block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	// Read count
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading filter group count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	groups := make([]FilterGroup, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		group, err := parseFilterGroup(br)
-		if err != nil {
-			break
-		}
-
-		groups = append(groups, *group)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return groups, nil
+	return parseBufferItems(br, maxOffset, 0, parseFilterGroup)
 }
 
 func parseFilterGroup(br *gll.ByteReader) (*FilterGroup, error) {
@@ -597,70 +196,7 @@ func parseFilterGroup(br *gll.ByteReader) (*FilterGroup, error) {
 }
 
 func parseFilterDefinitionBuffer(br *gll.ByteReader, maxOffset int64) ([]FilterDefinition, error) {
-	if br.Offset() >= maxOffset {
-		return nil, nil
-	}
-
-	// FilterDefinitions buffer has a block wrapper
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading buffer block size: %w", err)
-	}
-
-	if blockSize <= 0 {
-		return nil, nil
-	}
-
-	bufferEnd := br.Offset() + int64(blockSize) - 4
-	if bufferEnd > maxOffset {
-		bufferEnd = maxOffset
-	}
-
-	// Read version check and sub-version
-	versionCheck, err := br.ReadInt16()
-	if err != nil {
-		return nil, fmt.Errorf("reading version check: %w", err)
-	}
-
-	if versionCheck != 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, fmt.Errorf("unsupported buffer version: %d", versionCheck)
-	}
-
-	_, err = br.ReadInt16() // sub-version
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-version: %w", err)
-	}
-
-	// Read count
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading filter definition count: %w", err)
-	}
-
-	if count <= 0 {
-		_, _ = br.Seek(bufferEnd, io.SeekStart)
-		return nil, nil
-	}
-
-	filters := make([]FilterDefinition, 0, count)
-
-	for i := int32(0); i < count; i++ {
-		if br.Offset() >= bufferEnd {
-			break
-		}
-
-		filter, err := parseFilterDefinition(br)
-		if err != nil {
-			break
-		}
-
-		filters = append(filters, *filter)
-	}
-
-	_, _ = br.Seek(bufferEnd, io.SeekStart)
-
-	return filters, nil
+	return parseBufferItems(br, maxOffset, 0, parseFilterDefinition)
 }
 
 func parseFilterDefinition(br *gll.ByteReader) (*FilterDefinition, error) {
@@ -1384,10 +920,7 @@ func parseFilterLogSpectrumLP(br *gll.ByteReader, maxOffset int64) (*TransferFun
 	}
 
 	// Read LogSpectrumDefinition
-	spectrum, err := readFilterSpectrumDefinitionLP(br, endOffset)
-	if err != nil {
-		return spectrum, nil
-	}
+	spectrum := readFilterSpectrumDefinitionLP(br, endOffset)
 
 	// Read compression type
 	compressionType, err := br.ReadInt32()
@@ -1421,18 +954,18 @@ func parseFilterLogSpectrumLP(br *gll.ByteReader, maxOffset int64) (*TransferFun
 
 // readFilterSpectrumDefinitionLP reads LogSpectrumDefinition fields into TransferFunctionLP.
 // On error, seeks to endOffset and returns partial data (graceful degradation).
-func readFilterSpectrumDefinitionLP(br *gll.ByteReader, endOffset int64) (*TransferFunctionLP, error) {
+func readFilterSpectrumDefinitionLP(br *gll.ByteReader, endOffset int64) *TransferFunctionLP {
 	def, err := parseLogSpectrumDefinition(br)
 	if err != nil {
 		_, _ = br.Seek(endOffset, io.SeekStart)
-		return &TransferFunctionLP{}, nil
+		return &TransferFunctionLP{}
 	}
 
 	return &TransferFunctionLP{
 		BandsPerOctave:  def.BandsPerOctave,
 		LowestFrequency: def.StartFreq,
 		NumberOfBands:   def.PointCount,
-	}, nil
+	}
 }
 
 // readUncompressedResponseData reads uncompressed int16 arrays for level and phase.
@@ -1485,8 +1018,13 @@ func readCompressedResponseData(br *gll.ByteReader, numBands int32, endOffset in
 		return nil, nil
 	}
 
+	if levelCompressedLen < 0 || int64(levelCompressedLen)*2 > int64(numBands)*8 {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return nil, nil
+	}
+
 	levelBytes := int(levelCompressedLen) * 2
-	if levelBytes < 0 || levelBytes > int(numBands)*8 {
+	if levelBytes < 0 {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return nil, nil
 	}
@@ -1518,8 +1056,13 @@ func readCompressedResponseData(br *gll.ByteReader, numBands int32, endOffset in
 		return levels, nil
 	}
 
+	if phaseCompressedLen < 0 || int64(phaseCompressedLen)*2 > int64(numBands)*8 {
+		_, _ = br.Seek(endOffset, io.SeekStart)
+		return levels, nil
+	}
+
 	phaseBytes := int(phaseCompressedLen) * 2
-	if phaseBytes < 0 || phaseBytes > int(numBands)*8 {
+	if phaseBytes < 0 {
 		_, _ = br.Seek(endOffset, io.SeekStart)
 		return levels, nil
 	}

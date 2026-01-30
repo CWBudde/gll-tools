@@ -10,6 +10,7 @@ import (
 
 func TestParseRecordUncompressed(t *testing.T) {
 	values := []int16{1, -2, 300}
+	// nolint:gosec
 	blockSize := int32(4 + 2 + 2 + 4 + 4 + len(values)*2)
 
 	buf := &bytes.Buffer{}
@@ -18,6 +19,7 @@ func TestParseRecordUncompressed(t *testing.T) {
 	_ = binary.Write(buf, binary.LittleEndian, int16(0))
 	_ = binary.Write(buf, binary.LittleEndian, int32(0))
 
+	// nolint:gosec
 	_ = binary.Write(buf, binary.LittleEndian, int32(len(values)))
 	for _, v := range values {
 		_ = binary.Write(buf, binary.LittleEndian, v)

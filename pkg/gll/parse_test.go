@@ -9,6 +9,7 @@ import (
 )
 
 func writeString(buf *bytes.Buffer, s string) {
+	// nolint:gosec
 	_ = binary.Write(buf, binary.LittleEndian, int16(len(s)))
 	buf.WriteString(s)
 }

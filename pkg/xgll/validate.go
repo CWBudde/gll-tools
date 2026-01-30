@@ -7,24 +7,29 @@ import (
 
 // ValidateSystemConstraints checks block presence and system type consistency.
 func ValidateSystemConstraints(doc *Document) []Diagnostic {
+	// Quick exit on empty input
 	var diags []Diagnostic
 	if doc == nil || len(doc.Statements) == 0 {
 		return diags
 	}
 
+	// Locate System statement
 	sysStmt := findFirstKeyword(doc.Statements, "System")
 	if sysStmt == nil {
 		return diags
 	}
 
+	// Parse system type
 	systemType, typeDiag := parseSystemType(*sysStmt)
 	if typeDiag != nil {
 		diags = append(diags, *typeDiag)
 		return diags
 	}
 
+	// Build keyword set for quick lookup
 	keywordSet := statementKeywords(doc.Statements)
 
+	// Validate block requirements by system type
 	switch systemType {
 	case "LA":
 		requireKeyword(&diags, keywordSet, "Frames", sysStmt.Line, sysStmt.Column)
@@ -32,6 +37,7 @@ func ValidateSystemConstraints(doc *Document) []Diagnostic {
 	case "CL":
 		requireKeyword(&diags, keywordSet, "Setups", sysStmt.Line, sysStmt.Column)
 	case "LS":
+		// LS must not contain LA/CL-specific blocks
 		for _, disallowed := range []string{"Frames", "Connectors", "Setups"} {
 			if keywordSet[strings.ToLower(disallowed)] {
 				diags = append(diags, Diagnostic{
@@ -44,6 +50,7 @@ func ValidateSystemConstraints(doc *Document) []Diagnostic {
 		}
 	}
 
+	// Return diagnostics
 	return diags
 }
 
@@ -51,13 +58,16 @@ func ValidateSystemConstraints(doc *Document) []Diagnostic {
 //
 //nolint:gocyclo // Complexity is inherent to validating many different XGLL block types and constraints
 func ValidateDataConstraints(doc *Document) []Diagnostic {
+	// Quick exit on empty input
 	var diags []Diagnostic
 	if doc == nil || len(doc.Statements) == 0 {
 		return diags
 	}
 
+	// Count validator for declaration blocks
 	expect := newCountValidator()
 
+	// Reference checks collected during scan
 	var (
 		refSourceDefs   []refCheck
 		refSources      []refCheck
@@ -67,47 +77,63 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		refConnectors   []refCheck
 	)
 
+	// Index sets for name resolution
 	boxTypes := make(map[string]struct{})
 	frames := make(map[string]struct{})
 	sources := make(map[string]struct{})
 	sourceDefs := make(map[string]struct{})
 	filterGroups := make(map[string]struct{})
 
+	// Walk statements and validate counts/references
 	for _, stmt := range doc.Statements {
 		switch stmt.Keyword {
 		case "BoxTypes":
+			// Declared count for BoxType
 			expect.set("BoxType", stmt, &diags)
 		case "BoxType":
+			// Count BoxType entry
 			expect.see("BoxType", stmt, &diags)
 
+			// Collect BoxType names
 			if name := argString(stmt, 1); name != "" {
 				boxTypes[name] = struct{}{}
 			}
 		case "Sources":
+			// Declared count for Source
 			expect.set("Source", stmt, &diags)
 		case "Source":
+			// Count Source entry
 			expect.see("Source", stmt, &diags)
 
+			// Collect source names
 			if name := argString(stmt, 1); name != "" {
 				sources[name] = struct{}{}
 			}
 
+			// Capture SourceDefinition reference
 			if ref := argString(stmt, 8); ref != "" {
 				refSourceDefs = append(refSourceDefs, refCheck{Kind: "SourceDefinition", Name: ref, Stmt: stmt})
 			}
 		case "Input Configurations":
+			// Declared count for Input Configuration
 			expect.set("Input Configuration", stmt, &diags)
 		case "Input Configuration":
+			// Count Input Configuration entry
 			expect.see("Input Configuration", stmt, &diags)
 		case "Inputs":
+			// Declared count for Input
 			expect.set("Input", stmt, &diags)
 		case "Input":
+			// Count Input entry
 			expect.see("Input", stmt, &diags)
 		case "Links":
+			// Declared count for Link
 			expect.set("Link", stmt, &diags)
 		case "Link":
+			// Count Link entry
 			expect.see("Link", stmt, &diags)
 
+			// Capture Link references
 			if ref := argString(stmt, 0); ref != "" {
 				refSources = append(refSources, refCheck{Kind: "Source", Name: ref, Stmt: stmt})
 			}
@@ -116,26 +142,36 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 				refFilterGroups = append(refFilterGroups, refCheck{Kind: "FilterGroup", Name: ref, Stmt: stmt})
 			}
 		case "GeometryFiles":
+			// Declared count for GeometryFile
 			expect.set("GeometryFile", stmt, &diags)
 		case "GeometryFile":
+			// Count GeometryFile entry
 			expect.see("GeometryFile", stmt, &diags)
 		case "Frames":
+			// Declared count for Frame
 			expect.set("Frame", stmt, &diags)
 		case "Frame":
+			// Count Frame entry
 			expect.see("Frame", stmt, &diags)
 
+			// Collect frame names
 			if name := argString(stmt, 1); name != "" {
 				frames[name] = struct{}{}
 			}
 		case "PinPoints":
+			// Declared count for PinPoint
 			expect.set("PinPoint", stmt, &diags)
 		case "PinPoint":
+			// Count PinPoint entry
 			expect.see("PinPoint", stmt, &diags)
 		case "Connectors":
+			// Declared count for Connector
 			expect.set("Connector", stmt, &diags)
 		case "Connector":
+			// Count Connector entry
 			expect.see("Connector", stmt, &diags)
 
+			// Capture connector references
 			if ref := argString(stmt, 0); ref != "" {
 				refConnectors = append(refConnectors, refCheck{Kind: "Connector", Name: ref, Stmt: stmt})
 			}
@@ -144,66 +180,90 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 				refConnectors = append(refConnectors, refCheck{Kind: "Connector", Name: ref, Stmt: stmt})
 			}
 		case "Angles":
+			// Declared count for Angle
 			expect.set("Angle", stmt, &diags)
 		case "Angle":
+			// Count Angle entry
 			expect.see("Angle", stmt, &diags)
 		case "Limits":
+			// Declared count for Limit
 			expect.set("Limit", stmt, &diags)
 		case "Limit":
+			// Count Limit entry
 			expect.see("Limit", stmt, &diags)
 
+			// Capture frame reference
 			if ref := argString(stmt, 1); ref != "" {
 				refFrames = append(refFrames, refCheck{Kind: "Frame", Name: ref, Stmt: stmt})
 			}
 
+			// Capture box type reference
 			if ref := argString(stmt, 2); ref != "" {
 				refBoxTypes = append(refBoxTypes, refCheck{Kind: "BoxType", Name: ref, Stmt: stmt})
 			}
 		case "Warnings":
+			// Declared count for Warning
 			expect.set("Warning", stmt, &diags)
 		case "Warning":
+			// Count Warning entry
 			expect.see("Warning", stmt, &diags)
 
+			// Capture frame reference
 			if ref := argString(stmt, 2); ref != "" {
 				refFrames = append(refFrames, refCheck{Kind: "Frame", Name: ref, Stmt: stmt})
 			}
 		case "SourceDefinitions":
+			// Declared count for SourceDefinition
 			expect.set("SourceDefinition", stmt, &diags)
 		case "SourceDefinition":
+			// Count SourceDefinition entry
 			expect.see("SourceDefinition", stmt, &diags)
 
+			// Collect SourceDefinition names
 			if name := argString(stmt, 0); name != "" {
 				sourceDefs[name] = struct{}{}
 			}
 		case "FilterGroups":
+			// Declared count for FilterGroup
 			expect.set("FilterGroup", stmt, &diags)
 		case "FilterGroup":
+			// Count FilterGroup entry
 			expect.see("FilterGroup", stmt, &diags)
 
+			// Collect FilterGroup names
 			if name := argString(stmt, 1); name != "" {
 				filterGroups[name] = struct{}{}
 			}
 		case "FilterDefinitions":
+			// Declared count for FilterDefinition
 			expect.set("FilterDefinition", stmt, &diags)
 		case "FilterDefinition":
+			// Count FilterDefinition entry
 			expect.see("FilterDefinition", stmt, &diags)
 		case "Setups":
+			// Declared count for Setup
 			expect.set("Setup", stmt, &diags)
 		case "Setup":
+			// Count Setup entry
 			expect.see("Setup", stmt, &diags)
 		case "Boxes":
+			// Declared count for Box
 			expect.set("Box", stmt, &diags)
 		case "Box":
+			// Count Box entry
 			expect.see("Box", stmt, &diags)
 
+			// Capture BoxType reference
 			if ref := argString(stmt, 6); ref != "" {
 				refBoxTypes = append(refBoxTypes, refCheck{Kind: "BoxType", Name: ref, Stmt: stmt})
 			}
 		}
 	}
 
+	// Finalize expected counts
 	expect.finish(&diags)
 
+	// Resolve collected references
 	resolveRefs(&diags, refSourceDefs, sourceDefs)
 	resolveRefs(&diags, refSources, sources)
 	resolveRefs(&diags, refFilterGroups, filterGroups)
@@ -211,10 +271,12 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 	resolveRefs(&diags, refFrames, frames)
 	resolveConnectorRefs(&diags, refConnectors, boxTypes, frames)
 
+	// Return diagnostics
 	return diags
 }
 
 func parseSystemType(stmt Statement) (string, *Diagnostic) {
+	// Ensure System has required arguments
 	if len(stmt.Args) < 3 {
 		return "", &Diagnostic{
 			Severity: SeverityError,
@@ -224,6 +286,7 @@ func parseSystemType(stmt Statement) (string, *Diagnostic) {
 		}
 	}
 
+	// Ensure type argument is a string
 	typeArg := stmt.Args[2]
 	if typeArg.Kind != ValueString {
 		return "", &Diagnostic{
@@ -234,6 +297,7 @@ func parseSystemType(stmt Statement) (string, *Diagnostic) {
 		}
 	}
 
+	// Normalize system type
 	systemType := strings.ToUpper(typeArg.Str)
 	switch systemType {
 	case "LA", "CL", "LS":
@@ -249,6 +313,7 @@ func parseSystemType(stmt Statement) (string, *Diagnostic) {
 }
 
 func findFirstKeyword(statements []Statement, keyword string) *Statement {
+	// Find first keyword match (case-insensitive)
 	for i := range statements {
 		if strings.EqualFold(statements[i].Keyword, keyword) {
 			return &statements[i]
@@ -259,6 +324,7 @@ func findFirstKeyword(statements []Statement, keyword string) *Statement {
 }
 
 func statementKeywords(statements []Statement) map[string]bool {
+	// Build set of statement keywords
 	set := make(map[string]bool, len(statements))
 	for _, stmt := range statements {
 		set[strings.ToLower(stmt.Keyword)] = true
@@ -268,6 +334,7 @@ func statementKeywords(statements []Statement) map[string]bool {
 }
 
 func requireKeyword(diags *[]Diagnostic, set map[string]bool, keyword string, line, col int) {
+	// Require presence of keyword
 	if set[strings.ToLower(keyword)] {
 		return
 	}
@@ -281,6 +348,7 @@ func requireKeyword(diags *[]Diagnostic, set map[string]bool, keyword string, li
 }
 
 type countExpectation struct {
+	// Expectation for count blocks
 	count  int
 	seen   int
 	line   int
@@ -288,14 +356,17 @@ type countExpectation struct {
 }
 
 type countValidator struct {
+	// Tracks expected counts by target
 	expect map[string]*countExpectation
 }
 
 func newCountValidator() *countValidator {
+	// Create empty validator
 	return &countValidator{expect: make(map[string]*countExpectation)}
 }
 
 func (c *countValidator) set(target string, stmt Statement, diags *[]Diagnostic) {
+	// Set expected count for target
 	val, ok := argNumber(stmt, 0)
 	if !ok {
 		c.expect[target] = &countExpectation{
@@ -307,6 +378,7 @@ func (c *countValidator) set(target string, stmt Statement, diags *[]Diagnostic)
 		return
 	}
 
+	// Finalize previous expectation
 	c.finishTarget(target, diags)
 	c.expect[target] = &countExpectation{
 		count:  val,
@@ -316,6 +388,7 @@ func (c *countValidator) set(target string, stmt Statement, diags *[]Diagnostic)
 }
 
 func (c *countValidator) see(target string, stmt Statement, diags *[]Diagnostic) {
+	// Increment seen count
 	entry := c.expect[target]
 	if entry == nil {
 		return
@@ -333,12 +406,14 @@ func (c *countValidator) see(target string, stmt Statement, diags *[]Diagnostic)
 }
 
 func (c *countValidator) finish(diags *[]Diagnostic) {
+	// Finalize all targets
 	for target := range c.expect {
 		c.finishTarget(target, diags)
 	}
 }
 
 func (c *countValidator) finishTarget(target string, diags *[]Diagnostic) {
+	// Emit diagnostic if counts mismatch
 	entry := c.expect[target]
 	if entry == nil || entry.count < 0 {
 		return
@@ -355,6 +430,7 @@ func (c *countValidator) finishTarget(target string, diags *[]Diagnostic) {
 }
 
 func argNumber(stmt Statement, idx int) (int, bool) {
+	// Extract integer argument
 	if idx < 0 || idx >= len(stmt.Args) {
 		return 0, false
 	}
@@ -373,6 +449,7 @@ func argNumber(stmt Statement, idx int) (int, bool) {
 }
 
 func argString(stmt Statement, idx int) string {
+	// Extract string argument
 	if idx < 0 || idx >= len(stmt.Args) {
 		return ""
 	}
@@ -386,16 +463,19 @@ func argString(stmt Statement, idx int) string {
 }
 
 func itoa(n int) string {
+	// Int to string helper
 	return strconv.Itoa(n)
 }
 
 type refCheck struct {
+	// Reference to validate
 	Kind string
 	Name string
 	Stmt Statement
 }
 
 func resolveRefs(diags *[]Diagnostic, refs []refCheck, set map[string]struct{}) {
+	// Resolve generic references
 	for _, ref := range refs {
 		if ref.Name == "" {
 			continue
@@ -415,6 +495,7 @@ func resolveRefs(diags *[]Diagnostic, refs []refCheck, set map[string]struct{}) 
 }
 
 func resolveConnectorRefs(diags *[]Diagnostic, refs []refCheck, boxes, frames map[string]struct{}) {
+	// Resolve connector references against box/frame sets
 	for _, ref := range refs {
 		if ref.Name == "" {
 			continue
