@@ -29,6 +29,24 @@ export function createGeometryController({
     };
   }
 
+  function normalizePoint(point) {
+    if (!point) return null;
+    const x = Number(point.x);
+    const y = Number(point.y);
+    const z = Number(point.z);
+    if (![x, y, z].every(Number.isFinite)) {
+      return null;
+    }
+    return { x, y, z };
+  }
+
+  function toViewPoint(point) {
+    const p = normalizePoint(point);
+    if (!p) return null;
+    // Most likely fix: GLL geometry is Z-up; swap Y/Z for Three.js (Y-up).
+    return { x: p.x, y: p.z, z: p.y };
+  }
+
   function applyGridTheme(grid, colors) {
     if (!grid || !colors) return;
     const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
@@ -126,6 +144,7 @@ export function createGeometryController({
       controls,
       mesh: null,
       lines: null,
+      markers: null,
       frameId: null,
       container,
       caseGeometry,
@@ -270,6 +289,14 @@ export function createGeometryController({
       inst.lines.material?.dispose?.();
       inst.lines = null;
     }
+    if (inst.markers) {
+      inst.group.remove(inst.markers);
+      inst.markers.traverse((child) => {
+        child.geometry?.dispose?.();
+        child.material?.dispose?.();
+      });
+      inst.markers = null;
+    }
 
     inst.group.rotation.set(0, 0, 0);
     inst.group.scale.set(1, 1, 1);
@@ -315,6 +342,36 @@ export function createGeometryController({
       const targetSize = 1.2;
       const scaleFactor = size > 0 ? targetSize / size : 1;
       inst.group.scale.setScalar(scaleFactor);
+
+      const markerRadiusWorld = 0.03;
+      const markerRadiusRaw = scaleFactor > 0
+        ? markerRadiusWorld / scaleFactor
+        : markerRadiusWorld;
+
+      const markers = new THREE.Group();
+      const refPoint = toViewPoint(inst.item?.reference_point);
+      const comPoint = toViewPoint(inst.item?.center_of_mass);
+
+      if (refPoint) {
+        const refGeom = new THREE.SphereGeometry(markerRadiusRaw, 16, 16);
+        const refMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+        const refMesh = new THREE.Mesh(refGeom, refMat);
+        refMesh.position.set(refPoint.x, refPoint.y, refPoint.z);
+        markers.add(refMesh);
+      }
+
+      if (comPoint) {
+        const comGeom = new THREE.SphereGeometry(markerRadiusRaw, 16, 16);
+        const comMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+        const comMesh = new THREE.Mesh(comGeom, comMat);
+        comMesh.position.set(comPoint.x, comPoint.y, comPoint.z);
+        markers.add(comMesh);
+      }
+
+      if (markers.children.length > 0) {
+        inst.markers = markers;
+        inst.group.add(markers);
+      }
 
       const scaledSize = Math.max(size * scaleFactor, 0.2);
       const radius = Math.max(scaledSize * 0.5, 0.1);
@@ -449,11 +506,6 @@ export function createGeometryController({
     if (!geometry) return null;
 
     const scale = 1;
-    const toViewPoint = (point) => {
-      if (!point) return null;
-      // Most likely fix: GLL geometry is Z-up; swap Y/Z for Three.js (Y-up).
-      return { x: point.x, y: point.z, z: point.y };
-    };
     const bounds = {
       minX: Infinity,
       minY: Infinity,
