@@ -2230,6 +2230,23 @@ function formatInlineGeometryViewer(kind, index, caseGeometry) {
                     <input type="checkbox" class="inline-geom-autorotate" checked /> Auto-rotate
                 </label>
             </div>
+            <div class="inline-geometry-legend">
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-ref" checked />
+                    <span class="geom-legend-swatch swatch-ref"></span>
+                    Reference Point
+                </label>
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-com" checked />
+                    <span class="geom-legend-swatch swatch-com"></span>
+                    Center of Mass
+                </label>
+                <label class="geometry-toggle">
+                    <input type="checkbox" class="inline-geom-pivot" checked />
+                    <span class="geom-legend-swatch swatch-pivot"></span>
+                    Next Pivot
+                </label>
+            </div>
             <div class="inline-geometry-canvas"></div>
         </div>
     `;

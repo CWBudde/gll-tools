@@ -825,6 +825,40 @@ header h1 {
   font-size: 0.8125rem;
 }
 
+.inline-geometry-legend {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.inline-geometry-legend .geometry-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+}
+
+.geom-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.geom-legend-swatch.swatch-ref {
+  background: #ef4444;
+}
+
+.geom-legend-swatch.swatch-com {
+  background: #22c55e;
+}
+
+.geom-legend-swatch.swatch-pivot {
+  background: #f59e0b;
+}
+
 .inline-geometry-canvas {
   height: 560px;
   border-radius: 8px;
