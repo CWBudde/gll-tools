@@ -881,27 +881,3 @@ func parseFace(br *gll.ByteReader) (*Face, error) {
 
 	return face, nil
 }
-
-// skipBlockBuffer skips a buffer by reading its block size and seeking past it
-func skipBlockBuffer(br *gll.ByteReader, maxOffset int64) error {
-	if br.Offset() >= maxOffset {
-		return nil
-	}
-
-	blockSize, err := br.ReadInt32()
-	if err != nil {
-		return err
-	}
-
-	if blockSize <= 4 {
-		return nil
-	}
-
-	endOffset := br.Offset() + int64(blockSize) - 4
-	if endOffset > maxOffset {
-		endOffset = maxOffset
-	}
-
-	_, err = br.Seek(endOffset, io.SeekStart)
-	return err
-}
