@@ -3214,11 +3214,20 @@ function autoGenerateFromFrame() {
   scheduleArrayViewerUpdate();
 }
 
+let configApplyTimer = null;
+
+function scheduleConfigApply() {
+  // Debounce config application so rapid edits don't trigger many recomputations
+  clearTimeout(configApplyTimer);
+  configApplyTimer = setTimeout(() => {
+    applyConfigFromEditor();
+  }, 400);
+}
+
 function setupConfigEditor() {
   // Wire config editor buttons
   const addBtn = document.getElementById("config-add-element");
   const clearBtn = document.getElementById("config-clear");
-  const applyBtn = document.getElementById("config-apply");
   const autogenBtn = document.getElementById("config-autogen");
 
   if (autogenBtn) {
@@ -3237,17 +3246,16 @@ function setupConfigEditor() {
       markConfigDirty();
     };
   }
-  if (applyBtn) {
-    applyBtn.onclick = () => applyConfigFromEditor();
-  }
 
   const table = document.getElementById("config-editor-table");
   if (table) {
     table.addEventListener("input", () => {
       scheduleArrayViewerUpdate();
+      scheduleConfigApply();
     });
     table.addEventListener("change", () => {
       scheduleArrayViewerUpdate();
+      scheduleConfigApply();
     });
   }
 }
