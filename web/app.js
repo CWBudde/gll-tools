@@ -538,8 +538,15 @@ function getSimulationParams() {
   };
 }
 
+function isVisualizationTabActive() {
+  return document.getElementById("tab-visualization")?.classList.contains("active");
+}
+
 function markConfigDirty() {
   configDirty = true;
+  // Only trigger computation when the visualization tab is visible.
+  // Otherwise the heavy WASM call will be deferred until the tab is opened.
+  if (!isVisualizationTabActive()) return;
   const autoRecalc = document.getElementById("sim-auto-recalc");
   if (autoRecalc?.checked) {
     triggerFullRecalculation();
@@ -686,7 +693,7 @@ function switchTab(tabName) {
 
   // Initialize chart when switching to visualization tab
   if (tabName === "visualization" && currentData) {
-    if (!cachedArrayBalloon && activeConfig && !recalcInProgress) {
+    if ((configDirty || !cachedArrayBalloon) && activeConfig && !recalcInProgress) {
       triggerFullRecalculation();
     } else if (!recalcInProgress) {
       updateCombinedResponseChart();
