@@ -140,7 +140,11 @@
               calculation
             </p>
             <div class="config-editor-toolbar">
-              <select id="config-frame-select" class="cfg-frame-select" title="Select frame for auto-generation"></select>
+              <select
+                id="config-frame-select"
+                class="cfg-frame-select"
+                title="Select frame for auto-generation"
+              ></select>
               <button id="config-autogen" class="btn-small btn-primary">
                 Auto Generate
               </button>
@@ -168,6 +172,10 @@
               </table>
             </div>
           </div>
+          <div id="sim-computing-overlay" class="sim-computing hidden">
+            <div class="spinner spinner-sm"></div>
+            <span id="sim-computing-message">Computing array response...</span>
+          </div>
           <div class="card" id="simulation-params-card">
             <h3>Simulation Parameters</h3>
             <div class="simulation-params">
@@ -178,17 +186,12 @@
                   type="number"
                   step="1"
                   min="0.1"
-                  value="10"
+                  value="100"
                 />
               </label>
               <label>
                 Temperature (&deg;C):
-                <input
-                  id="sim-temperature"
-                  type="number"
-                  step="1"
-                  value="20"
-                />
+                <input id="sim-temperature" type="number" step="1" value="20" />
               </label>
               <label>
                 Humidity (%):
@@ -270,7 +273,9 @@
                     step="5"
                     value="40"
                   />
-                  <span id="balloon-range-value" class="frequency-value">40</span>
+                  <span id="balloon-range-value" class="frequency-value"
+                    >40</span
+                  >
                 </label>
                 <label class="balloon-slider">
                   Scale:
