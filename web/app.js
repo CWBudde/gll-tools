@@ -560,17 +560,39 @@ function updateRecalcButtonVisibility() {
   }
 }
 
-function triggerFullRecalculation() {
+let recalcInProgress = false;
+
+async function triggerFullRecalculation() {
+  if (recalcInProgress) return;
+  recalcInProgress = true;
   configDirty = false;
   const btn = document.getElementById("sim-recalculate");
   if (btn) {
     btn.classList.add("hidden");
     btn.classList.remove("sim-recalculate-dirty");
   }
+
+  const overlay = document.getElementById("sim-computing-overlay");
+  const message = document.getElementById("sim-computing-message");
+  if (overlay) overlay.classList.remove("hidden");
+  if (message) message.textContent = "Computing array response (2664 points)...";
+
+  // Yield to let the overlay render
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   computeArrayBalloonGrid();
+
+  if (message) message.textContent = "Updating visualizations...";
+  await new Promise((r) => requestAnimationFrame(r));
+
   updateCombinedResponseChart();
+  visualization.updateBalloonOptions();
+  visualization.updatePolarOptions();
   visualization.updateBalloonVisualization();
   visualization.updatePolarChart();
+
+  if (overlay) overlay.classList.add("hidden");
+  recalcInProgress = false;
 }
 
 function generateSphericalGrid(distance, merCount, parCount) {
@@ -664,12 +686,13 @@ function switchTab(tabName) {
 
   // Initialize chart when switching to visualization tab
   if (tabName === "visualization" && currentData) {
-    if (!cachedArrayBalloon && activeConfig) {
-      computeArrayBalloonGrid();
+    if (!cachedArrayBalloon && activeConfig && !recalcInProgress) {
+      triggerFullRecalculation();
+    } else if (!recalcInProgress) {
+      updateCombinedResponseChart();
+      visualization.updatePolarChart();
+      visualization.updateBalloonVisualization();
     }
-    updateCombinedResponseChart();
-    visualization.updatePolarChart();
-    visualization.updateBalloonVisualization();
     visualization.handleBalloonResize();
     updateArrayViewer();
     handleArrayViewerResize();
