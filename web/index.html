@@ -133,6 +133,12 @@
         </div>
 
         <div id="tab-visualization" class="tab-content">
+          <div id="sim-computing-overlay" class="sim-computing hidden">
+            <div class="spinner spinner-sm"></div>
+            <span id="sim-computing-message"
+              >Computing array response...</span
+            >
+          </div>
           <div class="card" id="config-editor-card">
             <h3>Array Configuration</h3>
             <p class="section-hint">
@@ -171,10 +177,6 @@
                 <tbody id="config-editor-body"></tbody>
               </table>
             </div>
-          </div>
-          <div id="sim-computing-overlay" class="sim-computing hidden">
-            <div class="spinner spinner-sm"></div>
-            <span id="sim-computing-message">Computing array response...</span>
           </div>
           <div class="card" id="simulation-params-card">
             <h3>Simulation Parameters</h3>
