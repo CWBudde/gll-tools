@@ -421,7 +421,9 @@ func TestAddComplexInPlaceDestructive(t *testing.T) {
 	AddComplexInPlace(level1, phase1, level2, phase2)
 
 	// Should be very low level (near -∞ dB)
-	if level1[0] > -100 {
+	if len(level1) == 0 {
+		t.Error("level1 slice is empty after AddComplexInPlace")
+	} else if level1[0] > -100 {
 		t.Errorf("Destructive interference: got %f dB, want < -100 dB", level1[0])
 	}
 }
