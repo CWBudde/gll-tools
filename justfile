@@ -114,7 +114,8 @@ validate-xgll FILE="testdata/xgll/example-la.xgll":
 compile-xgll:
     #!/usr/bin/env bash
     for f in testdata/xgll/*.xgll; do
-        out="${f%.xgll}.gll"
+        basename="${f##*/}"
+        out="testdata/gll/${basename%.xgll}.gll"
         echo "Compiling $f -> $out"
         go run ./cmd/xgllc convert "$f" -f gll -o "$out"
     done
