@@ -119,3 +119,43 @@ compile-xgll:
         echo "Compiling $f -> $out"
         go run ./cmd/xgllc convert "$f" -f gll -o "$out"
     done
+
+# === Python Bindings ===
+
+# Build Python shared library
+build-python:
+    CGO_ENABLED=1 go build -buildmode=c-shared -o python/gll/_libgll.so ./cmd/gllpy
+    @echo "Python shared library built: python/gll/_libgll.so"
+
+# Install Python package in development mode
+install-python: build-python
+    pip install -e ./python
+
+# Run Python tests
+test-python: build-python
+    cd python && python -m pytest tests/ -v
+
+# Build Python wheel (for current platform)
+build-python-wheel: build-python
+    cd python && pip wheel . -w dist/ --no-deps
+
+# Clean Python build artifacts
+clean-python:
+    rm -f python/gll/_libgll.so python/gll/_libgll.h
+    rm -rf python/dist/ python/build/ python/*.egg-info python/gll/*.egg-info
+    find python -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+# Type check Python code
+typecheck-python:
+    cd python && python -m mypy gll/
+
+# Lint Python code
+lint-python:
+    cd python && python -m ruff check gll/ tests/
+
+# Format Python code
+fmt-python:
+    cd python && python -m ruff format gll/ tests/
+
+# Run all Python checks
+check-python: build-python lint-python typecheck-python test-python
