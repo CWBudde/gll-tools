@@ -312,6 +312,9 @@ func buildBoxTypeStatements(db *gllbin.Database) []Statement {
 			}
 		}
 
+		// InputConfig
+		statements = append(statements, buildInputConfigStatements(box.InputConfig)...)
+
 		// ReferencePoint
 		if box.ReferencePoint != nil {
 			statements = append(statements, newStatement("ReferencePoint",
@@ -350,6 +353,53 @@ func buildBoxTypeStatements(db *gllbin.Database) []Statement {
 		}
 		if box.HorizontalOpeningAngle != 0 {
 			statements = append(statements, newStatement("HorizontalOpeningAngle", numberValue(box.HorizontalOpeningAngle)))
+		}
+	}
+
+	return statements
+}
+
+// buildInputConfigStatements generates XGLL statements for BoxInputConfig.
+func buildInputConfigStatements(cfg *gllbin.BoxInputConfig) []Statement {
+	if cfg == nil {
+		return nil
+	}
+
+	var statements []Statement
+
+	// Input Configurations header (always 1 for embedded config)
+	statements = append(statements, newStatement("Input Configurations", numberValue(1)))
+
+	// Input Configuration declaration
+	statements = append(statements, newStatement("Input Configuration",
+		stringValue(cfg.Label),
+		stringValue(cfg.Key),
+	))
+
+	// Inputs header and items
+	if len(cfg.Inputs) > 0 {
+		statements = append(statements, newStatement("Inputs", numberValue(float64(len(cfg.Inputs)))))
+
+		for _, input := range cfg.Inputs {
+			// Input declaration
+			statements = append(statements, newStatement("Input", stringValue(input.Label)))
+
+			// Rated Impedance (only if non-zero)
+			if input.RatedImpedance != 0 {
+				statements = append(statements, newStatement("Rated Impedance", numberValue(input.RatedImpedance)))
+			}
+
+			// Links header and items
+			if len(input.SourceLinks) > 0 {
+				statements = append(statements, newStatement("Links", numberValue(float64(len(input.SourceLinks)))))
+
+				for _, link := range input.SourceLinks {
+					statements = append(statements, newStatement("Link",
+						stringValue(link.SourceKey),
+						stringValue(link.FilterGrpKey),
+					))
+				}
+			}
 		}
 	}
 
