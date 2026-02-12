@@ -494,8 +494,8 @@ func parseBoxTypeContent(box *gllbin.BoxType, statements []Statement, startIdx i
 
 		case "input configurations", "input configuration", "inputs", "input",
 			"rated impedance", "links", "link":
-			// Skip InputConfig-related statements (we don't encode these yet)
-			continue
+			// Delegate to input config parser
+			parseInputConfigStatement(box, keyword, stmt.Args)
 
 		case "geometryfiles", "geometryfile":
 			// Skip geometry file references (handled separately in real GLL files)
@@ -542,6 +542,66 @@ func parseBoxTypeContent(box *gllbin.BoxType, statements []Statement, startIdx i
 			if len(stmt.Args) >= 1 {
 				box.HorizontalOpeningAngle = numberArg(stmt.Args, 0)
 			}
+		}
+	}
+}
+
+// parseInputConfigStatement handles a single InputConfig-related statement.
+func parseInputConfigStatement(box *gllbin.BoxType, keyword string, args []Value) {
+	switch keyword {
+	case "input configurations":
+		// Count is informational only
+		return
+
+	case "input configuration":
+		// "Input Configuration", label, key
+		if len(args) >= 2 {
+			box.InputConfig = &gllbin.BoxInputConfig{
+				Label: stringArg(args, 0),
+				Key:   stringArg(args, 1),
+			}
+		}
+
+	case "inputs":
+		// "Inputs", count - count is informational, inputs follow
+		if box.InputConfig != nil {
+			count := int(numberArg(args, 0))
+			box.InputConfig.Inputs = make([]gllbin.BoxInput, 0, count)
+		}
+
+	case "input":
+		// "Input", label - starts a new input
+		if box.InputConfig != nil {
+			input := gllbin.BoxInput{
+				Label: stringArg(args, 0),
+			}
+			box.InputConfig.Inputs = append(box.InputConfig.Inputs, input)
+		}
+
+	case "rated impedance":
+		// "Rated Impedance", value - applies to last input
+		if box.InputConfig != nil && len(box.InputConfig.Inputs) > 0 {
+			idx := len(box.InputConfig.Inputs) - 1
+			box.InputConfig.Inputs[idx].RatedImpedance = numberArg(args, 0)
+		}
+
+	case "links":
+		// "Links", count - count is informational, links follow
+		if box.InputConfig != nil && len(box.InputConfig.Inputs) > 0 {
+			idx := len(box.InputConfig.Inputs) - 1
+			count := int(numberArg(args, 0))
+			box.InputConfig.Inputs[idx].SourceLinks = make([]gllbin.SourceFilterLink, 0, count)
+		}
+
+	case "link":
+		// "Link", sourceKey, filterGrpKey - adds to last input
+		if box.InputConfig != nil && len(box.InputConfig.Inputs) > 0 && len(args) >= 2 {
+			idx := len(box.InputConfig.Inputs) - 1
+			link := gllbin.SourceFilterLink{
+				SourceKey:    stringArg(args, 0),
+				FilterGrpKey: stringArg(args, 1),
+			}
+			box.InputConfig.Inputs[idx].SourceLinks = append(box.InputConfig.Inputs[idx].SourceLinks, link)
 		}
 	}
 }

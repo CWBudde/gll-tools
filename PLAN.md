@@ -224,7 +224,10 @@ All database buffers implemented:
     - Supports symmetry, sub-versions, and all metadata fields
     - Round-trip tested with real GLL files
     - .xed export available via `gllinfo extract` and web demo
-  - [ ] BoxTypes: InputConfigurations (inputs, links, rated impedance)
+  - [x] BoxTypes: InputConfigurations (inputs, links, rated impedance)
+    - XGLL text output via `buildInputConfigStatements()`
+    - XGLL text parsing via `parseInputConfigStatement()`
+    - Round-trip tested: GLL → XGLL → GLL preserves InputConfig data
   - [ ] SourceDefinitions with balloon/transfer function data
   - [ ] FilterGroups with filter definitions
   - [ ] Limits, Warnings, Connectors, Frames
