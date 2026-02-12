@@ -610,12 +610,14 @@ function generateSphericalGrid(distance, merCount, parCount) {
     const azimuthDeg = (m * 360) / merCount;
     const azimuthRad = (azimuthDeg * Math.PI) / 180;
     for (let p = 0; p < parCount; p++) {
-      const elevDeg = (p * 180) / (parCount - 1);
-      const elevRad = (elevDeg * Math.PI) / 180;
-      // Convert spherical to cartesian (GLL convention: Z = firing axis)
-      const x = distance * Math.sin(elevRad) * Math.sin(azimuthRad);
-      const y = distance * Math.sin(elevRad) * Math.cos(azimuthRad);
-      const z = distance * Math.cos(elevRad);
+      const parallelDeg = (p * 180) / (parCount - 1);
+      const parallelRad = (parallelDeg * Math.PI) / 180;
+      // Acoustics engine convention: X = firing axis (on-axis direction).
+      // Meridian rotates around X:
+      //   0°=top (+Z), 90°=right (+Y), 180°=bottom (-Z), 270°=left (-Y)
+      const x = distance * Math.cos(parallelRad);
+      const y = distance * Math.sin(parallelRad) * Math.sin(azimuthRad);
+      const z = distance * Math.sin(parallelRad) * Math.cos(azimuthRad);
       receivers.push({ x, y, z });
     }
   }
@@ -5570,7 +5572,7 @@ function updateCombinedResponseChart() {
   // Prepare payload for array response (on-axis point)
   const arrayPayload = JSON.stringify({
     elements,
-    receiver: { x: 0, y: 0, z: sim.receiverDistance },
+    receiver: { x: sim.receiverDistance, y: 0, z: 0 },
     air_props: {
       temperature: sim.temperature,
       humidity: sim.humidity,
