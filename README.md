@@ -170,6 +170,70 @@ gllinfo version
 gllinfo --help
 ```
 
+## Python Bindings
+
+Native Python bindings are available via a shared library built with cgo:
+
+```bash
+# Build and install
+just build-python
+pip install -e ./python
+
+# Or use pip directly after building
+CGO_ENABLED=1 go build -buildmode=c-shared -o python/gll/_libgll.so ./cmd/gllpy
+pip install ./python
+```
+
+```python
+from gll import GllFile, ArrayCalculator, ArrayConfig
+
+# Parse a GLL file
+gll = GllFile.parse("speaker.gll")
+print(f"Manufacturer: {gll.metadata.manufacturer}")
+print(f"Product: {gll.metadata.product_name}")
+
+# Extract resources
+for res in gll.resources:
+    data = gll.extract_resource(res)
+    with open(res.name, 'wb') as f:
+        f.write(data)
+
+# Compute array response
+calc = ArrayCalculator(gll)
+config = ArrayConfig().add_element("K2", splay=0.5).add_element("K2", splay=1.0)
+response = calc.compute_response(config)
+```
+
+See [python/README.md](python/README.md) for full documentation.
+
+## C API (for LabVIEW, MATLAB, C#, etc.)
+
+The shared library (`libgll.so` / `libgll.dll`) provides a C API that can be used from any language supporting C FFI:
+
+```bash
+# Build the shared library
+CGO_ENABLED=1 go build -buildmode=c-shared -o libgll.so ./cmd/gllpy
+```
+
+**Supported platforms:**
+- Linux (x86_64, arm64)
+- macOS (x86_64, arm64)
+- Windows (x86_64, arm64) - requires MinGW for building
+
+**API Functions:**
+
+| Function | Description |
+|----------|-------------|
+| `GLL_ParseFile(path)` | Parse GLL file, returns JSON |
+| `GLL_ParseBytes(data, len)` | Parse GLL from memory |
+| `GLL_ExtractResource(path, idx)` | Extract embedded resource |
+| `GLL_ExtractDataFile(path, idx)` | Extract data file |
+| `GLL_ComputeArrayResponse(json)` | Compute array response |
+| `GLL_GetBalloonAtFrequency(path, src, freq)` | Get directivity data |
+| `GLL_FreeResult(result)` | Free returned memory |
+
+See [docs/c-api.md](docs/c-api.md) for detailed C API documentation including LabVIEW examples.
+
 ## Project Structure
 
 ```text
@@ -177,10 +241,12 @@ gll-tools/
 ├── cmd/
 │   ├── gllinfo/      # CLI for inspecting/extracting GLL files
 │   ├── xgllc/        # CLI for parsing/converting XGLL text format
-│   └── gllwasm/      # WebAssembly build for browser-based parsing
+│   ├── gllwasm/      # WebAssembly build for browser-based parsing
+│   └── gllpy/        # C shared library for Python/LabVIEW/etc.
 ├── pkg/
 │   ├── gll/          # Public library for GLL binary parsing
 │   └── xgll/         # Public library for XGLL text format parsing
+├── python/           # Python bindings package
 ├── internal/
 │   ├── gll/          # Internal parsing utilities (ByteReader, BitCompression)
 │   ├── acoustics/    # Acoustic calculations (air properties, balloon geometry)
@@ -241,7 +307,9 @@ Email:        contact@acme-acoustics.example.com
 
 - [docs/format.md](docs/format.md) - GLL file format specification
 - [docs/research.md](docs/research.md) - Background research
-- [docs/api.md](docs/api.md) - API documentation
+- [docs/api.md](docs/api.md) - Go API documentation
+- [docs/c-api.md](docs/c-api.md) - C API documentation (for LabVIEW, MATLAB, C#, etc.)
+- [python/README.md](python/README.md) - Python bindings documentation
 
 ## Building from Source
 
