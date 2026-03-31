@@ -6,6 +6,7 @@
 *.dylib
 /gllinfo
 /gllwasm
+/gllpy
 
 # Test binary, built with `go test -c`
 *.test
@@ -51,3 +52,12 @@ web/wasm_exec.js
 
 # AI Agents
 .claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
