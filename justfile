@@ -159,3 +159,7 @@ fmt-python:
 
 # Run all Python checks
 check-python: build-python lint-python typecheck-python test-python
+
+fix:
+    just lint-fix
+    just fmt
