@@ -47,6 +47,17 @@ ignore-decls = [
     "w io.Writer",
 ]
 
+[linters.settings.revive]
+enable-default-rules = true
+
+[[linters.settings.revive.rules]]
+name = "file-length-limit"
+
+[[linters.settings.revive.rules.arguments]]
+max = 1500
+skip-comments = false
+skip-blank-lines = false
+
 [linters.exclusions]
 # Use default exclusion presets
 presets = [
