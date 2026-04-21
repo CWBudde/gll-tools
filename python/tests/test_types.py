@@ -225,6 +225,8 @@ def test_source_definition_from_dict() -> None:
     assert sd.key == "source1"
     assert sd.label == "Test Source"
     assert sd.sensitivity == 95.0
+    assert sd.name == "Test Source"
+    assert sd.sensitivity_1w_1m == 95.0
 
 
 def test_box_source_from_dict() -> None:
@@ -262,6 +264,7 @@ def test_box_type_from_dict() -> None:
     assert bt.label == "K2"
     assert bt.weight == 25.5
     assert "source1" in bt.sources
+    assert bt.name == "K2"
 
 
 def test_database_module_reexports() -> None:

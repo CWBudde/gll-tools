@@ -436,6 +436,16 @@ class SourceDefinition:
             )
         return self._balloon_resolver(self.index, frequency_hz)
 
+    @property
+    def name(self) -> str:
+        """Compatibility alias for the source label."""
+        return self.label or self.key
+
+    @property
+    def sensitivity_1w_1m(self) -> float:
+        """Compatibility alias for source sensitivity."""
+        return self.sensitivity
+
 
 @dataclass
 class BoxSource:
@@ -521,6 +531,11 @@ class BoxType:
             vertical_opening_angle=d.get("vertical_opening_angle", 0.0),
             horizontal_opening_angle=d.get("horizontal_opening_angle", 0.0),
         )
+
+    @property
+    def name(self) -> str:
+        """Compatibility alias for the box type label."""
+        return self.label or self.key
 
 
 @dataclass

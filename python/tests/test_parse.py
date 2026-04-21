@@ -92,6 +92,23 @@ def test_database_source_definitions(sample_gll: Path) -> None:
     if sources:
         src = sources[0]
         assert src.key  # Key should be present
+        assert src.name
+
+
+def test_gllfile_compute_array_response(line_array_gll: Path) -> None:
+    """GllFile exposes the draft-style array-response convenience wrapper."""
+    from gll import ArrayConfig
+
+    gll = GllFile.parse(line_array_gll)
+    box_types = gll.database.box_types
+    if not box_types:
+        pytest.skip("No box types available")
+
+    response = gll.compute_array_response(
+        ArrayConfig().add_element(box_types[0].name),
+        frequency=1000.0,
+    )
+    assert response is not None
 
 
 def test_line_array_metadata(line_array_gll: Path) -> None:
