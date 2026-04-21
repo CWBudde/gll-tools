@@ -127,3 +127,37 @@ def test_large_file_parse(large_gll: Path) -> None:
     # Should have multiple box types and sources
     assert len(gll.database.box_types) >= 1
     assert len(gll.database.source_definitions) >= 1
+
+
+def test_draft_example_api_compatibility(line_array_gll: Path) -> None:
+    """The original GoPy plan example style works without adaptation."""
+    from gll import ArrayConfig
+
+    gll_file = GllFile.parse(line_array_gll)
+
+    assert gll_file.metadata.manufacturer or gll_file.metadata.product_name
+
+    source = next(
+        (
+            source
+            for source in gll_file.database.source_definitions
+            if source.balloon_data is not None and source.balloon_data.responses
+        ),
+        None,
+    )
+    if source is None:
+        pytest.skip("No source definitions with balloon data")
+
+    assert source.name
+    assert source.sensitivity_1w_1m >= 0.0
+
+    balloon = source.get_balloon_at_frequency(1000.0)
+    assert isinstance(balloon.get_spl(0.0, 0.0), float)
+
+    if not gll_file.database.box_types:
+        pytest.skip("No box types available")
+
+    config = ArrayConfig()
+    config.add_element(box_type=gll_file.database.box_types[0].name, splay=0.5)
+    response = gll_file.compute_array_response(config, frequency=1000.0)
+    assert response is not None

@@ -267,8 +267,8 @@ build-python-all:
 - [x] `python/gll/file.py` implements path-based parsing, bytes parsing, lazy accessors, and extraction helpers.
 - [x] `python/gll/exceptions.py` defines Python exception types used by the bindings.
 - [x] `python/gll/__init__.py` exports the public package surface.
-- [ ] The original draft API shape is implemented exactly, including draft-only helper methods such as `BalloonData.get_spl()` and `SourceDefinition.get_balloon_at_frequency()`.
-- [ ] Database wrappers are split into dedicated modules exactly as shown in the early architecture sketch.
+- [x] The original draft API shape is implemented exactly, including draft-only helper methods such as `BalloonData.get_spl()` and `SourceDefinition.get_balloon_at_frequency()`.
+- [x] Database wrappers are split into dedicated modules exactly as shown in the early architecture sketch.
 
 **Acceptance Criteria**
 
@@ -276,7 +276,7 @@ build-python-all:
 - [x] Parsing from both a filesystem path and in-memory bytes returns structured Python objects.
 - [x] Parsed JSON from the shared library is mapped into typed Python dataclasses and enums.
 - [x] Resource, data-file, and include-file extraction are available for path-backed parses.
-- [ ] The implemented API matches the initial draft examples one-to-one without adaptation.
+- [x] The implemented API matches the initial draft examples one-to-one without adaptation.
 
 ### 2.1 CFFI Interface (`python/gll/_ffi.py`)
 
