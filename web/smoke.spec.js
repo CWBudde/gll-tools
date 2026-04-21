@@ -9,7 +9,7 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
     "..",
     "testdata",
     "gll",
-    "example-ls.gll",
+    "D20-V10.gll",
   );
 
   await page.goto("/web/");
@@ -20,7 +20,7 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
   await page.locator("#file-input").setInputFiles(sampleFile);
 
   await expect(page.locator("#results")).toBeVisible();
-  await expect(page.locator("#file-name")).toHaveText("example-ls.gll");
+  await expect(page.locator("#file-name")).toHaveText("D20-V10.gll");
 
   await page.getByRole("button", { name: "Visualization" }).click();
 

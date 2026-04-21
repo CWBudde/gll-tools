@@ -3299,6 +3299,7 @@ function addConfigEditorRow(boxTypeKey, splayDeg) {
   `;
   tbody.appendChild(row);
   scheduleArrayViewerUpdate();
+  scheduleConfigApply();
 }
 
 function readConfigEditorRows() {
