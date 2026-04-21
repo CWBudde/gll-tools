@@ -11,6 +11,7 @@ from gll import (
     Database,
     DataFile,
     FilterGroup,
+    FrequencyBalloon,
     Frame,
     GenSystem,
     Header,
@@ -195,6 +196,20 @@ def test_balloon_data_from_dict() -> None:
     })
     assert bd.angular_resolution.meridian_step == 5.0
     assert len(bd.responses) == 0
+
+
+def test_frequency_balloon_mapping_and_get_spl() -> None:
+    """FrequencyBalloon preserves mapping-style access and adds get_spl."""
+    balloon = FrequencyBalloon.from_dict({
+        "frequency": 1000.0,
+        "meridian_step": 90.0,
+        "parallel_step": 90.0,
+        "symmetry": 0,
+        "data": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+    })
+    assert balloon["frequency"] == 1000.0
+    assert "data" in balloon
+    assert balloon.get_spl(0.0, 0.0) == 2.0
 
 
 def test_source_definition_from_dict() -> None:

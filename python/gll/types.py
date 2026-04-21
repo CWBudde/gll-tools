@@ -1,5 +1,6 @@
 """Type definitions for the gll package."""
 
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Optional
@@ -239,6 +240,69 @@ class TransferFunction:
 
 
 @dataclass
+class FrequencyBalloon(Mapping[str, Any]):
+    """Directivity balloon grid sampled at a single frequency."""
+
+    frequency: float = 0.0
+    meridian_step: float = 5.0
+    parallel_step: float = 5.0
+    symmetry: int = 0
+    data: list[list[float]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any] | None) -> "FrequencyBalloon":
+        """Create from dictionary."""
+        if d is None:
+            return cls()
+        return cls(
+            frequency=d.get("frequency", 0.0),
+            meridian_step=d.get("meridian_step", 5.0),
+            parallel_step=d.get("parallel_step", 5.0),
+            symmetry=d.get("symmetry", 0),
+            data=d.get("data", []),
+        )
+
+    def get_spl(self, azimuth: float, elevation: float) -> float:
+        """Get SPL using nearest-neighbor lookup for the given angles."""
+        if not self.data or not self.data[0]:
+            raise ValueError("balloon grid is empty")
+
+        azimuth = azimuth % 360.0
+        elevation = max(-90.0, min(90.0, elevation))
+
+        meridian_idx = int(round(azimuth / self.meridian_step)) % len(self.data)
+        parallel_idx = int(round((elevation + 90.0) / self.parallel_step))
+        parallel_idx = max(0, min(parallel_idx, len(self.data[0]) - 1))
+
+        return float(self.data[meridian_idx][parallel_idx])
+
+    def __getitem__(self, key: str) -> Any:
+        """Expose mapping-style access for backward compatibility."""
+        values = {
+            "frequency": self.frequency,
+            "meridian_step": self.meridian_step,
+            "parallel_step": self.parallel_step,
+            "symmetry": self.symmetry,
+            "data": self.data,
+        }
+        return values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over mapping keys."""
+        return iter((
+            "frequency",
+            "meridian_step",
+            "parallel_step",
+            "symmetry",
+            "data",
+        ))
+
+    def __len__(self) -> int:
+        """Return the number of mapping fields."""
+        return 5
+
+
+@dataclass
 class AngularResolution:
     """Balloon angular resolution parameters."""
 
@@ -266,9 +330,21 @@ class BalloonData:
 
     angular_resolution: AngularResolution = field(default_factory=AngularResolution)
     responses: list[TransferFunction] = field(default_factory=list)
+    _source_index: int | None = field(default=None, repr=False, compare=False)
+    _balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> "BalloonData":
+    def from_dict(
+        cls,
+        d: dict[str, Any] | None,
+        *,
+        source_index: int | None = None,
+        balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = None,
+    ) -> "BalloonData":
         """Create from dictionary."""
         if d is None:
             return cls()
@@ -277,6 +353,20 @@ class BalloonData:
             responses=[
                 TransferFunction.from_dict(r) for r in d.get("responses", [])
             ],
+            _source_index=source_index,
+            _balloon_resolver=balloon_resolver,
+        )
+
+    def get_spl(self, azimuth: float, elevation: float, frequency_hz: float) -> float:
+        """Get SPL at the given angles for a specific frequency."""
+        if self._balloon_resolver is None or self._source_index is None:
+            raise ValueError(
+                "BalloonData is not bound to a GllFile source; "
+                "use GllFile.get_balloon_at_frequency() instead."
+            )
+        return self._balloon_resolver(self._source_index, frequency_hz).get_spl(
+            azimuth,
+            elevation,
         )
 
 
@@ -284,6 +374,7 @@ class BalloonData:
 class SourceDefinition:
     """Acoustic source definition with balloon data."""
 
+    index: int = -1
     key: str = ""
     label: str = ""
     sensitivity: float = 0.0
@@ -291,9 +382,20 @@ class SourceDefinition:
     max_power: float = 0.0
     balloon_data: Optional[BalloonData] = None
     frequency_response: Optional[TransferFunction] = None
+    _balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> "SourceDefinition":
+    def from_dict(
+        cls,
+        d: dict[str, Any] | None,
+        *,
+        index: int = -1,
+        balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = None,
+    ) -> "SourceDefinition":
         """Create from dictionary."""
         if d is None:
             return cls()
@@ -301,7 +403,11 @@ class SourceDefinition:
         definition = d.get("definition", {})
         balloon = None
         if definition and "balloon_data" in definition:
-            balloon = BalloonData.from_dict(definition.get("balloon_data"))
+            balloon = BalloonData.from_dict(
+                definition.get("balloon_data"),
+                source_index=index,
+                balloon_resolver=balloon_resolver,
+            )
 
         freq_response = None
         if definition and "frequency_response" in definition:
@@ -310,6 +416,7 @@ class SourceDefinition:
             )
 
         return cls(
+            index=index,
             key=d.get("key", ""),
             label=definition.get("label", "") if definition else "",
             sensitivity=definition.get("sensitivity_1w_1m", 0.0) if definition else 0.0,
@@ -317,7 +424,17 @@ class SourceDefinition:
             max_power=definition.get("max_power", 0.0) if definition else 0.0,
             balloon_data=balloon,
             frequency_response=freq_response,
+            _balloon_resolver=balloon_resolver,
         )
+
+    def get_balloon_at_frequency(self, frequency_hz: float) -> FrequencyBalloon:
+        """Get a directivity balloon sampled at a specific frequency."""
+        if self._balloon_resolver is None or self.index < 0:
+            raise ValueError(
+                "SourceDefinition is not bound to a GllFile; "
+                "use GllFile.get_balloon_at_frequency() instead."
+            )
+        return self._balloon_resolver(self.index, frequency_hz)
 
 
 @dataclass
@@ -496,7 +613,12 @@ class Database:
     include_files: list[IncludeFile] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> "Database":
+    def from_dict(
+        cls,
+        d: dict[str, Any] | None,
+        *,
+        balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = None,
+    ) -> "Database":
         """Create from dictionary."""
         if d is None:
             return cls()
@@ -508,8 +630,12 @@ class Database:
             box_types=[BoxType.from_dict(bt) for bt in d.get("box_types", [])],
             frames=[Frame.from_dict(f) for f in d.get("frames", [])],
             source_definitions=[
-                SourceDefinition.from_dict(sd)
-                for sd in d.get("source_definitions", [])
+                SourceDefinition.from_dict(
+                    sd,
+                    index=i,
+                    balloon_resolver=balloon_resolver,
+                )
+                for i, sd in enumerate(d.get("source_definitions", []))
             ],
             filter_groups=[
                 FilterGroup.from_dict(fg) for fg in d.get("filter_groups", [])

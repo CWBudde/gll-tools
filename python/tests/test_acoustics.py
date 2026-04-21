@@ -222,3 +222,43 @@ def test_get_balloon_at_frequency(line_array_gll: Path) -> None:
     except Exception as e:
         # May fail if source doesn't have balloon data
         pytest.skip(f"Balloon data not available: {e}")
+
+
+def test_source_definition_get_balloon_at_frequency(line_array_gll: Path) -> None:
+    """SourceDefinition exposes a bound balloon lookup helper."""
+    gll = GllFile.parse(line_array_gll)
+
+    source_index = next(
+        (
+            i
+            for i, source in enumerate(gll.database.source_definitions)
+            if source.balloon_data is not None and source.balloon_data.responses
+        ),
+        None,
+    )
+    if source_index is None:
+        pytest.skip("No balloon data in source definitions")
+
+    source = gll.database.source_definitions[source_index]
+    balloon = source.get_balloon_at_frequency(1000.0)
+    assert "data" in balloon
+    assert isinstance(balloon.get_spl(0.0, 0.0), float)
+
+
+def test_balloon_data_get_spl(line_array_gll: Path) -> None:
+    """BalloonData can resolve SPL values when bound to a parsed GLL file."""
+    gll = GllFile.parse(line_array_gll)
+
+    source = next(
+        (
+            source
+            for source in gll.database.source_definitions
+            if source.balloon_data is not None and source.balloon_data.responses
+        ),
+        None,
+    )
+    if source is None or source.balloon_data is None:
+        pytest.skip("No balloon data in source definitions")
+
+    spl = source.balloon_data.get_spl(0.0, 0.0, 1000.0)
+    assert isinstance(spl, float)

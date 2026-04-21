@@ -8,6 +8,7 @@ from .exceptions import GllError, ResourceError
 from .types import (
     Database,
     DataFile,
+    FrequencyBalloon,
     GenSystem,
     Header,
     IncludeFile,
@@ -105,7 +106,10 @@ class GllFile:
     def database(self) -> Database:
         """Get the database containing box types, sources, etc."""
         if self._database is None:
-            self._database = Database.from_dict(self._data.get("database"))
+            self._database = Database.from_dict(
+                self._data.get("database"),
+                balloon_resolver=self.get_balloon_at_frequency,
+            )
         return self._database
 
     @property
@@ -196,7 +200,7 @@ class GllFile:
 
     def get_balloon_at_frequency(
         self, source_index: int, frequency_hz: float
-    ) -> dict:
+    ) -> FrequencyBalloon:
         """Get balloon directivity data at a specific frequency.
 
         Args:
@@ -220,7 +224,9 @@ class GllFile:
                 "Cannot get balloon data from GLL files parsed from bytes."
             )
 
-        return _ffi.get_balloon_at_frequency(self._path, source_index, frequency_hz)
+        return FrequencyBalloon.from_dict(
+            _ffi.get_balloon_at_frequency(self._path, source_index, frequency_hz)
+        )
 
     def __repr__(self) -> str:
         """Return a string representation of the GllFile."""

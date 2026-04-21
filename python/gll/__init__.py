@@ -63,6 +63,7 @@ from .numpy_compat import (
 from .types import (
     AngularResolution,
     BalloonData,
+    FrequencyBalloon,
     GenSystem,
     Header,
     Metadata,
@@ -114,6 +115,7 @@ __all__ = [
     "TransferFunctionDef",
     "Frame",
     "FilterGroup",
+    "FrequencyBalloon",
     "Limit",
     "Warning",
     "Vector3D",
