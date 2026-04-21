@@ -105,7 +105,7 @@ response = gll_file.compute_array_response(config, frequency=1000)
 - [x] `cmd/gllpy/main.go` exists as the c-shared export entry point.
 - [x] Local developer tasks exist for Python build/install/test/lint/typecheck/wheel flows in `justfile`.
 - [x] Shared library artifacts are generated into `python/gll/`.
-- [ ] Dedicated `python/gll/database.py` wrapper module from the original sketch exists as a separate file.
+- [x] Dedicated `python/gll/database.py` wrapper module from the original sketch exists as a separate file.
 - [ ] `python/setup.py` compatibility shim exists.
 - [ ] A multi-platform `build-python-all` target exists in the repo automation.
 

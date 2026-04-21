@@ -57,3 +57,7 @@ test-results/
 # AI Agents
 .claude/
 .codex
+
+# Python
+__pycache__/
+.pytest_cache

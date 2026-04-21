@@ -25,6 +25,8 @@ from gll import (
     Vector3D,
     Warning,
 )
+from gll.database import Database as DatabaseModuleType
+from gll.database import BoxType as BoxTypeModuleType
 
 
 def test_vector3d_creation() -> None:
@@ -245,6 +247,12 @@ def test_box_type_from_dict() -> None:
     assert bt.label == "K2"
     assert bt.weight == 25.5
     assert "source1" in bt.sources
+
+
+def test_database_module_reexports() -> None:
+    """Database compatibility module re-exports the public dataclasses."""
+    assert DatabaseModuleType is Database
+    assert BoxTypeModuleType is BoxType
 
 
 def test_frame_from_dict() -> None:
