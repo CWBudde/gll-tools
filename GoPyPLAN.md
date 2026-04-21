@@ -706,7 +706,7 @@ func GLL_GetBalloonRaw(handle C.int64_t, freqIndex C.int32_t) C.GLL_RawArray {
 - [x] The package declares optional `numpy` and `dev` dependency groups.
 - [x] Local wheel builds are supported via `just build-python-wheel`.
 - [x] Local editable install is supported via `just install-python`.
-- [ ] A dedicated GitHub Actions workflow builds Python wheels for Linux, macOS, and Windows.
+- [x] A dedicated GitHub Actions workflow builds Python wheels for Linux, macOS, and Windows.
 - [ ] Tagged releases publish Python wheels to a package index.
 - [ ] CI validates installation from built wheel artifacts.
 

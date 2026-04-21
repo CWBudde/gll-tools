@@ -1,0 +1,64 @@
+name: python-wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wheels:
+    name: build-wheel-${{ matrix.os_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_name: linux-amd64
+            lib_name: _libgll.so
+          - runner: macos-latest
+            os_name: macos-arm64
+            lib_name: _libgll.dylib
+          - runner: windows-latest
+            os_name: windows-amd64
+            lib_name: _libgll.dll
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build shared library (POSIX)
+        if: runner.os != 'Windows'
+        run: go build -buildmode=c-shared -o python/gll/${{ matrix.lib_name }} ./cmd/gllpy
+
+      - name: Build shared library (Windows)
+        if: runner.os == 'Windows'
+        run: go build -buildmode=c-shared -o python/gll/${{ matrix.lib_name }} ./cmd/gllpy
+
+      - name: Build wheel
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip build wheel
+          python -m build --wheel
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.os_name }}
+          path: python/dist/*.whl
+          if-no-files-found: error
