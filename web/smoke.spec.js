@@ -1,7 +1,7 @@
 const path = require("path");
 const { test, expect } = require("@playwright/test");
 
-test("web demo parses a sample GLL and shows visualization empty states", async ({
+test("web demo parses a sample GLL and recalculates visualization outputs", async ({
   page,
 }) => {
   const sampleFile = path.join(
@@ -31,11 +31,13 @@ test("web demo parses a sample GLL and shows visualization empty states", async 
 
   await expect(configRows.first()).toBeVisible();
   await expect(page.locator(".cfg-box-type").first()).toBeVisible();
-  await expect(page.locator("#polar-meta")).toContainText(
-    "No polar data available",
-  );
-  await expect(page.locator("#balloon-meta")).toContainText("No balloon data");
-  await expect(page.locator("#combined-response-meta")).toContainText(
+
+  await expect(page.locator("#combined-response-meta")).not.toContainText(
     "Build a configuration above to see combined response",
   );
+  await expect(page.locator("#combined-response-meta")).toContainText(
+    "Receiver",
+  );
+  await expect(page.locator("#polar-meta")).toContainText("Frequency");
+  await expect(page.locator("#balloon-meta")).toContainText("Frequency");
 });
