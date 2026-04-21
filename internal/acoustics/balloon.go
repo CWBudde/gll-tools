@@ -5,9 +5,9 @@ import "math"
 // MapMeridianBySymmetry maps meridian angle based on symmetry type.
 func MapMeridianBySymmetry(merDeg float64, symmetry int) float64 {
 	switch symmetry {
-	case 1: // SymmetryAxial
+	case 4: // SymmetryAxial
 		return 0
-	case 2: // SymmetryQuarter
+	case 3: // SymmetryQuarter
 		switch {
 		case merDeg >= 270:
 			return 360 - merDeg
@@ -18,12 +18,12 @@ func MapMeridianBySymmetry(merDeg float64, symmetry int) float64 {
 		default:
 			return merDeg
 		}
-	case 3: // SymmetryVertical
+	case 1: // SymmetryVertical
 		if merDeg >= 180 {
 			return 360 - merDeg
 		}
 		return merDeg
-	case 4: // SymmetryHorizontal
+	case 2: // SymmetryHorizontal
 		merDeg -= 90
 		switch {
 		case merDeg < 0:
@@ -44,11 +44,11 @@ func MeridianCount(step float64, symmetry int) int {
 		return 1
 	}
 	switch symmetry {
-	case 1: // SymmetryAxial
+	case 4: // SymmetryAxial
 		return 1
-	case 2: // SymmetryQuarter
+	case 3: // SymmetryQuarter
 		return int(90/step) + 1
-	case 3, 4: // SymmetryVertical, SymmetryHorizontal
+	case 1, 2: // SymmetryVertical, SymmetryHorizontal
 		return int(180/step) + 1
 	default:
 		return int(360 / step)

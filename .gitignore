@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+/gllpy
 /gllinfo
 /gllwasm
 

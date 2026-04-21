@@ -59,24 +59,24 @@ func TestMapMeridianBySymmetry(t *testing.T) {
 		{"None: 180°", 180, 0, 180},
 		{"None: 270°", 270, 0, 270},
 
-		// SymmetryAxial (1)
-		{"Axial: always 0°", 90, 1, 0},
-		{"Axial: always 0°", 180, 1, 0},
+		// SymmetryVertical (1) - 2-fold vertical
+		{"Vertical: front", 90, 1, 90},
+		{"Vertical: back mirror", 270, 1, 90},
 
-		// SymmetryQuarter (2) - 4-fold
-		{"Quarter: 0-90°", 45, 2, 45},
-		{"Quarter: 90-180° mirror", 135, 2, 45},
-		{"Quarter: 180-270° offset", 225, 2, 45},
-		{"Quarter: 270-360° mirror", 315, 2, 45},
+		// SymmetryHorizontal (2) - 2-fold horizontal
+		{"Horizontal: right", 90, 2, 0},
+		{"Horizontal: front", 0, 2, 90},
+		{"Horizontal: left", 270, 2, 180}, // 270-90=180, which is >=180, so 360-180=180
 
-		// SymmetryVertical (3) - 2-fold vertical
-		{"Vertical: front", 90, 3, 90},
-		{"Vertical: back mirror", 270, 3, 90},
+		// SymmetryQuarter (3) - 4-fold
+		{"Quarter: 0-90°", 45, 3, 45},
+		{"Quarter: 90-180° mirror", 135, 3, 45},
+		{"Quarter: 180-270° offset", 225, 3, 45},
+		{"Quarter: 270-360° mirror", 315, 3, 45},
 
-		// SymmetryHorizontal (4) - 2-fold horizontal
-		{"Horizontal: right", 90, 4, 0},
-		{"Horizontal: front", 0, 4, 90},
-		{"Horizontal: left", 270, 4, 180}, // 270-90=180, which is >=180, so 360-180=180
+		// SymmetryAxial (4)
+		{"Axial: always 0°", 90, 4, 0},
+		{"Axial: always 0°", 180, 4, 0},
 	}
 
 	for _, tt := range tests {
@@ -99,10 +99,10 @@ func TestMeridianCount(t *testing.T) {
 		want     int
 	}{
 		{"None 5° step", 5, 0, 72},
-		{"Axial any step", 5, 1, 1},
-		{"Quarter 5° step", 5, 2, 19},
-		{"Vertical 5° step", 5, 3, 37},
-		{"Horizontal 5° step", 5, 4, 37},
+		{"Vertical 5° step", 5, 1, 37},
+		{"Horizontal 5° step", 5, 2, 37},
+		{"Quarter 5° step", 5, 3, 19},
+		{"Axial any step", 5, 4, 1},
 		{"Zero step", 0, 0, 1},
 	}
 

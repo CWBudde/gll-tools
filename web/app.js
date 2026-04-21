@@ -3604,7 +3604,17 @@ function buildElementsFromConfig(config) {
           y: Number(elem.angles?.y) || 0,
           z: Number(elem.angles?.z) || 0,
         };
+        const placementAngles = {
+          x: toRadiansMaybe(pAngles.x),
+          y: toRadiansMaybe(pAngles.y),
+          z: toRadiansMaybe(pAngles.z),
+        };
         const rotatedPlacement = rotateVectorFromAngles(elemAngles, pPos);
+        const orientationMatrix = composeRotationMatrices(
+          buildRotationMatrix(elemAngles),
+          buildRotationMatrix(placementAngles),
+        );
+        const filterGroupKeys = getFilterGroupKeysForSource(boxType, sourceKey);
 
         // Combine box-level config position with rotated source placement position.
         allElements.push({
@@ -3621,10 +3631,12 @@ function buildElementsFromConfig(config) {
               (Number(rotatedPlacement.z) || 0) / 1000,
           },
           angles: {
-            x: elemAngles.x + toRadiansMaybe(pAngles.x),
-            y: elemAngles.y + toRadiansMaybe(pAngles.y),
-            z: elemAngles.z + toRadiansMaybe(pAngles.z),
+            x: elemAngles.x + placementAngles.x,
+            y: elemAngles.y + placementAngles.y,
+            z: elemAngles.z + placementAngles.z,
           },
+          orientation_matrix: orientationMatrix,
+          filter_group_keys: filterGroupKeys,
           gain: elem.gain || 0,
         });
       }
@@ -3644,6 +3656,8 @@ function buildElementsFromConfig(config) {
             y: Number(elem.angles?.y) || 0,
             z: Number(elem.angles?.z) || 0,
           },
+          orientation_matrix: buildRotationMatrix(elem.angles),
+          filter_group_keys: getFilterGroupKeysForSource(boxType, key),
           gain: elem.gain || 0,
         });
       }
@@ -3717,8 +3731,40 @@ function buildArrayElementsFromRows(rows) {
   return elements;
 }
 
+function getFilterGroupKeysForSource(boxType, sourceKey) {
+  if (!boxType?.input_config?.inputs?.length || !sourceKey) {
+    return [];
+  }
+
+  const keys = [];
+  for (const input of boxType.input_config.inputs) {
+    const links = input?.source_links || [];
+    for (const link of links) {
+      if (link?.source_key === sourceKey && link?.filter_grp_key) {
+        keys.push(link.filter_grp_key);
+      }
+    }
+  }
+
+  return [...new Set(keys)];
+}
+
 function rotateVectorFromAngles(angles, vector) {
   // Rotate vector by GLL Euler angles (H,V,R)
+  const matrix = buildRotationMatrix(angles);
+
+  const x = Number(vector?.x) || 0;
+  const y = Number(vector?.y) || 0;
+  const z = Number(vector?.z) || 0;
+
+  return {
+    x: matrix[0] * x + matrix[1] * y + matrix[2] * z,
+    y: matrix[3] * x + matrix[4] * y + matrix[5] * z,
+    z: matrix[6] * x + matrix[7] * y + matrix[8] * z,
+  };
+}
+
+function buildRotationMatrix(angles) {
   const h = Number(angles?.x) || 0;
   const v = Number(angles?.y) || 0;
   const r = Number(angles?.z) || 0;
@@ -3729,57 +3775,45 @@ function rotateVectorFromAngles(angles, vector) {
   const sr = Math.sin(r);
   const cr = Math.cos(r);
 
-  const m00 = ch * cr - sv * sh * sr;
-  const m01 = sh * cr + sv * ch * sr;
-  const m02 = cv * sr;
-  const m10 = -cv * sh;
-  const m11 = cv * ch;
-  const m12 = -sv;
-  const m20 = -ch * sr - sv * sh * cr;
-  const m21 = -sh * sr + sv * ch * cr;
-  const m22 = cv * cr;
+  return [
+    ch * cr - sv * sh * sr,
+    sh * cr + sv * ch * sr,
+    cv * sr,
+    -cv * sh,
+    cv * ch,
+    -sv,
+    -ch * sr - sv * sh * cr,
+    -sh * sr + sv * ch * cr,
+    cv * cr,
+  ];
+}
 
-  const x = Number(vector?.x) || 0;
-  const y = Number(vector?.y) || 0;
-  const z = Number(vector?.z) || 0;
+function composeRotationMatrices(left, right) {
+  if (!Array.isArray(left) || left.length !== 9) return right;
+  if (!Array.isArray(right) || right.length !== 9) return left;
 
-  return {
-    x: m00 * x + m01 * y + m02 * z,
-    y: m10 * x + m11 * y + m12 * z,
-    z: m20 * x + m21 * y + m22 * z,
-  };
+  return [
+    left[0] * right[0] + left[1] * right[3] + left[2] * right[6],
+    left[0] * right[1] + left[1] * right[4] + left[2] * right[7],
+    left[0] * right[2] + left[1] * right[5] + left[2] * right[8],
+    left[3] * right[0] + left[4] * right[3] + left[5] * right[6],
+    left[3] * right[1] + left[4] * right[4] + left[5] * right[7],
+    left[3] * right[2] + left[4] * right[5] + left[5] * right[8],
+    left[6] * right[0] + left[7] * right[3] + left[8] * right[6],
+    left[6] * right[1] + left[7] * right[4] + left[8] * right[7],
+    left[6] * right[2] + left[7] * right[5] + left[8] * right[8],
+  ];
 }
 
 function toViewQuaternion(angles) {
   // Convert GLL Euler angles to view quaternion (forward vector only)
   if (!angles || typeof THREE === "undefined") return null;
-  const h = Number(angles.x) || 0;
-  const v = Number(angles.y) || 0;
-  const r = Number(angles.z) || 0;
-  const sh = Math.sin(h);
-  const ch = Math.cos(h);
-  const sv = Math.sin(v);
-  const cv = Math.cos(v);
-  const sr = Math.sin(r);
-  const cr = Math.cos(r);
-
+  const matrix = buildRotationMatrix(angles);
   const rotMatrix = new THREE.Matrix4().set(
-    ch * cr - sv * sh * sr,
-    sh * cr + sv * ch * sr,
-    cv * sr,
-    0,
-    -cv * sh,
-    cv * ch,
-    -sv,
-    0,
-    -ch * sr - sv * sh * cr,
-    -sh * sr + sv * ch * cr,
-    cv * cr,
-    0,
-    0,
-    0,
-    0,
-    1,
+    matrix[0], matrix[1], matrix[2], 0,
+    matrix[3], matrix[4], matrix[5], 0,
+    matrix[6], matrix[7], matrix[8], 0,
+    0, 0, 0, 1,
   );
 
   const forward = new THREE.Vector3(0, 1, 0);
@@ -3795,33 +3829,12 @@ function toViewQuaternion(angles) {
 function toViewQuaternionNoSwap(angles) {
   // Convert GLL Euler angles without Y/Z swap (for already-swapped geometry)
   if (!angles || typeof THREE === "undefined") return null;
-  const h = Number(angles.x) || 0;
-  const v = Number(angles.y) || 0;
-  const r = Number(angles.z) || 0;
-  const sh = Math.sin(h);
-  const ch = Math.cos(h);
-  const sv = Math.sin(v);
-  const cv = Math.cos(v);
-  const sr = Math.sin(r);
-  const cr = Math.cos(r);
-
+  const matrix = buildRotationMatrix(angles);
   const rotMatrix = new THREE.Matrix4().set(
-    ch * cr - sv * sh * sr,
-    sh * cr + sv * ch * sr,
-    cv * sr,
-    0,
-    -cv * sh,
-    cv * ch,
-    -sv,
-    0,
-    -ch * sr - sv * sh * cr,
-    -sh * sr + sv * ch * cr,
-    cv * cr,
-    0,
-    0,
-    0,
-    0,
-    1,
+    matrix[0], matrix[1], matrix[2], 0,
+    matrix[3], matrix[4], matrix[5], 0,
+    matrix[6], matrix[7], matrix[8], 0,
+    0, 0, 0, 1,
   );
 
   const forward = new THREE.Vector3(0, 1, 0);

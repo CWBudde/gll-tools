@@ -67,7 +67,20 @@ func ThetaPhi(vecX, vecY, vecZ, angX, angY, angZ float64) (theta, phi float64) {
 func DirectionToGLLAngles(vecX, vecY, vecZ, angX, angY, angZ float64) (meridianDeg, parallelDeg float64) {
 	// Rotate vector by inverse of source angles
 	rx, ry, rz := Rotate(vecX, vecY, vecZ, -angX, -angY, -angZ)
+	return directionToGLLAnglesFromLocalVector(rx, ry, rz)
+}
 
+// DirectionToGLLAnglesWithMatrix converts a direction vector to GLL balloon coordinates
+// using a row-major world-from-local rotation matrix.
+func DirectionToGLLAnglesWithMatrix(vecX, vecY, vecZ float64, orientation [9]float64) (meridianDeg, parallelDeg float64) {
+	// Convert world vector into the source's local frame using the inverse rotation.
+	rx := orientation[0]*vecX + orientation[3]*vecY + orientation[6]*vecZ
+	ry := orientation[1]*vecX + orientation[4]*vecY + orientation[7]*vecZ
+	rz := orientation[2]*vecX + orientation[5]*vecY + orientation[8]*vecZ
+	return directionToGLLAnglesFromLocalVector(rx, ry, rz)
+}
+
+func directionToGLLAnglesFromLocalVector(rx, ry, rz float64) (meridianDeg, parallelDeg float64) {
 	r := Length(rx, ry, rz)
 	if r < 1e-10 {
 		return 0, 0

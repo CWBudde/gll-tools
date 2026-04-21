@@ -21,6 +21,7 @@ export function createVisualizationController({
   let balloonPointerState = null;
   let coverageLines = [];
   const balloonMaxCache = new WeakMap();
+  const arrayBalloonMaxCache = new WeakMap();
   const polarSliderMax = 1000;
 
   // Chart.js plugin for polar compass labels
@@ -211,15 +212,25 @@ export function createVisualizationController({
   }
 
   function buildPolarAngles(stepDeg) {
-    const angles = [];
-    for (let a = 0; a < 360; a += stepDeg) {
-      angles.push(a <= 180 ? a : a - 360);
+    const angles = [0];
+    for (let angle = -stepDeg; angle >= -180; angle -= stepDeg) {
+      angles.push(angle);
+    }
+    for (let angle = 180 - stepDeg; angle > 0; angle -= stepDeg) {
+      angles.push(angle);
     }
     return angles;
   }
 
   function formatPolarLabel(angle) {
-    return `${angle}°`;
+    const normalized = ((angle + 180) % 360) - 180;
+    if (Math.abs(normalized) === 180) {
+      return "±180°";
+    }
+    if (Math.abs(normalized) < 1e-6) {
+      return "0°";
+    }
+    return `${formatAngle(normalized)}°`;
   }
 
   function updatePolarChart() {
@@ -246,9 +257,19 @@ export function createVisualizationController({
       const extracted = extractArrayPolarSlices(cached, freqIndex);
       slices = {
         labels: extracted.labels,
-        horizontal: { levels: extracted.horizontalLevels },
-        vertical: { levels: extracted.verticalLevels },
-        meta: { symmetryName: "Array", frontHalfOnly: false, usesOnAxis: false },
+        horizontal: { levels: extracted.horizontalLevels, meridianDeg: 90 },
+        vertical: {
+          levels: extracted.verticalLevels,
+          meridianDeg: 0,
+          maxParallel: 180,
+          canMirrorParallel: false,
+        },
+        meta: {
+          symmetryName: "Array",
+          frontHalfOnly: false,
+          usesOnAxis: false,
+          stepDeg: 10,
+        },
       };
     } else {
       // Fallback to single-source
@@ -644,16 +665,16 @@ export function createVisualizationController({
       chips.push('<span class="chip">On-axis + directivity</span>');
     }
     chips.push(
-      `<span class="chip">Horizontal parallel ${formatAngle(slices.horizontal.parallelDeg)}°</span>`,
+      `<span class="chip">Horizontal meridian ${formatAngle(slices.horizontal.meridianDeg ?? 90)}°</span>`,
     );
     chips.push(
-      `<span class="chip">Vertical meridian ${formatAngle(slices.vertical.meridianDeg)}°</span>`,
+      `<span class="chip">Vertical meridian ${formatAngle(slices.vertical.meridianDeg ?? 0)}°</span>`,
     );
     chips.push(
-      `<span class="chip">Vertical range 0-${formatAngle(slices.vertical.maxParallel)}°${slices.vertical.canMirrorParallel ? " (mirrored)" : ""}</span>`,
+      `<span class="chip">Vertical range 0-${formatAngle(slices.vertical.maxParallel ?? 180)}°${slices.vertical.canMirrorParallel ? " (mirrored)" : ""}</span>`,
     );
     chips.push(
-      `<span class="chip">Step ${formatAngle(slices.meta.stepDeg)}°</span>`,
+      `<span class="chip">Step ${formatAngle(slices.meta.stepDeg ?? 10)}°</span>`,
     );
 
     meta.innerHTML = chips.join("");
@@ -908,7 +929,9 @@ export function createVisualizationController({
 
     if (maxLevel === null) return null;
 
-    const displayMax = normalize ? maxLevel : maxLevel;
+    const globalMaxLevel = getArrayGlobalMaxLevel(cached);
+    const displayMax = normalize ? maxLevel : globalMaxLevel;
+    if (displayMax === null) return null;
     const displayMin = displayMax - dbRange;
     const baseRadius = 0.3 * scale;
     const amplitude = 0.9 * scale;
@@ -982,6 +1005,29 @@ export function createVisualizationController({
         normalized: normalize,
       },
     };
+  }
+
+  function getArrayGlobalMaxLevel(cached) {
+    if (!cached) return null;
+    const existing = arrayBalloonMaxCache.get(cached);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    let maxLevel = null;
+    for (const result of cached.results || []) {
+      for (const value of result?.level || []) {
+        if (value === null || value === undefined || Number.isNaN(value)) {
+          continue;
+        }
+        if (maxLevel === null || value > maxLevel) {
+          maxLevel = value;
+        }
+      }
+    }
+
+    arrayBalloonMaxCache.set(cached, maxLevel);
+    return maxLevel;
   }
 
   function updateBalloonVisualization() {

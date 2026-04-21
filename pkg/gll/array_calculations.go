@@ -89,6 +89,7 @@ func (tf *TransferFunction) AddDelay(delay float64) {
 type ArrayElement struct {
 	Position      Vector3D            // Position in meters (world coordinates)
 	Angles        Vector3D            // Rotation angles in radians (H, V, R)
+	Orientation   *[9]float64         // Optional row-major world-from-local rotation matrix
 	Gain          float64             // Per-element gain in dB
 	SourceDefs    []*SourceDefinition // Source definitions for this element
 	FilterSpectra []*TransferFunction // Combined internal+external filters per source
@@ -182,6 +183,7 @@ func computeElementResponseAt(
 			srcDef,
 			elem.Position,
 			elem.Angles,
+			elem.Orientation,
 			receiver,
 		)
 
@@ -235,6 +237,7 @@ func getSourceResponseAt(
 	srcDef *SourceDefinition,
 	sourcePos Vector3D,
 	sourceAngles Vector3D,
+	orientation *[9]float64,
 	receiver Vector3D,
 ) (*TransferFunction, *TransferFunction, float64) {
 	if srcDef.BalloonData == nil || len(srcDef.BalloonData.Responses) == 0 {
@@ -252,14 +255,24 @@ func getSourceResponseAt(
 	propagationFactor := 1.0 / distance
 
 	// Convert to explicit GLL balloon coordinates.
-	meridianDeg, parallelDeg := acoustics.DirectionToGLLAngles(
-		vecX,
-		vecY,
-		vecZ,
-		sourceAngles.X,
-		sourceAngles.Y,
-		sourceAngles.Z,
-	)
+	var meridianDeg, parallelDeg float64
+	if orientation != nil {
+		meridianDeg, parallelDeg = acoustics.DirectionToGLLAnglesWithMatrix(
+			vecX,
+			vecY,
+			vecZ,
+			*orientation,
+		)
+	} else {
+		meridianDeg, parallelDeg = acoustics.DirectionToGLLAngles(
+			vecX,
+			vecY,
+			vecZ,
+			sourceAngles.X,
+			sourceAngles.Y,
+			sourceAngles.Z,
+		)
+	}
 
 	// Get response at that angle from balloon data (with interpolation).
 	response := srcDef.BalloonData.responseAtGLLAngles(meridianDeg, parallelDeg)

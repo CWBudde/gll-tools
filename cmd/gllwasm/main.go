@@ -306,10 +306,12 @@ type ArrayResponseRequest struct {
 
 // ArrayElementInput describes one array element.
 type ArrayElementInput struct {
-	SourceKey string       `json:"source_key"` // Key of the source definition
-	Position  Vector3Input `json:"position"`   // Position in meters
-	Angles    Vector3Input `json:"angles"`     // Rotation angles in radians
-	Gain      float64      `json:"gain"`       // Gain in dB
+	SourceKey         string       `json:"source_key"`                   // Key of the source definition
+	Position          Vector3Input `json:"position"`                     // Position in meters
+	Angles            Vector3Input `json:"angles"`                       // Rotation angles in radians
+	OrientationMatrix []float64    `json:"orientation_matrix,omitempty"` // Optional world-from-local matrix
+	FilterGroupKeys   []string     `json:"filter_group_keys,omitempty"`  // Internal filter groups linked to this source
+	Gain              float64      `json:"gain"`                         // Gain in dB
 }
 
 // ReceiverInput is the receiver position.
@@ -379,49 +381,7 @@ func computeArrayResponse(_ js.Value, args []js.Value) any {
 		})
 	}
 
-	// Build the array configuration
-	config := &gll.ArrayConfig{
-		Elements: make([]gll.ArrayElement, 0, len(req.Elements)),
-	}
-
-	// Load source definitions and build elements
-	for _, elemInput := range req.Elements {
-		// Find the source definition
-		var srcDef *gll.SourceDefinition
-		for _, src := range file.Database.SourceDefinitions {
-			if src.Key == elemInput.SourceKey {
-				srcDef = src.Definition
-				break
-			}
-		}
-
-		if srcDef == nil {
-			continue
-		}
-
-		// Load balloon responses if needed
-		if srcDef.BalloonData != nil && len(srcDef.BalloonData.Responses) == 0 {
-			reader.Seek(0, 0)
-			_ = gll.LoadBalloonResponses(reader, srcDef.BalloonData)
-		}
-
-		elem := gll.ArrayElement{
-			Position: gll.Vector3D{
-				X: elemInput.Position.X,
-				Y: elemInput.Position.Y,
-				Z: elemInput.Position.Z,
-			},
-			Angles: gll.Vector3D{
-				X: elemInput.Angles.X,
-				Y: elemInput.Angles.Y,
-				Z: elemInput.Angles.Z,
-			},
-			Gain:       elemInput.Gain,
-			SourceDefs: []*gll.SourceDefinition{srcDef},
-		}
-
-		config.Elements = append(config.Elements, elem)
-	}
+	config := buildArrayConfig(file, reader, req.Elements)
 
 	if len(config.Elements) == 0 {
 		return marshalArrayResult(ArrayResponseResult{
@@ -577,45 +537,7 @@ func computeArrayBalloon(_ js.Value, args []js.Value) any {
 		})
 	}
 
-	// Build array config (same as computeArrayResponse)
-	config := &gll.ArrayConfig{
-		Elements: make([]gll.ArrayElement, 0, len(req.Elements)),
-	}
-
-	for _, elemInput := range req.Elements {
-		var srcDef *gll.SourceDefinition
-		for _, src := range file.Database.SourceDefinitions {
-			if src.Key == elemInput.SourceKey {
-				srcDef = src.Definition
-				break
-			}
-		}
-		if srcDef == nil {
-			continue
-		}
-
-		// Load balloon responses if needed
-		if srcDef.BalloonData != nil && len(srcDef.BalloonData.Responses) == 0 {
-			reader.Seek(0, 0)
-			_ = gll.LoadBalloonResponses(reader, srcDef.BalloonData)
-		}
-
-		elem := gll.ArrayElement{
-			Position: gll.Vector3D{
-				X: elemInput.Position.X,
-				Y: elemInput.Position.Y,
-				Z: elemInput.Position.Z,
-			},
-			Angles: gll.Vector3D{
-				X: elemInput.Angles.X,
-				Y: elemInput.Angles.Y,
-				Z: elemInput.Angles.Z,
-			},
-			Gain:       elemInput.Gain,
-			SourceDefs: []*gll.SourceDefinition{srcDef},
-		}
-		config.Elements = append(config.Elements, elem)
-	}
+	config := buildArrayConfig(file, reader, req.Elements)
 
 	if len(config.Elements) == 0 {
 		return marshalBalloonResult(ArrayBalloonResult{
@@ -682,4 +604,182 @@ func computeArrayBalloon(_ js.Value, args []js.Value) any {
 func marshalBalloonResult(result ArrayBalloonResult) string {
 	jsonBytes, _ := json.Marshal(result)
 	return string(jsonBytes)
+}
+
+func buildArrayConfig(
+	file *gll.File,
+	reader *bytes.Reader,
+	inputs []ArrayElementInput,
+) *gll.ArrayConfig {
+	config := &gll.ArrayConfig{
+		Elements: make([]gll.ArrayElement, 0, len(inputs)),
+	}
+
+	if file == nil || file.Database == nil {
+		return config
+	}
+
+	for _, elemInput := range inputs {
+		srcDef := findSourceDefinition(file, elemInput.SourceKey)
+		if srcDef == nil {
+			continue
+		}
+
+		if srcDef.BalloonData != nil && len(srcDef.BalloonData.Responses) == 0 {
+			reader.Seek(0, 0)
+			_ = gll.LoadBalloonResponses(reader, srcDef.BalloonData)
+		}
+
+		elem := gll.ArrayElement{
+			Position: gll.Vector3D{
+				X: elemInput.Position.X,
+				Y: elemInput.Position.Y,
+				Z: elemInput.Position.Z,
+			},
+			Angles: gll.Vector3D{
+				X: elemInput.Angles.X,
+				Y: elemInput.Angles.Y,
+				Z: elemInput.Angles.Z,
+			},
+			Gain:       elemInput.Gain,
+			SourceDefs: []*gll.SourceDefinition{srcDef},
+		}
+		if orientation := parseOrientationMatrix(elemInput.OrientationMatrix); orientation != nil {
+			elem.Orientation = orientation
+		}
+		if spectrum := buildFilterSpectrumForSource(file, srcDef, elemInput.FilterGroupKeys); spectrum != nil {
+			elem.FilterSpectra = []*gll.TransferFunction{spectrum}
+		}
+
+		config.Elements = append(config.Elements, elem)
+	}
+
+	return config
+}
+
+func findSourceDefinition(file *gll.File, sourceKey string) *gll.SourceDefinition {
+	if file == nil || file.Database == nil {
+		return nil
+	}
+	for _, src := range file.Database.SourceDefinitions {
+		if src.Key == sourceKey {
+			return src.Definition
+		}
+	}
+	return nil
+}
+
+func parseOrientationMatrix(values []float64) *[9]float64 {
+	if len(values) != 9 {
+		return nil
+	}
+	matrix := &[9]float64{}
+	copy(matrix[:], values)
+	return matrix
+}
+
+func buildFilterSpectrumForSource(
+	file *gll.File,
+	srcDef *gll.SourceDefinition,
+	groupKeys []string,
+) *gll.TransferFunction {
+	if file == nil || file.Database == nil || srcDef == nil || len(groupKeys) == 0 {
+		return nil
+	}
+	if srcDef.BalloonData == nil || len(srcDef.BalloonData.Responses) == 0 {
+		return nil
+	}
+
+	base := &srcDef.BalloonData.Responses[0]
+	baseFrequencies := make([]float64, len(base.Level))
+	for i := range baseFrequencies {
+		baseFrequencies[i] = base.Definition.GetFrequency(i)
+	}
+
+	var combined *gll.TransferFunction
+	seen := make(map[string]struct{}, len(groupKeys))
+
+	for _, groupKey := range groupKeys {
+		if groupKey == "" {
+			continue
+		}
+		if _, ok := seen[groupKey]; ok {
+			continue
+		}
+		seen[groupKey] = struct{}{}
+
+		groupIndex := findFilterGroupIndex(file, groupKey)
+		if groupIndex < 0 {
+			continue
+		}
+
+		group := file.Database.FilterGroups[groupIndex]
+		for filterIndex := range group.Filters {
+			response := filters.BuildFilterResponse(file, filters.FilterResponseRequest{
+				GroupIndex:  groupIndex,
+				FilterIndex: filterIndex,
+			})
+			if !response.Success || len(response.Level) == 0 {
+				continue
+			}
+			if !frequenciesClose(baseFrequencies, response.Frequencies) {
+				continue
+			}
+
+			filterTF := &gll.TransferFunction{
+				Definition: base.Definition,
+				Level:      append([]float64(nil), response.Level...),
+				Phase:      make([]float64, len(base.Level)),
+			}
+			if len(response.Phase) == len(filterTF.Phase) {
+				copy(filterTF.Phase, response.Phase)
+			}
+
+			if combined == nil {
+				combined = filterTF
+			} else {
+				combined.Multiply(filterTF)
+			}
+		}
+	}
+
+	return combined
+}
+
+func findFilterGroupIndex(file *gll.File, groupKey string) int {
+	if file == nil || file.Database == nil {
+		return -1
+	}
+	for i, group := range file.Database.FilterGroups {
+		if group.Key == groupKey {
+			return i
+		}
+	}
+	return -1
+}
+
+func frequenciesClose(a, b []float64) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	const tol = 1e-3
+	for i := range a {
+		av := a[i]
+		bv := b[i]
+		diff := av - bv
+		if diff < 0 {
+			diff = -diff
+		}
+		scale := bv
+		if scale < 0 {
+			scale = -scale
+		}
+		if scale < 1 {
+			scale = 1
+		}
+		if diff/scale > tol {
+			return false
+		}
+	}
+	return true
 }
