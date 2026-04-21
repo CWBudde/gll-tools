@@ -24,6 +24,15 @@ typedef struct {
     int64_t length;
     char* error;
 } GLL_ByteResult;
+
+// GLL_Float64Array holds a contiguous float64 buffer plus shape metadata.
+typedef struct {
+    void* data;
+    int64_t rows;
+    int64_t cols;
+    int64_t length;
+    char* error;
+} GLL_Float64Array;
 */
 import "C"
 
@@ -83,6 +92,42 @@ func makeBytesResult(data []byte) C.GLL_ByteResult {
 func makeBytesError(err error) C.GLL_ByteResult {
 	return C.GLL_ByteResult{
 		data:   nil,
+		length: 0,
+		error:  C.CString(err.Error()),
+	}
+}
+
+// makeFloat64Array creates a GLL_Float64Array with contiguous float64 data.
+func makeFloat64Array(data []float64, rows, cols int) C.GLL_Float64Array {
+	if len(data) == 0 {
+		return C.GLL_Float64Array{
+			data:   nil,
+			rows:   C.int64_t(rows),
+			cols:   C.int64_t(cols),
+			length: 0,
+			error:  nil,
+		}
+	}
+
+	size := C.size_t(len(data)) * C.size_t(unsafe.Sizeof(C.double(0)))
+	cData := C.malloc(size)
+	C.memcpy(cData, unsafe.Pointer(&data[0]), size)
+
+	return C.GLL_Float64Array{
+		data:   cData,
+		rows:   C.int64_t(rows),
+		cols:   C.int64_t(cols),
+		length: C.int64_t(len(data)),
+		error:  nil,
+	}
+}
+
+// makeFloat64ArrayError creates a GLL_Float64Array with an error.
+func makeFloat64ArrayError(err error) C.GLL_Float64Array {
+	return C.GLL_Float64Array{
+		data:   nil,
+		rows:   0,
+		cols:   0,
 		length: 0,
 		error:  C.CString(err.Error()),
 	}
@@ -248,21 +293,21 @@ func GLL_ExtractIncludeFile(path *C.char, includeFileIndex C.int32_t) C.GLL_Byte
 
 // ArrayConfigJSON is the JSON input format for array calculations.
 type ArrayConfigJSON struct {
-	GLLPath  string              `json:"gll_path"`
-	Elements []ArrayElementJSON  `json:"elements"`
-	Receiver *Vector3DJSON       `json:"receiver,omitempty"`
-	Air      *AirPropertiesJSON  `json:"air,omitempty"`
-	AirAtten bool                `json:"air_atten"`
+	GLLPath  string             `json:"gll_path"`
+	Elements []ArrayElementJSON `json:"elements"`
+	Receiver *Vector3DJSON      `json:"receiver,omitempty"`
+	Air      *AirPropertiesJSON `json:"air,omitempty"`
+	AirAtten bool               `json:"air_atten"`
 }
 
 // ArrayElementJSON represents an element in JSON format.
 type ArrayElementJSON struct {
-	BoxType  string       `json:"box_type"`
+	BoxType  string        `json:"box_type"`
 	Position *Vector3DJSON `json:"position,omitempty"`
 	Angles   *Vector3DJSON `json:"angles,omitempty"`
-	Gain     float64      `json:"gain"`
-	Delay    float64      `json:"delay"`
-	Muted    bool         `json:"muted"`
+	Gain     float64       `json:"gain"`
+	Delay    float64       `json:"delay"`
+	Muted    bool          `json:"muted"`
 }
 
 // Vector3DJSON represents a 3D vector in JSON.
@@ -466,11 +511,11 @@ func GLL_GetBalloonAtFrequency(path *C.char, sourceIndex C.int32_t, frequencyHz 
 
 	// Build balloon grid output
 	type BalloonOutput struct {
-		Frequency  float64       `json:"frequency"`
-		MerStep    float64       `json:"meridian_step"`
-		ParStep    float64       `json:"parallel_step"`
-		Symmetry   int           `json:"symmetry"`
-		Data       [][]float64   `json:"data"` // [meridian][parallel]
+		Frequency float64     `json:"frequency"`
+		MerStep   float64     `json:"meridian_step"`
+		ParStep   float64     `json:"parallel_step"`
+		Symmetry  int         `json:"symmetry"`
+		Data      [][]float64 `json:"data"` // [meridian][parallel]
 	}
 
 	merStep := bd.AngularResolution.MeridianStep
@@ -501,7 +546,7 @@ func GLL_GetBalloonAtFrequency(path *C.char, sourceIndex C.int32_t, frequencyHz 
 		data[m] = make([]float64, parCount)
 		for p := 0; p < parCount; p++ {
 			// Get response at this angle
-			phi := float64(m) * merStep   // azimuth
+			phi := float64(m) * merStep      // azimuth
 			theta := float64(p)*parStep - 90 // elevation (-90 to 90)
 
 			tf := bd.GetResponseAtAngle(theta*3.14159/180, phi*3.14159/180)
@@ -522,6 +567,86 @@ func GLL_GetBalloonAtFrequency(path *C.char, sourceIndex C.int32_t, frequencyHz 
 	return makeJSONResult(output)
 }
 
+// GLL_GetBalloonGridRaw gets a contiguous float64 grid for NumPy zero-copy views.
+// The output shape is [meridian][parallel] in row-major order.
+//
+//export GLL_GetBalloonGridRaw
+func GLL_GetBalloonGridRaw(
+	path *C.char,
+	sourceIndex C.int32_t,
+	frequencyHz C.double,
+) C.GLL_Float64Array {
+	goPath := C.GoString(path)
+
+	f, err := os.Open(goPath)
+	if err != nil {
+		return makeFloat64ArrayError(err)
+	}
+	defer f.Close()
+
+	gllFile, err := gll.Parse(f)
+	if err != nil {
+		return makeFloat64ArrayError(err)
+	}
+
+	if gllFile.Database == nil {
+		return makeFloat64ArrayError(os.ErrNotExist)
+	}
+
+	idx := int(sourceIndex)
+	if idx < 0 || idx >= len(gllFile.Database.SourceDefinitions) {
+		return makeFloat64ArrayError(os.ErrNotExist)
+	}
+
+	sd := gllFile.Database.SourceDefinitions[idx]
+	if sd.Definition == nil || sd.Definition.BalloonData == nil {
+		return makeFloat64ArrayError(os.ErrNotExist)
+	}
+
+	bd := sd.Definition.BalloonData
+	if len(bd.Responses) == 0 {
+		return makeFloat64ArrayError(os.ErrNotExist)
+	}
+
+	merStep := bd.AngularResolution.MeridianStep
+	parStep := bd.AngularResolution.ParallelStep
+	if merStep <= 0 || parStep <= 0 {
+		return makeFloat64ArrayError(os.ErrInvalid)
+	}
+
+	merCount := int(360.0 / merStep)
+	parCount := int(180.0/parStep) + 1
+
+	freq := float64(frequencyHz)
+	bandIdx := 0
+	if len(bd.Responses[0].Level) > 0 {
+		def := bd.Responses[0].Definition
+		for i := 0; i < len(bd.Responses[0].Level); i++ {
+			band := def.GetFrequency(i)
+			if band >= freq {
+				bandIdx = i
+				break
+			}
+			bandIdx = i
+		}
+	}
+
+	data := make([]float64, merCount*parCount)
+	for m := 0; m < merCount; m++ {
+		for p := 0; p < parCount; p++ {
+			phi := float64(m) * merStep
+			theta := float64(p)*parStep - 90
+
+			tf := bd.GetResponseAtAngle(theta*3.14159/180, phi*3.14159/180)
+			if tf != nil && bandIdx < len(tf.Level) {
+				data[m*parCount+p] = tf.Level[bandIdx]
+			}
+		}
+	}
+
+	return makeFloat64Array(data, merCount, parCount)
+}
+
 // GLL_FreeResult frees a GLL_Result's allocated memory.
 //
 //export GLL_FreeResult
@@ -538,6 +663,18 @@ func GLL_FreeResult(result C.GLL_Result) {
 //
 //export GLL_FreeByteResult
 func GLL_FreeByteResult(result C.GLL_ByteResult) {
+	if result.data != nil {
+		C.free(result.data)
+	}
+	if result.error != nil {
+		C.free(unsafe.Pointer(result.error))
+	}
+}
+
+// GLL_FreeFloat64Array frees a GLL_Float64Array's allocated memory.
+//
+//export GLL_FreeFloat64Array
+func GLL_FreeFloat64Array(result C.GLL_Float64Array) {
 	if result.data != nil {
 		C.free(result.data)
 	}

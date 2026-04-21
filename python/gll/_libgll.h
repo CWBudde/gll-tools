@@ -44,6 +44,15 @@ typedef struct {
     char* error;
 } GLL_ByteResult;
 
+// GLL_Float64Array holds a contiguous float64 buffer plus shape metadata.
+typedef struct {
+    void* data;
+    int64_t rows;
+    int64_t cols;
+    int64_t length;
+    char* error;
+} GLL_Float64Array;
+
 #line 1 "cgo-generated-wrapper"
 
 
@@ -142,6 +151,11 @@ extern GLL_Result GLL_ComputeArrayResponse(char* configJSON);
 //
 extern GLL_Result GLL_GetBalloonAtFrequency(char* path, int32_t sourceIndex, double frequencyHz);
 
+// GLL_GetBalloonGridRaw gets a contiguous float64 grid for NumPy zero-copy views.
+// The output shape is [meridian][parallel] in row-major order.
+//
+extern GLL_Float64Array GLL_GetBalloonGridRaw(char* path, int32_t sourceIndex, double frequencyHz);
+
 // GLL_FreeResult frees a GLL_Result's allocated memory.
 //
 extern void GLL_FreeResult(GLL_Result result);
@@ -149,6 +163,10 @@ extern void GLL_FreeResult(GLL_Result result);
 // GLL_FreeByteResult frees a GLL_ByteResult's allocated memory.
 //
 extern void GLL_FreeByteResult(GLL_ByteResult result);
+
+// GLL_FreeFloat64Array frees a GLL_Float64Array's allocated memory.
+//
+extern void GLL_FreeFloat64Array(GLL_Float64Array result);
 
 // GLL_FreeString frees a C string allocated by this library.
 //

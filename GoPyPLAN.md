@@ -86,7 +86,35 @@ response = gll_file.compute_array_response(config, frequency=1000)
 
 ---
 
+## Status Summary
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 1. Foundation | In progress | Core structure and local build flow exist; a few draft convenience files/targets are still missing |
+| 2. Core Python API | In progress | Main API is implemented, but not every draft method/module exists exactly as originally sketched |
+| 3. Acoustic Calculations | In progress | Array response API works; draft-only extras such as combined balloon output are not implemented |
+| 4. NumPy Integration | Done | Optional NumPy helpers and zero-copy balloon grid view are implemented |
+| 5. Packaging & Distribution | In progress | `pyproject.toml` and local wheel build exist; release automation for Python wheels is still missing |
+| 6. Testing & Documentation | In progress | Strong local pytest coverage and README docs exist; dedicated docs tree and memory-safety automation are still missing |
+
 ## Phase 1: Foundation (4-6 weeks)
+
+**Checklist**
+
+- [x] `python/` package root exists with `gll/`, `tests/`, `examples/`, `README.md`, and `pyproject.toml`.
+- [x] `cmd/gllpy/main.go` exists as the c-shared export entry point.
+- [x] Local developer tasks exist for Python build/install/test/lint/typecheck/wheel flows in `justfile`.
+- [x] Shared library artifacts are generated into `python/gll/`.
+- [ ] Dedicated `python/gll/database.py` wrapper module from the original sketch exists as a separate file.
+- [ ] `python/setup.py` compatibility shim exists.
+- [ ] A multi-platform `build-python-all` target exists in the repo automation.
+
+**Acceptance Criteria**
+
+- [x] The repository can build `python/gll/_libgll.so` from `./cmd/gllpy`.
+- [x] The Python bindings have a coherent package/test/example layout suitable for local development.
+- [x] The project has a documented local install path for the Python bindings.
+- [ ] All draft structure files and helper targets from the original plan are present verbatim.
 
 ### 1.1 Project Structure
 
@@ -231,6 +259,24 @@ build-python-all:
 ---
 
 ## Phase 2: Core Python API (3-4 weeks)
+
+**Checklist**
+
+- [x] `python/gll/_ffi.py` loads the shared library and exposes typed wrappers for parse/extract/acoustic calls.
+- [x] `python/gll/types.py` defines typed wrappers for headers, metadata, database content, and acoustic data.
+- [x] `python/gll/file.py` implements path-based parsing, bytes parsing, lazy accessors, and extraction helpers.
+- [x] `python/gll/exceptions.py` defines Python exception types used by the bindings.
+- [x] `python/gll/__init__.py` exports the public package surface.
+- [ ] The original draft API shape is implemented exactly, including draft-only helper methods such as `BalloonData.get_spl()` and `SourceDefinition.get_balloon_at_frequency()`.
+- [ ] Database wrappers are split into dedicated modules exactly as shown in the early architecture sketch.
+
+**Acceptance Criteria**
+
+- [x] `from gll import GllFile` works after building/installing the local package.
+- [x] Parsing from both a filesystem path and in-memory bytes returns structured Python objects.
+- [x] Parsed JSON from the shared library is mapped into typed Python dataclasses and enums.
+- [x] Resource, data-file, and include-file extraction are available for path-backed parses.
+- [ ] The implemented API matches the initial draft examples one-to-one without adaptation.
 
 ### 2.1 CFFI Interface (`python/gll/_ffi.py`)
 
@@ -446,6 +492,24 @@ class GllFile:
 
 ## Phase 3: Acoustic Calculations (2-3 weeks)
 
+**Checklist**
+
+- [x] `ArrayElement`, `ArrayConfig`, `AirProperties`, `ArrayResponse`, and `ArrayCalculator` exist in `python/gll/acoustics.py`.
+- [x] The shared library exports `GLL_ComputeArrayResponse`.
+- [x] Python callers can compute a combined transfer function for configured array elements.
+- [x] Receiver position, air properties, and air attenuation options are exposed.
+- [x] Convenience helpers exist for available box types, available sources, and response-grid evaluation.
+- [ ] Combined balloon output is returned as part of `ArrayResponse`.
+- [ ] Per-element transfer-function contributions are returned as part of `ArrayResponse`.
+- [ ] The draft-only single-call `frequency` selector API is implemented exactly as shown in the original sketch.
+
+**Acceptance Criteria**
+
+- [x] A valid line-array configuration can return a transfer function through the Python API.
+- [x] Invalid or empty configurations fail with Python exceptions instead of silent misuse.
+- [x] Acoustic behavior is covered by automated Python tests using real GLL fixtures.
+- [ ] The response payload contains every field from the original draft data model.
+
 ### 3.1 Array Configuration API
 
 ```python
@@ -567,6 +631,23 @@ class ArrayCalculator:
 
 ## Phase 4: NumPy Integration (2 weeks)
 
+**Checklist**
+
+- [x] `python/gll/numpy_compat.py` exists.
+- [x] Optional NumPy dependency is declared in `python/pyproject.toml`.
+- [x] Transfer-function and balloon conversion helpers are exposed for NumPy users.
+- [x] NumPy helpers are exported from the package root and documented in `python/README.md`.
+- [x] The shared library exports a raw float64 balloon-grid API for zero-copy access.
+- [x] Python exposes a zero-copy `balloon_grid_view(...)` wrapper that keeps the C buffer alive for the ndarray lifetime.
+- [x] Automated tests cover NumPy helper behavior.
+
+**Acceptance Criteria**
+
+- [x] Importing `gll` still works when NumPy is not installed.
+- [x] NumPy helper entry points raise a clear `ImportError` when NumPy support is unavailable.
+- [x] Copy-based conversion helpers return `float64` arrays with expected shapes and values.
+- [x] Zero-copy balloon-grid access is available through the shared library and Python wrapper layer.
+
 ### 4.1 Optional NumPy Support
 
 ```python
@@ -618,6 +699,23 @@ func GLL_GetBalloonRaw(handle C.int64_t, freqIndex C.int32_t) C.GLL_RawArray {
 ---
 
 ## Phase 5: Packaging & Distribution (2-3 weeks)
+
+**Checklist**
+
+- [x] `python/pyproject.toml` exists with project metadata, extras, and tool configuration.
+- [x] The package declares optional `numpy` and `dev` dependency groups.
+- [x] Local wheel builds are supported via `just build-python-wheel`.
+- [x] Local editable install is supported via `just install-python`.
+- [ ] A dedicated GitHub Actions workflow builds Python wheels for Linux, macOS, and Windows.
+- [ ] Tagged releases publish Python wheels to a package index.
+- [ ] CI validates installation from built wheel artifacts.
+
+**Acceptance Criteria**
+
+- [x] A wheel can be built locally for the current platform.
+- [x] The package metadata is sufficient for local editable installs, linting, typing, and pytest execution.
+- [ ] Tagged releases automatically produce installable Python wheel artifacts for all supported platforms.
+- [ ] `pip install gll` from a published package index works end-to-end on supported platforms.
 
 ### 5.1 pyproject.toml
 
@@ -747,6 +845,25 @@ jobs:
 ---
 
 ## Phase 6: Testing & Documentation (Ongoing)
+
+**Checklist**
+
+- [x] `python/tests/` covers parse, extract, acoustics, types, NumPy helpers, and zero-copy helpers.
+- [x] The repo includes real GLL fixtures used by Python tests.
+- [x] `pytest`, `mypy`, and `ruff` configuration exists in `python/pyproject.toml`.
+- [x] `just` targets exist for Python test, lint, format, and typecheck flows.
+- [x] User-facing Python documentation exists in `python/README.md` and is referenced from the root `README.md`.
+- [ ] Automated memory-safety or leak-detection checks exist for the C/shared-library layer.
+- [ ] The dedicated docs tree from the original draft (`docs/index.md`, `docs/api/`, `docs/guides/`, `docs/development/`) exists.
+- [ ] Coverage targets are enforced or reported in CI for the Python bindings.
+
+**Acceptance Criteria**
+
+- [x] The Python package has an executable automated test suite that passes locally.
+- [x] Static analysis and formatting tools are configured for the Python codebase.
+- [x] A developer can find installation and usage guidance in the repository.
+- [ ] Memory-safety validation for the shared library is automated.
+- [ ] The structured multi-page documentation set proposed in the draft exists in the repository.
 
 ### 6.1 Test Strategy
 

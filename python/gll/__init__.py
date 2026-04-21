@@ -40,6 +40,14 @@ from .exceptions import (
     ResourceError,
 )
 from .file import GllFile
+from .numpy_compat import (
+    HAS_NUMPY,
+    balloon_grid_to_numpy,
+    balloon_grid_view,
+    balloon_responses_to_numpy,
+    balloon_to_numpy,
+    transfer_function_to_numpy,
+)
 from .types import (
     AngularResolution,
     BalloonData,
@@ -85,6 +93,7 @@ __all__ = [
     "ParseError",
     "ResourceError",
     "ConfigurationError",
+    "HAS_NUMPY",
     # Types
     "Header",
     "Metadata",
@@ -107,6 +116,12 @@ __all__ = [
     "Warning",
     "Vector3D",
     "SystemType",
+    # Optional NumPy helpers
+    "transfer_function_to_numpy",
+    "balloon_grid_to_numpy",
+    "balloon_grid_view",
+    "balloon_responses_to_numpy",
+    "balloon_to_numpy",
     # Version
     "__version__",
 ]

@@ -24,6 +24,12 @@ CGO_ENABLED=1 go build -buildmode=c-shared -o python/gll/_libgll.so ./cmd/gllpy
 pip install -e ./python
 ```
 
+Optional NumPy helpers:
+
+```bash
+pip install -e './python[numpy]'
+```
+
 ## Quick Start
 
 ### Parse a GLL File
@@ -132,6 +138,27 @@ print(f"Angular resolution: {balloon['meridian_step']}° x {balloon['parallel_st
 data = balloon['data']
 on_axis = data[0][len(data[0])//2]  # On-axis (0° azimuth, 0° elevation)
 print(f"On-axis SPL: {on_axis:.1f} dB")
+```
+
+### NumPy Integration
+
+```python
+from gll import (
+    GllFile,
+    balloon_grid_to_numpy,
+    balloon_grid_view,
+    transfer_function_to_numpy,
+)
+
+gll = GllFile.parse("speaker.gll")
+source = gll.database.source_definitions[0]
+
+freqs, level, phase = transfer_function_to_numpy(source.frequency_response)
+balloon = gll.get_balloon_at_frequency(0, 1000.0)
+grid = balloon_grid_to_numpy(balloon)
+
+# Zero-copy NumPy view backed by the shared library buffer
+view = balloon_grid_view(gll, 0, 1000.0)
 ```
 
 ## API Reference

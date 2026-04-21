@@ -49,6 +49,11 @@ docs/api.md
 web/gll.wasm
 web/wasm_exec.js
 
+# Web smoke test artifacts
+node_modules/
+playwright-report/
+test-results/
+
 # AI Agents
 .claude/
 .codex

@@ -28,6 +28,16 @@ go install github.com/cwbudde/gll-tools/cmd/gllinfo@latest
 go install github.com/cwbudde/gll-tools/cmd/xgllc@latest
 ```
 
+## Web Demo Smoke Test
+
+The web demo has one minimal Playwright smoke test. It checks that the browser app loads, parses a sample `.gll`, and renders the visualization tab's expected state for the sample fixture.
+
+```bash
+just build-wasm
+npm install
+npm run test:web
+```
+
 ## Usage
 
 ### Display file information

@@ -6,11 +6,13 @@ from ctypes import (
     CDLL,
     POINTER,
     Structure,
+    c_char,
     c_char_p,
+    c_double,
     c_int32,
     c_int64,
-    c_double,
     c_void_p,
+    cast,
     string_at,
 )
 from pathlib import Path
@@ -34,6 +36,18 @@ class GLL_ByteResult(Structure):
 
     _fields_ = [
         ("data", c_void_p),
+        ("length", c_int64),
+        ("error", c_char_p),
+    ]
+
+
+class GLL_Float64Array(Structure):
+    """Contiguous float64 buffer result from GLL library calls."""
+
+    _fields_ = [
+        ("data", c_void_p),
+        ("rows", c_int64),
+        ("cols", c_int64),
         ("length", c_int64),
         ("error", c_char_p),
     ]
@@ -98,11 +112,17 @@ def _load_library() -> CDLL:
     lib.GLL_GetBalloonAtFrequency.argtypes = [c_char_p, c_int32, c_double]
     lib.GLL_GetBalloonAtFrequency.restype = GLL_Result
 
+    lib.GLL_GetBalloonGridRaw.argtypes = [c_char_p, c_int32, c_double]
+    lib.GLL_GetBalloonGridRaw.restype = GLL_Float64Array
+
     lib.GLL_FreeResult.argtypes = [GLL_Result]
     lib.GLL_FreeResult.restype = None
 
     lib.GLL_FreeByteResult.argtypes = [GLL_ByteResult]
     lib.GLL_FreeByteResult.restype = None
+
+    lib.GLL_FreeFloat64Array.argtypes = [GLL_Float64Array]
+    lib.GLL_FreeFloat64Array.restype = None
 
     lib.GLL_FreeString.argtypes = [c_char_p]
     lib.GLL_FreeString.restype = None
@@ -164,6 +184,51 @@ def _check_bytes_result(result: GLL_ByteResult) -> bytes:
         lib.GLL_FreeByteResult(result)
 
 
+class RawFloat64Array:
+    """Owns a float64 buffer returned by the shared library."""
+
+    def __init__(self, result: GLL_Float64Array) -> None:
+        self._result = result
+        self._freed = False
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Return the 2D shape of the array."""
+        return (int(self._result.rows), int(self._result.cols))
+
+    @property
+    def length(self) -> int:
+        """Return the total number of float64 values."""
+        return int(self._result.length)
+
+    @property
+    def pointer(self) -> POINTER(c_double):
+        """Return the raw float64 pointer."""
+        if self._result.data is None:
+            return cast(POINTER(c_char)(), POINTER(c_double))
+        return cast(self._result.data, POINTER(c_double))
+
+    def free(self) -> None:
+        """Release the underlying C buffer."""
+        if self._freed:
+            return
+        _get_lib().GLL_FreeFloat64Array(self._result)
+        self._freed = True
+
+    def __del__(self) -> None:
+        """Free the C buffer when the owner is garbage-collected."""
+        self.free()
+
+
+def _check_float64_array_result(result: GLL_Float64Array) -> RawFloat64Array:
+    """Check a GLL_Float64Array and return an owning wrapper."""
+    if result.error:
+        error_msg = result.error.decode("utf-8")
+        _get_lib().GLL_FreeFloat64Array(result)
+        raise ResourceError(error_msg)
+    return RawFloat64Array(result)
+
+
 def parse_file(path: str | Path) -> dict[str, Any]:
     """Parse a GLL file and return the parsed data as a dictionary."""
     lib = _get_lib()
@@ -219,3 +284,13 @@ def get_balloon_at_frequency(
     path_bytes = str(path).encode("utf-8")
     result = lib.GLL_GetBalloonAtFrequency(path_bytes, source_index, frequency_hz)
     return _check_result(result)
+
+
+def get_balloon_grid_raw(
+    path: str | Path, source_index: int, frequency_hz: float
+) -> RawFloat64Array:
+    """Get balloon data as an owned raw float64 buffer."""
+    lib = _get_lib()
+    path_bytes = str(path).encode("utf-8")
+    result = lib.GLL_GetBalloonGridRaw(path_bytes, source_index, frequency_hz)
+    return _check_float64_array_result(result)
