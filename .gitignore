@@ -51,3 +51,4 @@ web/wasm_exec.js
 
 # AI Agents
 .claude/
+.codex

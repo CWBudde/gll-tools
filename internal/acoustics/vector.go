@@ -60,3 +60,35 @@ func ThetaPhi(vecX, vecY, vecZ, angX, angY, angZ float64) (theta, phi float64) {
 
 	return theta, phi
 }
+
+// DirectionToGLLAngles converts a direction vector to GLL balloon coordinates.
+// Meridian rotates around the firing axis: 0°=top (+Z), 90°=right (+Y).
+// Parallel is the angle from the firing axis: 0°=front (+X), 180°=back (-X).
+func DirectionToGLLAngles(vecX, vecY, vecZ, angX, angY, angZ float64) (meridianDeg, parallelDeg float64) {
+	// Rotate vector by inverse of source angles
+	rx, ry, rz := Rotate(vecX, vecY, vecZ, -angX, -angY, -angZ)
+
+	r := Length(rx, ry, rz)
+	if r < 1e-10 {
+		return 0, 0
+	}
+
+	cosParallel := rx / r
+	if cosParallel > 1 {
+		cosParallel = 1
+	} else if cosParallel < -1 {
+		cosParallel = -1
+	}
+	parallelDeg = math.Acos(cosParallel) * 180.0 / math.Pi
+
+	if math.Abs(ry) < 1e-10 && math.Abs(rz) < 1e-10 {
+		return 0, parallelDeg
+	}
+
+	meridianDeg = math.Atan2(ry, rz) * 180.0 / math.Pi
+	if meridianDeg < 0 {
+		meridianDeg += 360.0
+	}
+
+	return meridianDeg, parallelDeg
+}

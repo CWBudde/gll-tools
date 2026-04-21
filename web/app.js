@@ -3599,24 +3599,31 @@ function buildElementsFromConfig(config) {
         if (!sourceKey) continue;
         const pPos = placement.position || {};
         const pAngles = placement.angles || {};
-        // Combine box-level config position with source placement position
+        const elemAngles = {
+          x: Number(elem.angles?.x) || 0,
+          y: Number(elem.angles?.y) || 0,
+          z: Number(elem.angles?.z) || 0,
+        };
+        const rotatedPlacement = rotateVectorFromAngles(elemAngles, pPos);
+
+        // Combine box-level config position with rotated source placement position.
         allElements.push({
           source_key: sourceKey,
           position: {
             x:
               (Number(elem.position?.x) || 0) / 1000 +
-              (Number(pPos.x) || 0) / 1000,
+              (Number(rotatedPlacement.x) || 0) / 1000,
             y:
               (Number(elem.position?.y) || 0) / 1000 +
-              (Number(pPos.y) || 0) / 1000,
+              (Number(rotatedPlacement.y) || 0) / 1000,
             z:
               (Number(elem.position?.z) || 0) / 1000 +
-              (Number(pPos.z) || 0) / 1000,
+              (Number(rotatedPlacement.z) || 0) / 1000,
           },
           angles: {
-            x: (Number(elem.angles?.x) || 0) + toRadiansMaybe(pAngles.x),
-            y: (Number(elem.angles?.y) || 0) + toRadiansMaybe(pAngles.y),
-            z: (Number(elem.angles?.z) || 0) + toRadiansMaybe(pAngles.z),
+            x: elemAngles.x + toRadiansMaybe(pAngles.x),
+            y: elemAngles.y + toRadiansMaybe(pAngles.y),
+            z: elemAngles.z + toRadiansMaybe(pAngles.z),
           },
           gain: elem.gain || 0,
         });

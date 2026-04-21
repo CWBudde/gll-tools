@@ -346,6 +346,43 @@ func TestThetaPhi(t *testing.T) {
 	}
 }
 
+func TestDirectionToGLLAngles(t *testing.T) {
+	tests := []struct {
+		name                       string
+		vecX, vecY, vecZ           float64
+		angX, angY, angZ           float64
+		wantMeridian, wantParallel float64
+	}{
+		{"Front", 1, 0, 0, 0, 0, 0, 0, 0},
+		{"Top", 0, 0, 1, 0, 0, 0, 0, 90},
+		{"Right", 0, 1, 0, 0, 0, 0, 90, 90},
+		{"Back", -1, 0, 0, 0, 0, 0, 0, 180},
+		{"Rotated source points to +Y", 0, 1, 0, 0, 0, math.Pi / 2, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meridian, parallel := DirectionToGLLAngles(
+				tt.vecX,
+				tt.vecY,
+				tt.vecZ,
+				tt.angX,
+				tt.angY,
+				tt.angZ,
+			)
+			if math.Abs(meridian-tt.wantMeridian) > 1e-6 || math.Abs(parallel-tt.wantParallel) > 1e-6 {
+				t.Errorf(
+					"DirectionToGLLAngles = (%f,%f), want (%f,%f)",
+					meridian,
+					parallel,
+					tt.wantMeridian,
+					tt.wantParallel,
+				)
+			}
+		})
+	}
+}
+
 // TestToComplexFromComplex tests round-trip conversion
 func TestToComplexFromComplex(t *testing.T) {
 	// Test data: level in dB, phase in radians

@@ -183,7 +183,6 @@ func computeElementResponseAt(
 			elem.Position,
 			elem.Angles,
 			receiver,
-			airProps,
 		)
 
 		if response == nil {
@@ -237,7 +236,6 @@ func getSourceResponseAt(
 	sourcePos Vector3D,
 	sourceAngles Vector3D,
 	receiver Vector3D,
-	airProps AirProperties,
 ) (*TransferFunction, *TransferFunction, float64) {
 	if srcDef.BalloonData == nil || len(srcDef.BalloonData.Responses) == 0 {
 		return nil, nil, 1.0
@@ -253,19 +251,21 @@ func getSourceResponseAt(
 	}
 	propagationFactor := 1.0 / distance
 
-	// Convert to spherical angles (theta = elevation, phi = azimuth)
-	theta, phi := acoustics.ThetaPhi(vecX, vecY, vecZ, sourceAngles.X, sourceAngles.Y, sourceAngles.Z)
+	// Convert to explicit GLL balloon coordinates.
+	meridianDeg, parallelDeg := acoustics.DirectionToGLLAngles(
+		vecX,
+		vecY,
+		vecZ,
+		sourceAngles.X,
+		sourceAngles.Y,
+		sourceAngles.Z,
+	)
 
-	// Get response at that angle from balloon data (with interpolation)
-	response := srcDef.BalloonData.GetResponseAtAngle(theta, phi)
+	// Get response at that angle from balloon data (with interpolation).
+	response := srcDef.BalloonData.responseAtGLLAngles(meridianDeg, parallelDeg)
 
-	// Get on-axis response for normalization
-	onAxis := srcDef.BalloonData.GetResponseAtAngle(0, 0)
-
-	if response != nil {
-		// Add propagation delay
-		response.AddDelay(distance / airProps.Speed)
-	}
+	// Get on-axis response for normalization.
+	onAxis := srcDef.BalloonData.responseAtGLLAngles(0, 0)
 
 	return response, onAxis, propagationFactor
 }
@@ -334,6 +334,122 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 	}
 
 	// Bilinear interpolation - get references to corner responses
+	r00 := &bd.Responses[idx00]
+	r01 := &bd.Responses[idx01]
+	r10 := &bd.Responses[idx10]
+	r11 := &bd.Responses[idx11]
+
+	if len(r00.Level) == 0 {
+		return nil
+	}
+
+	result := &TransferFunction{
+		Definition: r00.Definition,
+		Level:      make([]float64, len(r00.Level)),
+		Phase:      make([]float64, len(r00.Phase)),
+	}
+
+	w00, w01, w10, w11 := acoustics.BilinearWeights(merIdx, parIdx)
+
+	for i := range result.Level {
+		level00, level01, level10, level11 := 0.0, 0.0, 0.0, 0.0
+		phase00, phase01, phase10, phase11 := 0.0, 0.0, 0.0, 0.0
+
+		if i < len(r00.Level) {
+			level00, phase00 = r00.Level[i], r00.Phase[i]
+		}
+		if i < len(r01.Level) {
+			level01, phase01 = r01.Level[i], r01.Phase[i]
+		}
+		if i < len(r10.Level) {
+			level10, phase10 = r10.Level[i], r10.Phase[i]
+		}
+		if i < len(r11.Level) {
+			level11, phase11 = r11.Level[i], r11.Phase[i]
+		}
+
+		result.Level[i] = w00*level00 + w01*level01 + w10*level10 + w11*level11
+		result.Phase[i] = w00*phase00 + w01*phase01 + w10*phase10 + w11*phase11
+	}
+
+	return result
+}
+
+func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *TransferFunction {
+	if bd == nil || len(bd.Responses) == 0 {
+		return nil
+	}
+
+	for meridianDeg < 0 {
+		meridianDeg += 360.0
+	}
+	for meridianDeg >= 360.0 {
+		meridianDeg -= 360.0
+	}
+
+	symmetry := int(bd.AngularResolution.Symmetry)
+	meridianDeg = acoustics.MapMeridianBySymmetry(meridianDeg, symmetry)
+
+	if parallelDeg < 0 || parallelDeg > 180 {
+		return nil
+	}
+	if bd.AngularResolution.FrontHalfOnly && parallelDeg > 90 {
+		return nil
+	}
+
+	canMirrorParallel := symmetry == int(SymmetryHorizontal) || symmetry == int(SymmetryQuarter)
+	parStep := bd.AngularResolution.ParallelStep
+	parCount := acoustics.ParallelCount(parStep, bd.AngularResolution.FrontHalfOnly)
+	measuredParallelDeg := float64(parCount-1) * parStep
+	if parallelDeg > measuredParallelDeg {
+		if !canMirrorParallel {
+			return nil
+		}
+		mirrored := 180.0 - parallelDeg
+		if mirrored < 0 || mirrored > measuredParallelDeg {
+			return nil
+		}
+		parallelDeg = mirrored
+	}
+
+	merStep := bd.AngularResolution.MeridianStep
+	merCount := acoustics.MeridianCount(merStep, symmetry)
+	if merCount <= 0 || parCount <= 0 || merStep <= 0 || parStep <= 0 {
+		return nil
+	}
+
+	merIdx := meridianDeg / merStep
+	parIdx := parallelDeg / parStep
+
+	merIdx0 := int(math.Floor(merIdx))
+	merIdx1 := int(math.Ceil(merIdx))
+	if symmetry == int(SymmetryNone) && merCount > 1 {
+		merIdx1 %= merCount
+	} else if merIdx1 >= merCount {
+		merIdx1 = merCount - 1
+	}
+	parIdx0 := acoustics.ClampParallelIndex(int(math.Floor(parIdx)), parCount)
+	parIdx1 := acoustics.ClampParallelIndex(int(math.Ceil(parIdx)), parCount)
+
+	idx00 := acoustics.ResponseIndex(merIdx0, parIdx0, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx01 := acoustics.ResponseIndex(merIdx1, parIdx0, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx10 := acoustics.ResponseIndex(merIdx0, parIdx1, parCount, bd.AngularResolution.FrontHalfOnly)
+	idx11 := acoustics.ResponseIndex(merIdx1, parIdx1, parCount, bd.AngularResolution.FrontHalfOnly)
+
+	maxIdx := len(bd.Responses) - 1
+	if idx00 > maxIdx {
+		idx00 = maxIdx
+	}
+	if idx01 > maxIdx {
+		idx01 = maxIdx
+	}
+	if idx10 > maxIdx {
+		idx10 = maxIdx
+	}
+	if idx11 > maxIdx {
+		idx11 = maxIdx
+	}
+
 	r00 := &bd.Responses[idx00]
 	r01 := &bd.Responses[idx01]
 	r10 := &bd.Responses[idx10]
