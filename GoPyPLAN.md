@@ -107,7 +107,7 @@ response = gll_file.compute_array_response(config, frequency=1000)
 - [x] Shared library artifacts are generated into `python/gll/`.
 - [x] Dedicated `python/gll/database.py` wrapper module from the original sketch exists as a separate file.
 - [x] `python/setup.py` compatibility shim exists.
-- [ ] A multi-platform `build-python-all` target exists in the repo automation.
+- [x] A multi-platform `build-python-all` target exists in the repo automation.
 
 **Acceptance Criteria**
 

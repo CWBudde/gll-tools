@@ -189,6 +189,9 @@ Native Python bindings are available via a shared library built with cgo:
 just build-python
 pip install -e ./python
 
+# Build release-style shared libraries for common targets
+just build-python-all
+
 # Or use pip directly after building
 CGO_ENABLED=1 go build -buildmode=c-shared -o python/gll/_libgll.so ./cmd/gllpy
 pip install ./python

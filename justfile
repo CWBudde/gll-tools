@@ -127,6 +127,57 @@ build-python:
     CGO_ENABLED=1 go build -buildmode=c-shared -o python/gll/_libgll.so ./cmd/gllpy
     @echo "Python shared library built: python/gll/_libgll.so"
 
+# Build Python shared libraries for common target platforms.
+# Cross-builds require a matching C cross-compiler; set the following env vars
+# when you want to enable them:
+#   CC_LINUX_ARM64
+#   CC_DARWIN_AMD64
+#   CC_DARWIN_ARM64
+#   CC_WINDOWS_AMD64
+build-python-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    host_os="$(go env GOHOSTOS)"
+    host_arch="$(go env GOHOSTARCH)"
+    mkdir -p dist/python
+
+    build_target() {
+        local goos="$1"
+        local goarch="$2"
+        local output="$3"
+        local cc_var="$4"
+        local target="${goos}/${goarch}"
+
+        echo "==> ${target} -> ${output}"
+
+        if [[ "${target}" == "${host_os}/${host_arch}" ]]; then
+            CGO_ENABLED=1 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -buildmode=c-shared -o "${output}" ./cmd/gllpy
+            return
+        fi
+
+        local cc="${!cc_var:-}"
+        if [[ -z "${cc}" ]]; then
+            echo "Skipping ${target}: set ${cc_var} to a compatible cross C compiler"
+            return
+        fi
+
+        if ! command -v "${cc}" >/dev/null 2>&1; then
+            echo "Skipping ${target}: compiler not found: ${cc}"
+            return
+        fi
+
+        CC="${cc}" CGO_ENABLED=1 GOOS="${goos}" GOARCH="${goarch}" \
+            go build -buildmode=c-shared -o "${output}" ./cmd/gllpy
+    }
+
+    build_target linux amd64 dist/python/libgll-linux-amd64.so CC_LINUX_AMD64
+    build_target linux arm64 dist/python/libgll-linux-arm64.so CC_LINUX_ARM64
+    build_target darwin amd64 dist/python/libgll-darwin-amd64.dylib CC_DARWIN_AMD64
+    build_target darwin arm64 dist/python/libgll-darwin-arm64.dylib CC_DARWIN_ARM64
+    build_target windows amd64 dist/python/libgll-windows-amd64.dll CC_WINDOWS_AMD64
+
 # Install Python package in development mode
 install-python: build-python
     pip install -e ./python
