@@ -229,21 +229,22 @@ CGO_ENABLED=1 go build -buildmode=c-shared -o libgll.so ./cmd/gllpy
 ```
 
 **Supported platforms:**
+
 - Linux (x86_64, arm64)
 - macOS (x86_64, arm64)
 - Windows (x86_64, arm64) - requires MinGW for building
 
 **API Functions:**
 
-| Function | Description |
-|----------|-------------|
-| `GLL_ParseFile(path)` | Parse GLL file, returns JSON |
-| `GLL_ParseBytes(data, len)` | Parse GLL from memory |
-| `GLL_ExtractResource(path, idx)` | Extract embedded resource |
-| `GLL_ExtractDataFile(path, idx)` | Extract data file |
-| `GLL_ComputeArrayResponse(json)` | Compute array response |
-| `GLL_GetBalloonAtFrequency(path, src, freq)` | Get directivity data |
-| `GLL_FreeResult(result)` | Free returned memory |
+| Function                                     | Description                  |
+| -------------------------------------------- | ---------------------------- |
+| `GLL_ParseFile(path)`                        | Parse GLL file, returns JSON |
+| `GLL_ParseBytes(data, len)`                  | Parse GLL from memory        |
+| `GLL_ExtractResource(path, idx)`             | Extract embedded resource    |
+| `GLL_ExtractDataFile(path, idx)`             | Extract data file            |
+| `GLL_ComputeArrayResponse(json)`             | Compute array response       |
+| `GLL_GetBalloonAtFrequency(path, src, freq)` | Get directivity data         |
+| `GLL_FreeResult(result)`                     | Free returned memory         |
 
 See [docs/c-api.md](docs/c-api.md) for detailed C API documentation including LabVIEW examples.
 

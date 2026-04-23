@@ -186,7 +186,7 @@ func testUniformBalloon(level float64) *BalloonData {
 			MeridianStep: 90,
 			ParallelStep: 90,
 		},
-		ResponseCount: int32(len(responses)),
+		ResponseCount: 6,
 		Responses:     responses,
 	}
 }
@@ -219,11 +219,14 @@ func testSymmetricBalloon(symmetry SymmetryType) *BalloonData {
 	}
 
 	levels := []float64{10, 20, 30}
+	responseCount := int32(3)
 	switch symmetry {
 	case SymmetryVertical, SymmetryHorizontal:
 		levels = []float64{10, 20, 30, 40, 50}
+		responseCount = 5
 	case SymmetryQuarter:
 		levels = []float64{10, 20, 30, 40}
+		responseCount = 4
 	}
 
 	responses := make([]TransferFunction, len(levels))
@@ -241,7 +244,7 @@ func testSymmetricBalloon(symmetry SymmetryType) *BalloonData {
 			MeridianStep: 90,
 			ParallelStep: 90,
 		},
-		ResponseCount: int32(len(responses)),
+		ResponseCount: responseCount,
 		Responses:     responses,
 	}
 }

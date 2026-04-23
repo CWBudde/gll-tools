@@ -1,4 +1,4 @@
-package mime
+package mimetype
 
 import "strings"
 

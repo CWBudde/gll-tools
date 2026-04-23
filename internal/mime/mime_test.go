@@ -1,6 +1,10 @@
-package mime
+package mimetype_test
 
-import "testing"
+import (
+	"testing"
+
+	mimetype "github.com/cwbudde/gll-tools/internal/mime"
+)
 
 func TestGuessMimeType(t *testing.T) {
 	tests := []struct {
@@ -38,7 +42,7 @@ func TestGuessMimeType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GuessMimeType(tt.input)
+			got := mimetype.GuessMimeType(tt.input)
 			if got != tt.expected {
 				t.Errorf("GuessMimeType(%q) = %q, want %q", tt.input, got, tt.expected)
 			}

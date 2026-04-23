@@ -88,14 +88,14 @@ response = gll_file.compute_array_response(config, frequency=1000)
 
 ## Status Summary
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| 1. Foundation | In progress | Core structure and local build flow exist; a few draft convenience files/targets are still missing |
-| 2. Core Python API | In progress | Main API is implemented, but not every draft method/module exists exactly as originally sketched |
-| 3. Acoustic Calculations | In progress | Array response API works; draft-only extras such as combined balloon output are not implemented |
-| 4. NumPy Integration | Done | Optional NumPy helpers and zero-copy balloon grid view are implemented |
-| 5. Packaging & Distribution | In progress | `pyproject.toml` and local wheel build exist; release automation for Python wheels is still missing |
-| 6. Testing & Documentation | In progress | Strong local pytest coverage and README docs exist; dedicated docs tree and memory-safety automation are still missing |
+| Phase                       | Status      | Notes                                                                                                                  |
+| --------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1. Foundation               | In progress | Core structure and local build flow exist; a few draft convenience files/targets are still missing                     |
+| 2. Core Python API          | In progress | Main API is implemented, but not every draft method/module exists exactly as originally sketched                       |
+| 3. Acoustic Calculations    | In progress | Array response API works; draft-only extras such as combined balloon output are not implemented                        |
+| 4. NumPy Integration        | Done        | Optional NumPy helpers and zero-copy balloon grid view are implemented                                                 |
+| 5. Packaging & Distribution | In progress | `pyproject.toml` and local wheel build exist; release automation for Python wheels is still missing                    |
+| 6. Testing & Documentation  | In progress | Strong local pytest coverage and README docs exist; dedicated docs tree and memory-safety automation are still missing |
 
 ## Phase 1: Foundation (4-6 weeks)
 
@@ -222,14 +222,14 @@ func main() {} // Required but unused for c-shared
 
 **Decision: Use JSON for complex types, raw bytes for binary data**
 
-| Data Type | Serialization | Rationale |
-|-----------|---------------|-----------|
-| File metadata | JSON | Complex nested structure, rarely hot path |
-| Database contents | JSON | Same as above |
-| Balloon data | JSON arrays | Numeric arrays serialize well |
-| Transfer functions | JSON | Level/Phase arrays |
-| Extracted resources | Raw bytes | Binary data (PNG, PDF, etc.) |
-| Error messages | C string | Simple strings |
+| Data Type           | Serialization | Rationale                                 |
+| ------------------- | ------------- | ----------------------------------------- |
+| File metadata       | JSON          | Complex nested structure, rarely hot path |
+| Database contents   | JSON          | Same as above                             |
+| Balloon data        | JSON arrays   | Numeric arrays serialize well             |
+| Transfer functions  | JSON          | Level/Phase arrays                        |
+| Extracted resources | Raw bytes     | Binary data (PNG, PDF, etc.)              |
+| Error messages      | C string      | Simple strings                            |
 
 ### 1.4 Build System
 
@@ -769,7 +769,7 @@ name: Build Python Wheels
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 jobs:
   build-wheels:
@@ -804,11 +804,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: "1.23"
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Build shared library
         env:
@@ -867,12 +867,12 @@ jobs:
 
 ### 6.1 Test Strategy
 
-| Level | Tool | Coverage Target |
-|-------|------|-----------------|
-| Unit tests | pytest | 90% Python code |
-| Integration | pytest + real GLL files | All public APIs |
-| Memory safety | valgrind + pytest | No leaks in C layer |
-| Type checking | mypy --strict | 100% type coverage |
+| Level         | Tool                    | Coverage Target     |
+| ------------- | ----------------------- | ------------------- |
+| Unit tests    | pytest                  | 90% Python code     |
+| Integration   | pytest + real GLL files | All public APIs     |
+| Memory safety | valgrind + pytest       | No leaks in C layer |
+| Type checking | mypy --strict           | 100% type coverage  |
 
 ### 6.2 Test Examples
 
@@ -944,14 +944,14 @@ docs/
 
 ## Timeline Summary
 
-| Phase | Duration | Milestone |
-|-------|----------|-----------|
-| 1. Foundation | 4-6 weeks | Shared library builds, basic FFI |
-| 2. Core Python API | 3-4 weeks | `GllFile.parse()` works |
-| 3. Acoustic Calculations | 2-3 weeks | Array response API |
-| 4. NumPy Integration | 2 weeks | Zero-copy arrays |
-| 5. Packaging | 2-3 weeks | PyPI release |
-| 6. Documentation | Ongoing | Full API docs |
+| Phase                    | Duration  | Milestone                        |
+| ------------------------ | --------- | -------------------------------- |
+| 1. Foundation            | 4-6 weeks | Shared library builds, basic FFI |
+| 2. Core Python API       | 3-4 weeks | `GllFile.parse()` works          |
+| 3. Acoustic Calculations | 2-3 weeks | Array response API               |
+| 4. NumPy Integration     | 2 weeks   | Zero-copy arrays                 |
+| 5. Packaging             | 2-3 weeks | PyPI release                     |
+| 6. Documentation         | Ongoing   | Full API docs                    |
 
 **Total estimated time: 15-20 weeks**
 
@@ -959,13 +959,13 @@ docs/
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Cross-compilation complexity | High | Use GitHub Actions with native runners per platform |
-| Memory leaks in C layer | Medium | Strict RAII patterns, valgrind testing |
-| JSON serialization overhead | Medium | Profile hot paths, add binary protocol if needed |
-| cgo build issues on Windows | Medium | Document MinGW setup, provide pre-built wheels |
-| API breakage during development | Low | Semantic versioning, deprecation warnings |
+| Risk                            | Impact | Mitigation                                          |
+| ------------------------------- | ------ | --------------------------------------------------- |
+| Cross-compilation complexity    | High   | Use GitHub Actions with native runners per platform |
+| Memory leaks in C layer         | Medium | Strict RAII patterns, valgrind testing              |
+| JSON serialization overhead     | Medium | Profile hot paths, add binary protocol if needed    |
+| cgo build issues on Windows     | Medium | Document MinGW setup, provide pre-built wheels      |
+| API breakage during development | Low    | Semantic versioning, deprecation warnings           |
 
 ---
 

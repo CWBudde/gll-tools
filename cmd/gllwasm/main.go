@@ -256,7 +256,7 @@ func buildWASMDataFiles(data []byte, dataFiles []gll.DataFile) []WASMDataFile {
 			start := int(df.Offset)
 			end := start + int(df.Size)
 			if start >= 0 && end > start && end <= len(data) {
-				mimeType := mime.GuessMimeType(df.Filename)
+				mimeType := mimetype.GuessMimeType(df.Filename)
 				item.DataURI = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data[start:end])
 			}
 		}
@@ -286,7 +286,7 @@ func buildWASMIncludeFiles(data []byte, includeFiles []gll.IncludeFile) []WASMIn
 			start := int(inc.Offset)
 			end := start + int(inc.Size)
 			if start >= 0 && end > start && end <= len(data) {
-				mimeType := mime.GuessMimeType(inc.Filename)
+				mimeType := mimetype.GuessMimeType(inc.Filename)
 				item.DataURI = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data[start:end])
 			}
 		}

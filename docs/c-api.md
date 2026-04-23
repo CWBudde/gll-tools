@@ -14,6 +14,7 @@ CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 \
 ```
 
 The build produces two files:
+
 - `libgll.so` (or `.dll`/`.dylib`) - The shared library
 - `libgll.h` - C header file with type definitions and function declarations
 
@@ -62,9 +63,11 @@ GLL_Result GLL_ParseFile(char* path);
 Parse a GLL file and return its contents as JSON.
 
 **Parameters:**
+
 - `path`: Path to the GLL file (UTF-8 encoded)
 
 **Returns:** `GLL_Result` with JSON data containing:
+
 - `header`: File format information
 - `metadata`: Product metadata
 - `gen_system`: System container data
@@ -72,6 +75,7 @@ Parse a GLL file and return its contents as JSON.
 - `resources`: List of embedded resources
 
 **Example JSON output:**
+
 ```json
 {
   "header": {
@@ -131,20 +135,22 @@ GLL_Result GLL_ComputeArrayResponse(char* configJSON);
 Compute combined array response from a JSON configuration.
 
 **Input JSON format:**
+
 ```json
 {
   "gll_path": "/path/to/file.gll",
   "elements": [
-    {"box_type": "K2", "angles": {"x": 0, "y": 0.0087, "z": 0}, "gain": 0},
-    {"box_type": "K2", "angles": {"x": 0, "y": 0.0175, "z": 0}, "gain": 0}
+    { "box_type": "K2", "angles": { "x": 0, "y": 0.0087, "z": 0 }, "gain": 0 },
+    { "box_type": "K2", "angles": { "x": 0, "y": 0.0175, "z": 0 }, "gain": 0 }
   ],
-  "receiver": {"x": 0, "y": 20, "z": 0},
-  "air": {"temperature": 20, "humidity": 0.5},
+  "receiver": { "x": 0, "y": 20, "z": 0 },
+  "air": { "temperature": 20, "humidity": 0.5 },
   "air_atten": false
 }
 ```
 
 **Output JSON format:**
+
 ```json
 {
   "transfer_function": {
@@ -164,6 +170,7 @@ GLL_Result GLL_GetBalloonAtFrequency(char* path, int32_t sourceIndex, double fre
 Get directivity balloon data at a specific frequency.
 
 **Output JSON format:**
+
 ```json
 {
   "frequency": 1000,
@@ -208,6 +215,7 @@ int main() {
 ```
 
 Compile with:
+
 ```bash
 gcc -o example example.c -L. -lgll -Wl,-rpath,.
 ```
@@ -234,6 +242,7 @@ Use the **Call Library Function Node** to call the C functions:
    - Use LabVIEW's JSON parsing VIs to extract data from the returned JSON string
 
 **LabVIEW Tips:**
+
 - Use `Flatten To String` for cluster handling
 - The returned strings are null-terminated C strings
 - Always call the Free functions to prevent memory leaks
@@ -350,6 +359,7 @@ fn parse_gll(path: &str) -> Result<String, String> {
 ## Error Handling
 
 All functions follow the same error pattern:
+
 - On success: `error` is NULL, `data` contains the result
 - On failure: `error` contains the error message, `data` is NULL
 
@@ -358,10 +368,12 @@ Always check the `error` field before accessing `data`.
 ## Thread Safety
 
 The library is thread-safe for:
+
 - Concurrent parsing of different files
 - Concurrent resource extraction from the same file
 
 Not thread-safe for:
+
 - Concurrent writes to the same output buffer
 
 ## Performance Considerations
@@ -375,14 +387,17 @@ For batch operations, parse the file once and reuse the handle when possible (Py
 ## Platform Notes
 
 ### Linux
+
 - Requires glibc 2.17+ (RHEL/CentOS 7+, Ubuntu 14.04+)
 - Set `LD_LIBRARY_PATH` or use `-rpath` when linking
 
 ### macOS
+
 - Requires macOS 10.13+ (High Sierra)
 - Set `DYLD_LIBRARY_PATH` or use `@rpath`
 
 ### Windows
+
 - Requires Windows 10+
 - Place DLL in same directory as executable or in PATH
 - May need Visual C++ Redistributable

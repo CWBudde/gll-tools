@@ -393,41 +393,24 @@ func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *Tr
 		return nil
 	}
 
-	for meridianDeg < 0 {
-		meridianDeg += 360.0
-	}
-	for meridianDeg >= 360.0 {
-		meridianDeg -= 360.0
-	}
-
 	symmetry := int(bd.AngularResolution.Symmetry)
-	meridianDeg = acoustics.MapMeridianBySymmetry(meridianDeg, symmetry)
-
-	if parallelDeg < 0 || parallelDeg > 180 {
-		return nil
-	}
-	if bd.AngularResolution.FrontHalfOnly && parallelDeg > 90 {
-		return nil
-	}
-
-	canMirrorParallel := symmetry == int(SymmetryHorizontal) || symmetry == int(SymmetryQuarter)
 	parStep := bd.AngularResolution.ParallelStep
 	parCount := acoustics.ParallelCount(parStep, bd.AngularResolution.FrontHalfOnly)
-	measuredParallelDeg := float64(parCount-1) * parStep
-	if parallelDeg > measuredParallelDeg {
-		if !canMirrorParallel {
-			return nil
-		}
-		mirrored := 180.0 - parallelDeg
-		if mirrored < 0 || mirrored > measuredParallelDeg {
-			return nil
-		}
-		parallelDeg = mirrored
-	}
-
 	merStep := bd.AngularResolution.MeridianStep
 	merCount := acoustics.MeridianCount(merStep, symmetry)
 	if merCount <= 0 || parCount <= 0 || merStep <= 0 || parStep <= 0 {
+		return nil
+	}
+
+	meridianDeg = normalizeGLLMeridian(meridianDeg, symmetry)
+	parallelDeg, ok := normalizeGLLParallel(
+		parallelDeg,
+		symmetry,
+		parStep,
+		parCount,
+		bd.AngularResolution.FrontHalfOnly,
+	)
+	if !ok {
 		return nil
 	}
 
@@ -450,18 +433,10 @@ func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *Tr
 	idx11 := acoustics.ResponseIndex(merIdx1, parIdx1, parCount, bd.AngularResolution.FrontHalfOnly)
 
 	maxIdx := len(bd.Responses) - 1
-	if idx00 > maxIdx {
-		idx00 = maxIdx
-	}
-	if idx01 > maxIdx {
-		idx01 = maxIdx
-	}
-	if idx10 > maxIdx {
-		idx10 = maxIdx
-	}
-	if idx11 > maxIdx {
-		idx11 = maxIdx
-	}
+	idx00 = clampResponseIndex(idx00, maxIdx)
+	idx01 = clampResponseIndex(idx01, maxIdx)
+	idx10 = clampResponseIndex(idx10, maxIdx)
+	idx11 = clampResponseIndex(idx11, maxIdx)
 
 	r00 := &bd.Responses[idx00]
 	r01 := &bd.Responses[idx01]
@@ -502,4 +477,53 @@ func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *Tr
 	}
 
 	return result
+}
+
+func normalizeGLLMeridian(meridianDeg float64, symmetry int) float64 {
+	for meridianDeg < 0 {
+		meridianDeg += 360.0
+	}
+	for meridianDeg >= 360.0 {
+		meridianDeg -= 360.0
+	}
+	return acoustics.MapMeridianBySymmetry(meridianDeg, symmetry)
+}
+
+func normalizeGLLParallel(
+	parallelDeg float64,
+	symmetry int,
+	parStep float64,
+	parCount int,
+	frontHalfOnly bool,
+) (float64, bool) {
+	if parallelDeg < 0 || parallelDeg > 180 {
+		return 0, false
+	}
+	if frontHalfOnly && parallelDeg > 90 {
+		return 0, false
+	}
+
+	measuredParallelDeg := float64(parCount-1) * parStep
+	if parallelDeg <= measuredParallelDeg {
+		return parallelDeg, true
+	}
+
+	canMirrorParallel := symmetry == int(SymmetryHorizontal) || symmetry == int(SymmetryQuarter)
+	if !canMirrorParallel {
+		return 0, false
+	}
+
+	mirrored := 180.0 - parallelDeg
+	if mirrored < 0 || mirrored > measuredParallelDeg {
+		return 0, false
+	}
+
+	return mirrored, true
+}
+
+func clampResponseIndex(idx, maxIdx int) int {
+	if idx > maxIdx {
+		return maxIdx
+	}
+	return idx
 }
