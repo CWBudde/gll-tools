@@ -499,16 +499,16 @@ class GllFile:
 - [x] Python callers can compute a combined transfer function for configured array elements.
 - [x] Receiver position, air properties, and air attenuation options are exposed.
 - [x] Convenience helpers exist for available box types, available sources, and response-grid evaluation.
-- [ ] Combined balloon output is returned as part of `ArrayResponse`.
-- [ ] Per-element transfer-function contributions are returned as part of `ArrayResponse`.
-- [ ] The draft-only single-call `frequency` selector API is implemented exactly as shown in the original sketch.
+- [x] Combined balloon output is returned as part of `ArrayResponse`.
+- [x] Per-element transfer-function contributions are returned as part of `ArrayResponse`.
+- [x] The draft-only single-call `frequency` selector API is implemented exactly as shown in the original sketch.
 
 **Acceptance Criteria**
 
 - [x] A valid line-array configuration can return a transfer function through the Python API.
 - [x] Invalid or empty configurations fail with Python exceptions instead of silent misuse.
 - [x] Acoustic behavior is covered by automated Python tests using real GLL fixtures.
-- [ ] The response payload contains every field from the original draft data model.
+- [x] The response payload contains every field from the original draft data model.
 
 ### 3.1 Array Configuration API
 

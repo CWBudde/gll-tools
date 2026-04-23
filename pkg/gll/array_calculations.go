@@ -100,6 +100,13 @@ type ArrayConfig struct {
 	Elements []ArrayElement
 }
 
+// ArrayResponseDetails contains the summed array response and each valid
+// element contribution used to build it.
+type ArrayResponseDetails struct {
+	TransferFunction     *TransferFunction
+	ElementContributions []*TransferFunction
+}
+
 // ComputeSystemResponseGrid calculates the combined array response at multiple receiver positions.
 // This is more efficient than calling ComputeSystemResponseAt in a loop because the caller
 // can reuse the same parsed config and loaded balloon data.
@@ -129,6 +136,10 @@ func ComputeSystemResponseAt(
 	airProps AirProperties,
 	airAttenOn bool,
 ) *TransferFunction {
+	if config == nil {
+		return nil
+	}
+
 	var arraySpectrum *TransferFunction
 
 	for i := range config.Elements {
@@ -158,6 +169,55 @@ func ComputeSystemResponseAt(
 	}
 
 	return arraySpectrum
+}
+
+// ComputeSystemResponseDetailsAt calculates the combined response and keeps the
+// per-element spectra that participate in the coherent sum.
+func ComputeSystemResponseDetailsAt(
+	config *ArrayConfig,
+	receiver Vector3D,
+	airProps AirProperties,
+	airAttenOn bool,
+) *ArrayResponseDetails {
+	if config == nil {
+		return nil
+	}
+
+	var arraySpectrum *TransferFunction
+	contributions := make([]*TransferFunction, 0, len(config.Elements))
+
+	for i := range config.Elements {
+		elem := &config.Elements[i]
+
+		response, arrivalTime := computeElementResponseAt(
+			elem,
+			receiver,
+			airProps,
+			airAttenOn,
+		)
+
+		if response == nil {
+			continue
+		}
+
+		response.AddDelay(arrivalTime)
+		contributions = append(contributions, response.CopyDeep())
+
+		if arraySpectrum == nil {
+			arraySpectrum = response
+		} else {
+			arraySpectrum.Add(response)
+		}
+	}
+
+	if arraySpectrum == nil {
+		return nil
+	}
+
+	return &ArrayResponseDetails{
+		TransferFunction:     arraySpectrum,
+		ElementContributions: contributions,
+	}
 }
 
 // computeElementResponseAt calculates response for a single array element.

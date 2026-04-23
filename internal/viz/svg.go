@@ -336,10 +336,10 @@ func buildResponsePath(freqs, series []float64, minFreq, maxFreq, minValue, maxV
 		px := scaleLog(freq, minFreq, maxFreq, x, x+w)
 		py := scaleLinear(val, minValue, maxValue, y+h, y)
 		if !started {
-			b.WriteString(fmt.Sprintf("M %.2f %.2f", px, py))
+			fmt.Fprintf(&b, "M %.2f %.2f", px, py)
 			started = true
 		} else {
-			b.WriteString(fmt.Sprintf(" L %.2f %.2f", px, py))
+			fmt.Fprintf(&b, " L %.2f %.2f", px, py)
 		}
 	}
 	return b.String()
@@ -364,10 +364,10 @@ func buildPolarPath(angles []float64, levels []float64, minLevel, maxLevel, cx, 
 		r := scaleRadius(level, minLevel, maxLevel, radius)
 		x, y := polarPoint(cx, cy, r, ang)
 		if !started {
-			b.WriteString(fmt.Sprintf("M %.2f %.2f", x, y))
+			fmt.Fprintf(&b, "M %.2f %.2f", x, y)
 			started = true
 		} else {
-			b.WriteString(fmt.Sprintf(" L %.2f %.2f", x, y))
+			fmt.Fprintf(&b, " L %.2f %.2f", x, y)
 		}
 	}
 	if started {

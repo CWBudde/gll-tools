@@ -372,7 +372,7 @@ func TestParseGoldenFiles(t *testing.T) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			t.Parallel()
 
-			f, err := os.Open(path)
+			f, err := os.Open(path) //nolint:gosec // G703: golden tests intentionally read files from configured testdata.
 			if err != nil {
 				t.Fatalf("open failed: %v", err)
 			}
@@ -392,18 +392,18 @@ func TestParseGoldenFiles(t *testing.T) {
 
 			goldenPath := filepath.Join(goldenDir, filepath.Base(path)+".json")
 			if update {
-				if err := os.MkdirAll(goldenDir, 0o755); err != nil {
+				if err := os.MkdirAll(goldenDir, 0o755); err != nil { //nolint:gosec // G703: golden tests intentionally update configured testdata.
 					t.Fatalf("mkdir failed: %v", err)
 				}
 
-				if err := os.WriteFile(goldenPath, append(current, '\n'), 0o600); err != nil {
+				if err := os.WriteFile(goldenPath, append(current, '\n'), 0o600); err != nil { //nolint:gosec // G703: golden tests intentionally update configured testdata.
 					t.Fatalf("write golden failed: %v", err)
 				}
 
 				return
 			}
 
-			golden, err := os.ReadFile(goldenPath)
+			golden, err := os.ReadFile(goldenPath) //nolint:gosec // G703: golden tests intentionally read files from configured testdata.
 			if err != nil {
 				t.Skipf("golden file missing: %s (set GLL_UPDATE_GOLDEN=1 to create)", goldenPath)
 			}

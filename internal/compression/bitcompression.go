@@ -11,6 +11,10 @@ var bitMasks = []uint32{
 	1 << 24, 1 << 25, 1 << 26, 1 << 27, 1 << 28, 1 << 29, 1 << 30, 1 << 31,
 }
 
+var byteBitMasks = []byte{
+	1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7,
+}
+
 // Sign extension masks (equivalent to m__E001 in C#)
 var signExtendMasks = []int16{
 	0,
@@ -89,7 +93,7 @@ func readBitsFromBytes(data []byte, bitPos int, nBits int) int16 {
 		byteOffset := (bitPos + i) / 8
 		bitOffset := (bitPos + i) % 8
 
-		if byteOffset < len(data) && (data[byteOffset]&byte(bitMasks[bitOffset])) != 0 {
+		if byteOffset < len(data) && (data[byteOffset]&byteBitMasks[bitOffset]) != 0 {
 			//nolint:gosec // G115: Intentional conversion for bit manipulation
 			result |= int16(bitMasks[i])
 		}

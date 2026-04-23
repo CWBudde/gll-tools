@@ -88,22 +88,17 @@ func ExtractIncludeFile(r io.ReadSeeker, inc IncludeFile) ([]byte, error) {
 
 // CalculateChecksum calculates the GLL checksum for the given data range
 func CalculateChecksum(data []byte, start, end int) [4]byte {
-	var (
-		checksum   [4]byte
-		c0, c1, c2 int
-	)
+	var checksum [4]byte
+	const checksumSeed1 byte = 1433 % 256
 
 	for i := start; i < end && i < len(data); i++ {
-		b := int(data[i])
-		c0 = (b ^ (123 + c0)) % 256
-		c1 = ((11 * b) ^ (1433 + c1)) % 256
-		c2 = ((3 * b) ^ (13 + c2)) % 256
+		b := data[i]
+		checksum[0] = b ^ (123 + checksum[0])
+		checksum[1] = (11 * b) ^ (checksumSeed1 + checksum[1])
+		checksum[2] = (3 * b) ^ (13 + checksum[2])
 	}
 
-	checksum[0] = byte(c0)
-	checksum[1] = byte(c1)
-	checksum[2] = byte(c2)
-	checksum[3] = byte((c0 + c1 + c2) ^ 0x37%256)
+	checksum[3] = (checksum[0] + checksum[1] + checksum[2]) ^ 0x37
 
 	return checksum
 }

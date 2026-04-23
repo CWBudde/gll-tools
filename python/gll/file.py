@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
 from . import _ffi
-from .exceptions import GllError, ResourceError
+from .exceptions import GllError
 from .types import (
     Database,
     DataFile,
@@ -224,9 +224,7 @@ class GllFile:
             ResourceError: If the source or balloon data cannot be found.
         """
         if self._path is None:
-            raise GllError(
-                "Cannot get balloon data from GLL files parsed from bytes."
-            )
+            raise GllError("Cannot get balloon data from GLL files parsed from bytes.")
 
         return FrequencyBalloon.from_dict(
             _ffi.get_balloon_at_frequency(self._path, source_index, frequency_hz)
@@ -245,26 +243,24 @@ class GllFile:
     ) -> "ArrayResponse":
         """Compute array response through a draft-style convenience wrapper.
 
-        ``frequency`` is accepted for API compatibility with the original plan,
-        but the current implementation still returns the full transfer function.
+        ``frequency`` requests a single-frequency combined balloon in addition
+        to the full transfer function.
         """
         from .acoustics import AirProperties, ArrayCalculator
 
         calculator = ArrayCalculator(self)
-        if air is None and (
-            air_temperature is not None or air_humidity is not None
-        ):
+        if air is None and (air_temperature is not None or air_humidity is not None):
             air = AirProperties(
                 temperature=20.0 if air_temperature is None else air_temperature,
                 humidity=0.5 if air_humidity is None else air_humidity,
             )
 
-        _ = frequency
         return calculator.compute_response(
             config,
             receiver=receiver,
             air=air,
             air_attenuation=air_attenuation,
+            frequency=frequency,
         )
 
     def __repr__(self) -> str:

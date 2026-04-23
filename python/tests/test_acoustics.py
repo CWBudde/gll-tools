@@ -163,6 +163,29 @@ def test_array_calculator_compute_response(line_array_gll: Path) -> None:
         assert len(response.transfer_function.level) > 0
 
 
+def test_array_calculator_returns_detailed_response(line_array_gll: Path) -> None:
+    """Array responses include element contributions and frequency balloon output."""
+    gll = GllFile.parse(line_array_gll)
+    calc = ArrayCalculator(gll)
+
+    box_types = calc.available_box_types
+    if not box_types:
+        pytest.skip("No box types available")
+
+    config = ArrayConfig().add_element(box_types[0], splay=0.5)
+    response = calc.compute_response(config, frequency=1000.0)
+
+    if not response.is_valid:
+        pytest.skip(f"Array response unavailable: {response.error}")
+
+    assert response.transfer_function is not None
+    assert response.element_contributions
+    assert response.combined_balloon is not None
+    assert response.combined_balloon.frequency == 1000.0
+    assert response.combined_balloon.data
+    assert isinstance(response.combined_balloon.get_spl(0.0, 0.0), float)
+
+
 def test_array_calculator_with_receiver(line_array_gll: Path) -> None:
     """Test computing response at specific receiver."""
     gll = GllFile.parse(line_array_gll)
@@ -208,8 +231,7 @@ def test_get_balloon_at_frequency(line_array_gll: Path) -> None:
 
     # Check if sources have balloon data
     has_balloon = any(
-        s.balloon_data is not None and s.balloon_data.responses
-        for s in sources
+        s.balloon_data is not None and s.balloon_data.responses for s in sources
     )
     if not has_balloon:
         pytest.skip("No balloon data in source definitions")

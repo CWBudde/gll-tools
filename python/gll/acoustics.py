@@ -2,13 +2,12 @@
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from . import _ffi
 from .exceptions import ConfigurationError, GllError
 from .file import GllFile
-from .types import TransferFunction, Vector3D
+from .types import FrequencyBalloon, TransferFunction, Vector3D
 
 
 @dataclass
@@ -41,7 +40,11 @@ class ArrayElement:
         """Convert to dictionary for JSON serialization."""
         return {
             "box_type": self.box_type,
-            "position": {"x": self.position.x, "y": self.position.y, "z": self.position.z},
+            "position": {
+                "x": self.position.x,
+                "y": self.position.y,
+                "z": self.position.z,
+            },
             "angles": {"x": self.angles.x, "y": self.angles.y, "z": self.angles.z},
             "gain": self.gain,
             "delay": self.delay,
@@ -93,6 +96,7 @@ class ArrayConfig:
 
         # Convert degrees to radians for angles
         import math
+
         angles = Vector3D(
             x=math.radians(tilt),
             y=math.radians(splay),
@@ -127,6 +131,8 @@ class ArrayResponse:
     """Result of an array response calculation."""
 
     transfer_function: TransferFunction | None = None
+    combined_balloon: FrequencyBalloon | None = None
+    element_contributions: list[TransferFunction] = field(default_factory=list)
     error: str | None = None
 
     @classmethod
@@ -135,13 +141,17 @@ class ArrayResponse:
         tf = None
         if "transfer_function" in d and d["transfer_function"]:
             tf_data = d["transfer_function"]
-            tf = TransferFunction(
-                level=tf_data.get("level", []),
-                phase=tf_data.get("phase", []),
-                delay=tf_data.get("delay", 0.0),
-            )
+            tf = TransferFunction.from_dict(tf_data)
+        combined_balloon = None
+        if "combined_balloon" in d and d["combined_balloon"]:
+            combined_balloon = FrequencyBalloon.from_dict(d["combined_balloon"])
         return cls(
             transfer_function=tf,
+            combined_balloon=combined_balloon,
+            element_contributions=[
+                TransferFunction.from_dict(c)
+                for c in d.get("element_contributions", [])
+            ],
             error=d.get("error"),
         )
 
@@ -189,6 +199,7 @@ class ArrayCalculator:
         receiver: Vector3D | None = None,
         air: AirProperties | None = None,
         air_attenuation: bool = False,
+        frequency: float | None = None,
     ) -> ArrayResponse:
         """Compute the combined array response.
 
@@ -198,6 +209,7 @@ class ArrayCalculator:
                      which is 10m directly in front.
             air: Air properties for calculations. Defaults to 20°C, 50% humidity.
             air_attenuation: Whether to include air absorption. Default False.
+            frequency: Optional single frequency in Hz for combined balloon output.
 
         Returns:
             ArrayResponse with the combined transfer function.
@@ -220,6 +232,7 @@ class ArrayCalculator:
             "receiver": {"x": receiver.x, "y": receiver.y, "z": receiver.z},
             "air": air.to_dict(),
             "air_atten": air_attenuation,
+            "frequency": frequency,
         }
 
         result = _ffi.compute_array_response(json.dumps(request))

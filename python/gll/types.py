@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Optional
+from typing import Any
 
 
 class SystemType(IntEnum):
@@ -195,10 +195,24 @@ class TransferFunctionDef:
         """Create from dictionary."""
         if d is None:
             return cls()
+        start_frequency = d.get("start_frequency", d.get("start_freq", 20.0))
+        bands_per_octave = d.get("bands_per_octave", 24)
+        end_frequency = d.get("end_frequency")
+        if end_frequency is None and "point_count" in d:
+            import math
+
+            point_count = d.get("point_count", 0)
+            if point_count > 0 and bands_per_octave > 0:
+                end_frequency = start_frequency * math.pow(
+                    2.0,
+                    (point_count - 1) / bands_per_octave,
+                )
+        if end_frequency is None:
+            end_frequency = 20000.0
         return cls(
-            start_frequency=d.get("start_frequency", 20.0),
-            end_frequency=d.get("end_frequency", 20000.0),
-            bands_per_octave=d.get("bands_per_octave", 24),
+            start_frequency=start_frequency,
+            end_frequency=end_frequency,
+            bands_per_octave=bands_per_octave,
         )
 
     def get_frequency(self, index: int) -> float:
@@ -289,13 +303,15 @@ class FrequencyBalloon(Mapping[str, Any]):
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over mapping keys."""
-        return iter((
-            "frequency",
-            "meridian_step",
-            "parallel_step",
-            "symmetry",
-            "data",
-        ))
+        return iter(
+            (
+                "frequency",
+                "meridian_step",
+                "parallel_step",
+                "symmetry",
+                "data",
+            )
+        )
 
     def __len__(self) -> int:
         """Return the number of mapping fields."""
@@ -350,9 +366,7 @@ class BalloonData:
             return cls()
         return cls(
             angular_resolution=AngularResolution.from_dict(d.get("angular_resolution")),
-            responses=[
-                TransferFunction.from_dict(r) for r in d.get("responses", [])
-            ],
+            responses=[TransferFunction.from_dict(r) for r in d.get("responses", [])],
             _source_index=source_index,
             _balloon_resolver=balloon_resolver,
         )
@@ -380,8 +394,8 @@ class SourceDefinition:
     sensitivity: float = 0.0
     impedance: float = 8.0
     max_power: float = 0.0
-    balloon_data: Optional[BalloonData] = None
-    frequency_response: Optional[TransferFunction] = None
+    balloon_data: BalloonData | None = None
+    frequency_response: TransferFunction | None = None
     _balloon_resolver: Callable[[int, float], FrequencyBalloon] | None = field(
         default=None,
         repr=False,
@@ -503,10 +517,10 @@ class BoxType:
     key: str = ""
     sources: list[str] = field(default_factory=list)
     source_placements: list[BoxSource] = field(default_factory=list)
-    case_geometry: Optional[CaseGeometry] = None
-    next_pivot: Optional[Vector3D] = None
-    reference_point: Optional[Vector3D] = None
-    center_of_mass: Optional[Vector3D] = None
+    case_geometry: CaseGeometry | None = None
+    next_pivot: Vector3D | None = None
+    reference_point: Vector3D | None = None
+    center_of_mass: Vector3D | None = None
     weight: float = 0.0
     vertical_opening_angle: float = 0.0
     horizontal_opening_angle: float = 0.0

@@ -38,6 +38,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"unsafe"
 
@@ -293,11 +294,12 @@ func GLL_ExtractIncludeFile(path *C.char, includeFileIndex C.int32_t) C.GLL_Byte
 
 // ArrayConfigJSON is the JSON input format for array calculations.
 type ArrayConfigJSON struct {
-	GLLPath  string             `json:"gll_path"`
-	Elements []ArrayElementJSON `json:"elements"`
-	Receiver *Vector3DJSON      `json:"receiver,omitempty"`
-	Air      *AirPropertiesJSON `json:"air,omitempty"`
-	AirAtten bool               `json:"air_atten"`
+	GLLPath   string             `json:"gll_path"`
+	Elements  []ArrayElementJSON `json:"elements"`
+	Receiver  *Vector3DJSON      `json:"receiver,omitempty"`
+	Air       *AirPropertiesJSON `json:"air,omitempty"`
+	AirAtten  bool               `json:"air_atten"`
+	Frequency *float64           `json:"frequency,omitempty"`
 }
 
 // ArrayElementJSON represents an element in JSON format.
@@ -325,15 +327,34 @@ type AirPropertiesJSON struct {
 
 // ArrayResponseJSON is the JSON output format for array response.
 type ArrayResponseJSON struct {
-	TransferFunction *TransferFunctionJSON `json:"transfer_function,omitempty"`
-	Error            string                `json:"error,omitempty"`
+	TransferFunction     *TransferFunctionJSON  `json:"transfer_function,omitempty"`
+	CombinedBalloon      *BalloonOutputJSON     `json:"combined_balloon,omitempty"`
+	ElementContributions []TransferFunctionJSON `json:"element_contributions,omitempty"`
+	Error                string                 `json:"error,omitempty"`
 }
 
 // TransferFunctionJSON represents a transfer function in JSON.
 type TransferFunctionJSON struct {
-	Level []float64 `json:"level"`
-	Phase []float64 `json:"phase"`
-	Delay float64   `json:"delay"`
+	Definition *TransferFunctionDefinitionJSON `json:"definition,omitempty"`
+	Level      []float64                       `json:"level"`
+	Phase      []float64                       `json:"phase"`
+	Delay      float64                         `json:"delay"`
+}
+
+// TransferFunctionDefinitionJSON represents the frequency grid for a transfer function.
+type TransferFunctionDefinitionJSON struct {
+	StartFrequency float64 `json:"start_frequency"`
+	EndFrequency   float64 `json:"end_frequency"`
+	BandsPerOctave int     `json:"bands_per_octave"`
+}
+
+// BalloonOutputJSON represents a single-frequency directivity grid.
+type BalloonOutputJSON struct {
+	Frequency float64     `json:"frequency"`
+	MerStep   float64     `json:"meridian_step"`
+	ParStep   float64     `json:"parallel_step"`
+	Symmetry  int         `json:"symmetry"`
+	Data      [][]float64 `json:"data"`
 }
 
 // GLL_ComputeArrayResponse computes the combined array response.
@@ -370,6 +391,11 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 	for i := range gllFile.Database.SourceDefinitions {
 		sd := &gllFile.Database.SourceDefinitions[i]
 		if sd.Definition != nil {
+			if sd.Definition.BalloonData != nil && len(sd.Definition.BalloonData.Responses) == 0 {
+				if err := gll.LoadBalloonResponses(f, sd.Definition.BalloonData); err != nil {
+					return makeError(err)
+				}
+			}
 			sourceDefMap[sd.Key] = sd.Definition
 		}
 	}
@@ -451,21 +477,123 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 	}
 
 	// Compute response
-	response := gll.ComputeSystemResponseAt(arrayConfig, receiver, airProps, config.AirAtten)
-
-	if response == nil {
+	details := gll.ComputeSystemResponseDetailsAt(arrayConfig, receiver, airProps, config.AirAtten)
+	if details == nil || details.TransferFunction == nil {
 		return makeJSONResult(ArrayResponseJSON{Error: "failed to compute response"})
 	}
 
 	result := ArrayResponseJSON{
-		TransferFunction: &TransferFunctionJSON{
-			Level: response.Level,
-			Phase: response.Phase,
-			Delay: response.Delay,
-		},
+		TransferFunction:     makeTransferFunctionJSON(details.TransferFunction),
+		ElementContributions: make([]TransferFunctionJSON, 0, len(details.ElementContributions)),
+	}
+
+	for _, contribution := range details.ElementContributions {
+		if contributionJSON := makeTransferFunctionJSON(contribution); contributionJSON != nil {
+			result.ElementContributions = append(result.ElementContributions, *contributionJSON)
+		}
+	}
+
+	if config.Frequency != nil {
+		result.CombinedBalloon = computeCombinedBalloonJSON(
+			arrayConfig,
+			receiver,
+			airProps,
+			config.AirAtten,
+			*config.Frequency,
+		)
 	}
 
 	return makeJSONResult(result)
+}
+
+func makeTransferFunctionJSON(tf *gll.TransferFunction) *TransferFunctionJSON {
+	if tf == nil {
+		return nil
+	}
+	return &TransferFunctionJSON{
+		Definition: &TransferFunctionDefinitionJSON{
+			StartFrequency: tf.Definition.StartFreq,
+			EndFrequency:   tf.Definition.GetEndFreq(),
+			BandsPerOctave: int(tf.Definition.BandsPerOctave),
+		},
+		Level: tf.Level,
+		Phase: tf.Phase,
+		Delay: tf.Delay,
+	}
+}
+
+func computeCombinedBalloonJSON(
+	config *gll.ArrayConfig,
+	referenceReceiver gll.Vector3D,
+	airProps gll.AirProperties,
+	airAttenOn bool,
+	frequencyHz float64,
+) *BalloonOutputJSON {
+	const (
+		merStep = 10.0
+		parStep = 10.0
+	)
+
+	radius := math.Sqrt(
+		referenceReceiver.X*referenceReceiver.X +
+			referenceReceiver.Y*referenceReceiver.Y +
+			referenceReceiver.Z*referenceReceiver.Z,
+	)
+	if radius < 0.01 {
+		radius = 10.0
+	}
+
+	merCount := int(360.0 / merStep)
+	parCount := int(180.0/parStep) + 1
+	data := make([][]float64, merCount)
+
+	for m := 0; m < merCount; m++ {
+		azimuthDeg := float64(m) * merStep
+		data[m] = make([]float64, parCount)
+		for p := 0; p < parCount; p++ {
+			elevationDeg := -90.0 + float64(p)*parStep
+			receiver := receiverOnSphere(radius, azimuthDeg, elevationDeg)
+			response := gll.ComputeSystemResponseAt(config, receiver, airProps, airAttenOn)
+			data[m][p] = levelAtFrequency(response, frequencyHz)
+		}
+	}
+
+	return &BalloonOutputJSON{
+		Frequency: frequencyHz,
+		MerStep:   merStep,
+		ParStep:   parStep,
+		Symmetry:  int(gll.SymmetryNone),
+		Data:      data,
+	}
+}
+
+func receiverOnSphere(radius, azimuthDeg, elevationDeg float64) gll.Vector3D {
+	azimuth := azimuthDeg * math.Pi / 180.0
+	elevation := elevationDeg * math.Pi / 180.0
+	horizontal := radius * math.Cos(elevation)
+
+	return gll.Vector3D{
+		X: horizontal * math.Sin(azimuth),
+		Y: horizontal * math.Cos(azimuth),
+		Z: radius * math.Sin(elevation),
+	}
+}
+
+func levelAtFrequency(tf *gll.TransferFunction, frequencyHz float64) float64 {
+	if tf == nil || len(tf.Level) == 0 {
+		return 0
+	}
+
+	bandIdx := 0
+	for i := range tf.Level {
+		if tf.Definition.GetFrequency(i) >= frequencyHz {
+			bandIdx = i
+			break
+		}
+		bandIdx = i
+	}
+
+	return tf.Level[bandIdx]
 }
 
 // GLL_GetBalloonAtFrequency gets balloon data at a specific frequency.
