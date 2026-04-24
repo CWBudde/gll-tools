@@ -6894,13 +6894,8 @@ function getBalloonGrid(source) {
   return grid;
 }
 
-// Get response at given azimuth/parallel angles, applying symmetry mirroring
-function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
-  // Map azimuth/parallel to stored response using symmetry rules
-  const responses = source?.responses || [];
-  const ang = source?.definition?.balloon_data?.angular_resolution;
-
-  if (!responses.length || !ang || !grid) {
+function mapAnglesBySymmetry(grid, azimuthDeg, parallelDeg) {
+  if (!grid) {
     return null;
   }
 
@@ -6961,9 +6956,156 @@ function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
     }
   }
 
-  // Convert angles to grid indices
-  const meridianIdx = Math.round(lookupAzimuth / ang.meridian_step);
-  const parallelIdx = Math.round(lookupParallel / ang.parallel_step);
+  return { meridianDeg: lookupAzimuth, parallelDeg: lookupParallel };
+}
+
+// Get response at given azimuth/parallel angles, applying symmetry mirroring
+// and bilinear interpolation in the complex-pressure domain.
+function getResponseWithSymmetry(source, grid, azimuthDeg, parallelDeg) {
+  const responses = source?.responses || [];
+  const ang = source?.definition?.balloon_data?.angular_resolution;
+
+  if (!responses.length || !ang || !grid) {
+    return null;
+  }
+
+  const mapped = mapAnglesBySymmetry(grid, azimuthDeg, parallelDeg);
+  if (!mapped) {
+    return null;
+  }
+
+  const meridianIdx = mapped.meridianDeg / ang.meridian_step;
+  const parallelIdx = mapped.parallelDeg / ang.parallel_step;
+
+  return interpolateResponseAtGrid(source, grid, meridianIdx, parallelIdx);
+}
+
+function interpolateResponseAtGrid(source, grid, meridianIdx, parallelIdx) {
+  const responses = source?.responses || [];
+  if (!responses.length || !grid) {
+    return null;
+  }
+
+  let meridianIdx0 = Math.floor(meridianIdx);
+  let meridianIdx1 = Math.ceil(meridianIdx);
+  if (grid.symmetry === 0 && grid.meridianCount > 1) {
+    meridianIdx0 =
+      ((meridianIdx0 % grid.meridianCount) + grid.meridianCount) %
+      grid.meridianCount;
+    meridianIdx1 =
+      ((meridianIdx1 % grid.meridianCount) + grid.meridianCount) %
+      grid.meridianCount;
+  } else {
+    meridianIdx0 = clampIndex(meridianIdx0, grid.meridianCount);
+    meridianIdx1 = clampIndex(meridianIdx1, grid.meridianCount);
+  }
+
+  const parallelIdx0 = clampIndex(Math.floor(parallelIdx), grid.parallelCount);
+  const parallelIdx1 = clampIndex(Math.ceil(parallelIdx), grid.parallelCount);
+
+  const r00 = getResponseAtGridPoint(source, grid, meridianIdx0, parallelIdx0);
+  const r01 = getResponseAtGridPoint(source, grid, meridianIdx1, parallelIdx0);
+  const r10 = getResponseAtGridPoint(source, grid, meridianIdx0, parallelIdx1);
+  const r11 = getResponseAtGridPoint(source, grid, meridianIdx1, parallelIdx1);
+
+  if (!Array.isArray(r00?.level) || r00.level.length === 0) {
+    return null;
+  }
+
+  if (meridianIdx0 === meridianIdx1 && parallelIdx0 === parallelIdx1) {
+    return r00;
+  }
+
+  const [w00, w01, w10, w11] = bilinearWeights(meridianIdx, parallelIdx);
+  const level = [];
+  const phase = [];
+  for (let band = 0; band < r00.level.length; band += 1) {
+    const interpolated = interpolateComplexPressureBand(
+      band,
+      w00,
+      w01,
+      w10,
+      w11,
+      r00,
+      r01,
+      r10,
+      r11,
+    );
+    level.push(interpolated.level);
+    phase.push(interpolated.phase);
+  }
+
+  return {
+    frequencies: r00.frequencies,
+    level,
+    phase,
+    delay: r00.delay || 0,
+  };
+}
+
+function clampIndex(index, count) {
+  if (index < 0) return 0;
+  if (index >= count) return count - 1;
+  return index;
+}
+
+function bilinearWeights(meridianIdx, parallelIdx) {
+  const meridianFrac = meridianIdx - Math.floor(meridianIdx);
+  const parallelFrac = parallelIdx - Math.floor(parallelIdx);
+  return [
+    (1 - meridianFrac) * (1 - parallelFrac),
+    meridianFrac * (1 - parallelFrac),
+    (1 - meridianFrac) * parallelFrac,
+    meridianFrac * parallelFrac,
+  ];
+}
+
+function interpolateComplexPressureBand(
+  band,
+  w00,
+  w01,
+  w10,
+  w11,
+  r00,
+  r01,
+  r10,
+  r11,
+) {
+  const [real00, imag00] = weightedComplexPressure(w00, r00, band);
+  const [real01, imag01] = weightedComplexPressure(w01, r01, band);
+  const [real10, imag10] = weightedComplexPressure(w10, r10, band);
+  const [real11, imag11] = weightedComplexPressure(w11, r11, band);
+
+  const realSum = real00 + real01 + real10 + real11;
+  const imagSum = imag00 + imag01 + imag10 + imag11;
+  if (Math.abs(realSum) < 1e-12 && Math.abs(imagSum) < 1e-12) {
+    return { level: -200, phase: 0 };
+  }
+
+  return {
+    level: 20 * Math.log10(Math.hypot(realSum, imagSum)),
+    phase: Math.atan2(imagSum, realSum),
+  };
+}
+
+function weightedComplexPressure(weight, response, band) {
+  const level = response?.level?.[band];
+  if (!weight || !Number.isFinite(level)) {
+    return [0, 0];
+  }
+
+  const phase = Number.isFinite(response?.phase?.[band])
+    ? response.phase[band]
+    : 0;
+  const magnitude = weight * Math.pow(10, level / 20);
+  return [magnitude * Math.cos(phase), magnitude * Math.sin(phase)];
+}
+
+function getResponseAtGridPoint(source, grid, meridianIdx, parallelIdx) {
+  const responses = source?.responses || [];
+  if (!responses.length || !grid) {
+    return null;
+  }
 
   // Bounds check
   if (

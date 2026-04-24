@@ -273,7 +273,7 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
 - [ ] Validate angular interpolation:
   - [x] Replace direct linear interpolation of wrapped phase with unit-circle interpolation.
   - [x] Replace array-calculation angular interpolation with full complex-pressure interpolation.
-  - [ ] Decide whether display-only visualization paths should use dB interpolation or the same complex-pressure interpolation.
+  - [x] Decide whether display-only visualization paths should use dB interpolation or the same complex-pressure interpolation.
   - [x] Add tests around phase wrap boundaries near `+π/-π`.
 - [ ] Validate air attenuation expectations:
   - [x] Remove approximate UI/docs wording after replacing the simplified model.

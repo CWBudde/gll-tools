@@ -56,10 +56,11 @@ Current implementation behavior:
   - `phase` is applied as the complex angle.
   - The surrounding angular samples are weighted in the complex plane.
   - Interpolated `level` and `phase` are derived from the resulting complex value.
+- The Go array-response engine and the web demo's display-only single-source
+  polar/balloon paths use the same complex-pressure interpolation contract.
 
 Open contract to validate:
 
-- Decide whether display-only visualization paths should use the same complex-pressure interpolation everywhere or retain dB interpolation for purely visual surfaces.
 - Validate complex-pressure interpolation against EASE GLL Viewer output.
 
 ## Air Attenuation

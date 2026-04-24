@@ -550,14 +550,14 @@ func interpolateComplexPressureBand(
 	real10, imag10 := weightedComplexPressure(w10, r10, band)
 	real11, imag11 := weightedComplexPressure(w11, r11, band)
 
-	real := real00 + real01 + real10 + real11
-	imag := imag00 + imag01 + imag10 + imag11
-	if math.Abs(real) < 1e-12 && math.Abs(imag) < 1e-12 {
+	realSum := real00 + real01 + real10 + real11
+	imagSum := imag00 + imag01 + imag10 + imag11
+	if math.Abs(realSum) < 1e-12 && math.Abs(imagSum) < 1e-12 {
 		return -200.0, 0.0
 	}
 
-	level := 20.0 * math.Log10(math.Hypot(real, imag))
-	phase := math.Atan2(imag, real)
+	level := 20.0 * math.Log10(math.Hypot(realSum, imagSum))
+	phase := math.Atan2(imagSum, realSum)
 	return level, phase
 }
 

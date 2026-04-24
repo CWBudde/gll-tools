@@ -33,7 +33,7 @@ func TestBalloonResponseAtGLLAngles(t *testing.T) {
 }
 
 func TestComputeSystemResponseAtAppliesDelayOnce(t *testing.T) {
-	source := &SourceDefinition{BalloonData: testUniformBalloon(0)}
+	source := &SourceDefinition{BalloonData: testUniformBalloon()}
 	config := &ArrayConfig{
 		Elements: []ArrayElement{
 			{
@@ -205,7 +205,7 @@ func TestBalloonResponseAtGLLAnglesUsesParserSymmetryEnum(t *testing.T) {
 }
 
 func TestBalloonResponseAtGLLAnglesInterpolatesPhaseAcrossWrap(t *testing.T) {
-	balloon := testUniformBalloon(0)
+	balloon := testUniformBalloon()
 	balloon.Responses[1].Phase[0] = math.Pi - 0.1  // Meridian 0, parallel 90
 	balloon.Responses[3].Phase[0] = -math.Pi + 0.1 // Meridian 90, parallel 90
 
@@ -221,7 +221,7 @@ func TestBalloonResponseAtGLLAnglesInterpolatesPhaseAcrossWrap(t *testing.T) {
 }
 
 func TestBalloonResponseAtGLLAnglesInterpolatesComplexPressure(t *testing.T) {
-	balloon := testUniformBalloon(0)
+	balloon := testUniformBalloon()
 	balloon.Responses[1].Phase[0] = 0       // Meridian 0, parallel 90
 	balloon.Responses[3].Phase[0] = math.Pi // Meridian 90, parallel 90
 
@@ -250,14 +250,14 @@ func pressureAverageDB(levels ...float64) float64 {
 	return 20 * math.Log10(avg)
 }
 
-func testUniformBalloon(level float64) *BalloonData {
+func testUniformBalloon() *BalloonData {
 	def := LogSpectrumDefinition{
 		BandsPerOctave: 1,
 		StartFreq:      1000,
 		PointCount:     1,
 	}
 
-	return testUniformBalloonWithDefinition(level, def)
+	return testUniformBalloonWithDefinition(0, def)
 }
 
 func testUniformBalloonWithDefinition(level float64, def LogSpectrumDefinition) *BalloonData {
@@ -285,7 +285,7 @@ func testUniformBalloonWithDefinition(level float64, def LogSpectrumDefinition) 
 }
 
 func testDirectionalBalloon() *BalloonData {
-	balloon := testUniformBalloon(0)
+	balloon := testUniformBalloon()
 	balloon.Responses[0].Level[0] = 10 // Front pole (parallel 0)
 	balloon.Responses[1].Level[0] = 30 // Meridian 0, parallel 90 (top)
 	balloon.Responses[2].Level[0] = 40 // Back pole (parallel 180)
@@ -296,7 +296,7 @@ func testDirectionalBalloon() *BalloonData {
 }
 
 func testRotationBalloon() *BalloonData {
-	balloon := testUniformBalloon(0)
+	balloon := testUniformBalloon()
 	balloon.Responses[1].Level[0] = 5  // Meridian 0, parallel 90 (top)
 	balloon.Responses[3].Level[0] = 10 // Meridian 90, parallel 90 (right)
 	balloon.Responses[4].Level[0] = 15 // Meridian 180, parallel 90 (bottom)
