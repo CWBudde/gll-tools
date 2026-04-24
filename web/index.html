@@ -134,10 +134,25 @@
 
         <div id="tab-visualization" class="tab-content">
           <div id="sim-computing-overlay" class="sim-computing hidden">
-            <div class="spinner spinner-sm"></div>
-            <span id="sim-computing-message"
-              >Computing array response...</span
+            <div class="sim-computing-header">
+              <div class="spinner spinner-sm"></div>
+              <span id="sim-computing-message"
+                >Computing array response...</span
+              >
+              <span id="sim-computing-percent" class="sim-computing-percent"
+                >0%</span
+              >
+            </div>
+            <div
+              class="sim-progress"
+              role="progressbar"
+              aria-label="Array response computation progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
             >
+              <div id="sim-progress-bar" class="sim-progress-bar"></div>
+            </div>
           </div>
           <div class="card" id="config-editor-card">
             <h3>Array Configuration</h3>

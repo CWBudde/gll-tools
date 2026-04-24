@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"syscall/js"
+	"time"
 
 	"github.com/cwbudde/gll-tools/internal/filters"
 	"github.com/cwbudde/gll-tools/internal/mime"
@@ -99,6 +100,9 @@ func main() {
 
 	// Register the computeArrayBalloon function
 	js.Global().Set("computeArrayBalloon", js.FuncOf(computeArrayBalloon))
+
+	// Register the async computeArrayBalloon function
+	js.Global().Set("computeArrayBalloonAsync", js.FuncOf(computeArrayBalloonAsync))
 
 	// Keep the program running
 	select {}
@@ -496,6 +500,16 @@ type ArrayBalloonResult struct {
 	Results     []ArrayBalloonPointResult `json:"results,omitempty"`
 }
 
+// ArrayBalloonProgressEvent is emitted by computeArrayBalloonAsync.
+type ArrayBalloonProgressEvent struct {
+	Type      string              `json:"type"`
+	Success   bool                `json:"success,omitempty"`
+	Error     string              `json:"error,omitempty"`
+	Completed int                 `json:"completed,omitempty"`
+	Total     int                 `json:"total,omitempty"`
+	Result    *ArrayBalloonResult `json:"result,omitempty"`
+}
+
 // ArrayBalloonPointResult is one receiver point's response.
 type ArrayBalloonPointResult struct {
 	Level []float64 `json:"level"`
@@ -517,33 +531,82 @@ func computeArrayBalloon(_ js.Value, args []js.Value) any {
 	data := make([]byte, length)
 	js.CopyBytesToGo(data, jsArray)
 
+	return marshalBalloonResult(computeArrayBalloonData(data, args[1].String(), nil))
+}
+
+// computeArrayBalloonAsync calculates array response at multiple receiver
+// positions and emits JSON progress/completion events to a callback.
+func computeArrayBalloonAsync(_ js.Value, args []js.Value) any {
+	if len(args) < 3 || args[2].Type() != js.TypeFunction {
+		return marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
+			Type:    "complete",
+			Success: false,
+			Error:   "requires 3 arguments: gll_data (Uint8Array), config (JSON string), callback",
+		})
+	}
+
+	jsArray := args[0]
+	length := jsArray.Get("length").Int()
+	data := make([]byte, length)
+	js.CopyBytesToGo(data, jsArray)
+
+	configJSON := args[1].String()
+	callback := args[2]
+
+	go func() {
+		result := computeArrayBalloonData(data, configJSON, func(completed, total int) {
+			callback.Invoke(marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
+				Type:      "progress",
+				Completed: completed,
+				Total:     total,
+			}))
+			time.Sleep(time.Millisecond)
+		})
+		callback.Invoke(marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
+			Type:    "complete",
+			Success: result.Success,
+			Error:   result.Error,
+			Result:  &result,
+		}))
+	}()
+
+	return marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
+		Type:    "started",
+		Success: true,
+	})
+}
+
+func computeArrayBalloonData(
+	data []byte,
+	configJSON string,
+	progress func(completed, total int),
+) ArrayBalloonResult {
 	// Parse the GLL file once
 	reader := bytes.NewReader(data)
 	file, err := gll.Parse(reader)
 	if err != nil {
-		return marshalBalloonResult(ArrayBalloonResult{
+		return ArrayBalloonResult{
 			Success: false,
 			Error:   "failed to parse GLL: " + err.Error(),
-		})
+		}
 	}
 
 	// Parse the configuration
-	configJSON := args[1].String()
 	var req ArrayBalloonRequest
 	if err := json.Unmarshal([]byte(configJSON), &req); err != nil {
-		return marshalBalloonResult(ArrayBalloonResult{
+		return ArrayBalloonResult{
 			Success: false,
 			Error:   "failed to parse config: " + err.Error(),
-		})
+		}
 	}
 
 	config := buildArrayConfig(file, reader, req.Elements)
 
 	if len(config.Elements) == 0 {
-		return marshalBalloonResult(ArrayBalloonResult{
+		return ArrayBalloonResult{
 			Success: false,
 			Error:   "no valid elements in configuration",
-		})
+		}
 	}
 
 	// Build receivers
@@ -566,7 +629,7 @@ func computeArrayBalloon(_ js.Value, args []js.Value) any {
 	}
 
 	// Compute grid
-	responses := gll.ComputeSystemResponseGrid(config, receivers, airProps, req.AirProps.AirAttenOn)
+	responses := gll.ComputeSystemResponseGridWithProgress(config, receivers, airProps, req.AirProps.AirAttenOn, progress)
 
 	// Build result
 	result := ArrayBalloonResult{
@@ -598,11 +661,16 @@ func computeArrayBalloon(_ js.Value, args []js.Value) any {
 		}
 	}
 
-	return marshalBalloonResult(result)
+	return result
 }
 
 func marshalBalloonResult(result ArrayBalloonResult) string {
 	jsonBytes, _ := json.Marshal(result)
+	return string(jsonBytes)
+}
+
+func marshalBalloonProgressEvent(event ArrayBalloonProgressEvent) string {
+	jsonBytes, _ := json.Marshal(event)
 	return string(jsonBytes)
 }
 

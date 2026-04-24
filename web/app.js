@@ -58,6 +58,9 @@ let arrayViewerNeedsUpdate = false;
 let cachedArrayBalloon = null; // { frequencies, results: [{ level, phase }], grid: { merCount, parCount } }
 let configDirty = false;
 
+const ARRAY_BALLOON_MER_COUNT = 72;
+const ARRAY_BALLOON_PAR_COUNT = 37;
+
 // Theme management
 const THEME_KEY = "gll-viewer-theme";
 const THEME_MODES = ["auto", "light", "dark"];
@@ -579,27 +582,71 @@ async function triggerFullRecalculation() {
     btn.classList.remove("sim-recalculate-dirty");
   }
 
+  setSimulationProgress(0, "Preparing array response...");
+
+  try {
+    // Yield to let the progress UI render before WASM starts.
+    await nextPaint();
+
+    await computeArrayBalloonGrid((completed, total) => {
+      const pointLabel =
+        total > 0
+          ? ` (${completed.toLocaleString()} of ${total.toLocaleString()} points)`
+          : "";
+      setSimulationProgress(
+        total > 0 ? (completed / total) * 100 : 0,
+        `Computing array response${pointLabel}...`,
+      );
+    });
+
+    setSimulationProgress(100, "Updating visualizations...");
+    await nextPaint();
+
+    updateCombinedResponseChart();
+    visualization.updateBalloonOptions();
+    visualization.updatePolarOptions();
+    visualization.updateBalloonVisualization();
+    visualization.updatePolarChart();
+  } finally {
+    hideSimulationProgress();
+    recalcInProgress = false;
+    updateRecalcButtonVisibility();
+    const autoRecalc = document.getElementById("sim-auto-recalc");
+    if (configDirty && autoRecalc?.checked && isVisualizationTabActive()) {
+      triggerFullRecalculation();
+    }
+  }
+}
+
+function nextPaint() {
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+  );
+}
+
+function setSimulationProgress(percent, messageText) {
   const overlay = document.getElementById("sim-computing-overlay");
   const message = document.getElementById("sim-computing-message");
+  const percentLabel = document.getElementById("sim-computing-percent");
+  const progress = document.querySelector(".sim-progress");
+  const bar = document.getElementById("sim-progress-bar");
+  const value = Math.max(
+    0,
+    Math.min(100, Number.isFinite(percent) ? percent : 0),
+  );
+
   if (overlay) overlay.classList.remove("hidden");
-  if (message) message.textContent = "Computing array response (2664 points)...";
+  if (message) message.textContent = messageText;
+  if (percentLabel) percentLabel.textContent = `${Math.round(value)}%`;
+  if (progress) {
+    progress.setAttribute("aria-valuenow", String(Math.round(value)));
+  }
+  if (bar) bar.style.width = `${value}%`;
+}
 
-  // Yield to let the overlay render
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  computeArrayBalloonGrid();
-
-  if (message) message.textContent = "Updating visualizations...";
-  await new Promise((r) => requestAnimationFrame(r));
-
-  updateCombinedResponseChart();
-  visualization.updateBalloonOptions();
-  visualization.updatePolarOptions();
-  visualization.updateBalloonVisualization();
-  visualization.updatePolarChart();
-
+function hideSimulationProgress() {
+  const overlay = document.getElementById("sim-computing-overlay");
   if (overlay) overlay.classList.add("hidden");
-  recalcInProgress = false;
 }
 
 function generateSphericalGrid(distance, merCount, parCount) {
@@ -624,33 +671,44 @@ function generateSphericalGrid(distance, merCount, parCount) {
   return receivers;
 }
 
-function computeArrayBalloonGrid() {
+async function computeArrayBalloonGrid(onProgress) {
   // Compute array response at a full spherical grid for balloon/polar
-  if (!activeConfig || !currentFileBytes || typeof window.computeArrayBalloon !== "function") {
+  if (
+    !activeConfig ||
+    !currentFileBytes ||
+    (typeof window.computeArrayBalloonAsync !== "function" &&
+      typeof window.computeArrayBalloon !== "function")
+  ) {
     cachedArrayBalloon = null;
-    return;
+    return false;
   }
 
   const elements = buildElementsFromConfig(activeConfig);
   if (!elements.length) {
     cachedArrayBalloon = null;
-    return;
+    return false;
   }
 
   // Filter to valid sources
   const validSources = new Set(
     (currentData?.database?.source_definitions || []).map((s) => s.key),
   );
-  const validElements = elements.filter((elem) => validSources.has(elem.source_key));
+  const validElements = elements.filter((elem) =>
+    validSources.has(elem.source_key),
+  );
   if (!validElements.length) {
     cachedArrayBalloon = null;
-    return;
+    return false;
   }
 
   const sim = getSimulationParams();
-  const merCount = 72; // 5° steps
-  const parCount = 37; // 5° steps
-  const receivers = generateSphericalGrid(sim.receiverDistance, merCount, parCount);
+  const merCount = ARRAY_BALLOON_MER_COUNT; // 5° steps
+  const parCount = ARRAY_BALLOON_PAR_COUNT; // 5° steps
+  const receivers = generateSphericalGrid(
+    sim.receiverDistance,
+    merCount,
+    parCount,
+  );
 
   const payload = JSON.stringify({
     elements: validElements,
@@ -664,8 +722,10 @@ function computeArrayBalloonGrid() {
   });
 
   try {
-    const resultJSON = window.computeArrayBalloon(currentFileBytes, payload);
-    const result = JSON.parse(resultJSON);
+    const result =
+      typeof window.computeArrayBalloonAsync === "function"
+        ? await computeArrayBalloonGridAsync(payload, onProgress)
+        : JSON.parse(window.computeArrayBalloon(currentFileBytes, payload));
     if (result.success) {
       cachedArrayBalloon = {
         frequencies: result.frequencies,
@@ -673,12 +733,67 @@ function computeArrayBalloonGrid() {
         grid: { merCount, parCount },
         receiverDistance: sim.receiverDistance,
       };
+      return true;
     } else {
       cachedArrayBalloon = null;
+      return false;
     }
   } catch {
     cachedArrayBalloon = null;
+    return false;
   }
+}
+
+function computeArrayBalloonGridAsync(payload, onProgress) {
+  return new Promise((resolve, reject) => {
+    let started;
+    try {
+      started = JSON.parse(
+        window.computeArrayBalloonAsync(
+          currentFileBytes,
+          payload,
+          (eventJSON) => {
+            let event;
+            try {
+              event = JSON.parse(eventJSON);
+            } catch (err) {
+              reject(err);
+              return;
+            }
+
+            if (event.type === "progress") {
+              onProgress?.(event.completed || 0, event.total || 0);
+              return;
+            }
+
+            if (event.type === "complete") {
+              if (event.success && event.result) {
+                resolve(event.result);
+              } else {
+                resolve({
+                  success: false,
+                  error:
+                    event.error ||
+                    event.result?.error ||
+                    "Failed to compute array response",
+                });
+              }
+            }
+          },
+        ),
+      );
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    if (!started.success) {
+      resolve({
+        success: false,
+        error: started.error || "Failed to start array response computation",
+      });
+    }
+  });
 }
 
 function switchTab(tabName) {
@@ -695,7 +810,11 @@ function switchTab(tabName) {
 
   // Initialize chart when switching to visualization tab
   if (tabName === "visualization" && currentData) {
-    if ((configDirty || !cachedArrayBalloon) && activeConfig && !recalcInProgress) {
+    if (
+      (configDirty || !cachedArrayBalloon) &&
+      activeConfig &&
+      !recalcInProgress
+    ) {
       triggerFullRecalculation();
     } else if (!recalcInProgress) {
       updateCombinedResponseChart();

@@ -116,11 +116,42 @@ func ComputeSystemResponseGrid(
 	airProps AirProperties,
 	airAttenOn bool,
 ) []*TransferFunction {
+	return ComputeSystemResponseGridWithProgress(config, receivers, airProps, airAttenOn, nil)
+}
+
+// ComputeSystemResponseGridWithProgress calculates the combined array response
+// at multiple receiver positions and reports progress after receiver batches.
+func ComputeSystemResponseGridWithProgress(
+	config *ArrayConfig,
+	receivers []Vector3D,
+	airProps AirProperties,
+	airAttenOn bool,
+	progress func(completed, total int),
+) []*TransferFunction {
 	results := make([]*TransferFunction, len(receivers))
+	if progress != nil {
+		progress(0, len(receivers))
+	}
+	progressEvery := progressReportInterval(len(receivers))
 	for i, recv := range receivers {
 		results[i] = ComputeSystemResponseAt(config, recv, airProps, airAttenOn)
+		completed := i + 1
+		if progress != nil && (completed == len(receivers) || completed%progressEvery == 0) {
+			progress(completed, len(receivers))
+		}
 	}
 	return results
+}
+
+func progressReportInterval(total int) int {
+	if total <= 100 {
+		return 1
+	}
+	interval := total / 100
+	if interval < 1 {
+		return 1
+	}
+	return interval
 }
 
 // ComputeSystemResponseAt calculates the combined array response at a receiver position.
