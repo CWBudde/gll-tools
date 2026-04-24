@@ -298,17 +298,18 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
 
 ### 9.3 Reference Validation
 
-- [ ] Create a reference comparison workflow:
+- [x] Create a reference comparison workflow:
   - Export screenshots/data from official EASE GLL Viewer for one small loudspeaker and one line-array sample.
   - Compare on-axis response, off-axis response, polar slices, and combined array response.
   - Store tolerances and discrepancy notes in `docs/validation.md`.
 - [ ] Add deterministic web demo fixtures:
-  - Include at least one tiny synthetic GLL/XGLL-derived fixture with known directivity and phase behavior.
+  - [x] Include at least one tiny synthetic fixture with known directivity and phase behavior for browser-facing computation code.
   - Extend Playwright smoke tests to check plotted metadata and selected numeric chart values, not just page visibility.
 - [ ] Add regression tests for visualization-facing WASM APIs:
-  - `computeArrayResponse`
-  - `computeArrayBalloon`
-  - `computeArrayBalloonAsync` progress callback and final result parity
+  - [x] `computeArrayResponse`
+  - [x] `computeArrayBalloon`
+  - [x] `computeArrayBalloonAsync` progress callback and final result parity at the shared computation-core level
+  - [ ] Browser-level JS wrapper parity test after server/browser-based tests are allowed again
 
 ### 9.4 Visualization UX Sophistication
 
