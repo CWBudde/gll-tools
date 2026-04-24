@@ -3377,6 +3377,16 @@ function setupConfigEditor() {
 
   const table = document.getElementById("config-editor-table");
   if (table) {
+    table.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".btn-remove");
+      if (!removeButton) return;
+
+      const row = removeButton.closest("tr");
+      if (!row) return;
+
+      row.remove();
+      applyConfigFromEditor();
+    });
     table.addEventListener("input", () => {
       scheduleArrayViewerUpdate();
       scheduleConfigApply();
@@ -3414,7 +3424,7 @@ function addConfigEditorRow(boxTypeKey, splayDeg) {
   row.innerHTML = `
     <td><select class="cfg-box-type">${options}</select></td>
     <td><input type="number" class="cfg-splay" value="${formatNumber(splayDeg ?? 0)}" step="0.5"></td>
-    <td><button class="btn-remove" onclick="this.closest('tr').remove()">X</button></td>
+    <td><button type="button" class="btn-remove">X</button></td>
   `;
   tbody.appendChild(row);
   scheduleArrayViewerUpdate();

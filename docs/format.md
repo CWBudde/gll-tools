@@ -397,6 +397,8 @@ Contains the directivity balloon - SPL response at all angles.
 | responseCount     | int32                  | Number of transfer functions |
 | responses[]       | TransferFunctionLsPs[] | Response at each angle       |
 
+Implementation note: the binary structure is documented here, but the exact acoustic combination contract between `responses[]`, `OnAxisSpectrumRaw`, phase delay, and air attenuation is tracked separately in [docs/acoustic-model.md](acoustic-model.md).
+
 ### Angular Resolution
 
 Standard resolution is 5-degree steps:

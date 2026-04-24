@@ -256,6 +256,78 @@ All database buffers implemented:
 
 ---
 
+## Phase 9: Visualization Tab Validation & Refinement
+
+Goal: make the web demo visualization tab trustworthy, polished, and easy to compare against known reference output. The parser and non-visual tabs are considered mostly stable; this phase focuses on array response visualization, acoustic assumptions in the visualization path, and UI quality.
+
+### 9.1 Acoustic Contract Review
+
+- [ ] Document the exact contract for `BalloonData.Responses`:
+  - Are balloon responses relative directivity only, absolute SPL, or already combined with on-axis data?
+  - Confirm whether visualization and array calculations should combine `SourceDefinition.OnAxisSpectrum` or the balloon response at `(meridian=0, parallel=0)`.
+  - [x] Add initial notes to `docs/format.md` and `docs/acoustic-model.md`.
+- [ ] Validate propagation delay phase convention:
+  - Confirm whether stored phase uses the same sign convention as Go's complex summation.
+  - [x] Add a synthetic two-source interference test where expected nulls/peaks are analytically known.
+  - Align `TransferFunction.AddDelay`, web phase display, and group-delay calculation semantics.
+- [ ] Validate angular interpolation:
+  - [x] Replace direct linear interpolation of wrapped phase with unit-circle interpolation.
+  - Consider complex-pressure interpolation for array calculations, while keeping dB interpolation only for display if appropriate.
+  - [x] Add tests around phase wrap boundaries near `+π/-π`.
+- [ ] Validate air attenuation expectations:
+  - [x] Mark the current simplified model as approximate in UI/docs.
+  - Decide whether the visualization tab needs a proper ISO 9613-1 implementation before presenting attenuation as prediction-grade.
+
+### 9.2 Coordinate & Placement Consistency
+
+- [ ] Audit coordinate conventions across Go, WASM, Python, and the web UI:
+  - Confirm that `+X` is the firing/on-axis direction everywhere.
+  - Fix or document legacy/default paths that still treat `+Y` as front.
+  - Add tests for receiver placement at front/right/top/back.
+- [ ] Validate box/source placement handling:
+  - Confirm that every source placement position and H/V/R angle is applied before array summation.
+  - Ensure web, WASM, CLI/Python bindings, and any future API use the same expansion model.
+  - Add a multi-way synthetic box test where two source offsets produce a predictable phase difference.
+- [ ] Review rotation matrix composition:
+  - Verify `buildRotationMatrix()` against GLL H/V/R conventions and the Go fallback Euler path.
+  - Add cross-language tests for several known rotations and direction-to-GLL-angle mappings.
+
+### 9.3 Reference Validation
+
+- [ ] Create a reference comparison workflow:
+  - Export screenshots/data from official EASE GLL Viewer for one small loudspeaker and one line-array sample.
+  - Compare on-axis response, off-axis response, polar slices, and combined array response.
+  - Store tolerances and discrepancy notes in `docs/validation.md`.
+- [ ] Add deterministic web demo fixtures:
+  - Include at least one tiny synthetic GLL/XGLL-derived fixture with known directivity and phase behavior.
+  - Extend Playwright smoke tests to check plotted metadata and selected numeric chart values, not just page visibility.
+- [ ] Add regression tests for visualization-facing WASM APIs:
+  - `computeArrayResponse`
+  - `computeArrayBalloon`
+  - `computeArrayBalloonAsync` progress callback and final result parity
+
+### 9.4 Visualization UX Sophistication
+
+- [x] Show determinate progress while computing array balloon grids.
+- [ ] Make visual computation state clearer:
+  - Show cached vs stale state when configuration changes and auto-recalculate is disabled.
+  - Surface computation errors near the relevant chart instead of only metadata chips.
+  - Keep chart controls disabled while their backing data is unavailable or stale.
+- [ ] Improve array response chart presentation:
+  - Add clear labels for absolute SPL vs normalized/directivity-only views.
+  - Add receiver position, source count, active filter/preset, and air attenuation state in a compact summary.
+  - Add optional normalized mode for comparing shapes without hiding absolute SPL mode.
+- [ ] Improve polar and 3D balloon controls:
+  - Make frequency selection consistent between polar and balloon views.
+  - Add preset frequency buttons or a logarithmic slider for common bands.
+  - Clarify when data is interpolated, mirrored by symmetry, or unavailable.
+- [ ] Add visual QA checks:
+  - Desktop and mobile screenshots for the visualization tab.
+  - Verify charts and 3D canvas are nonblank after recomputation.
+  - Check long labels and narrow layouts for overlap.
+
+---
+
 **Remaining (lower priority):**
 
 - Geometry parsing (for CaseGeometry in Frame) - complex, only needed for 3D visualization

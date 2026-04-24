@@ -473,7 +473,7 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 		}
 
 		result.Level[i] = w00*level00 + w01*level01 + w10*level10 + w11*level11
-		result.Phase[i] = w00*phase00 + w01*phase01 + w10*phase10 + w11*phase11
+		result.Phase[i] = interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11)
 	}
 
 	return result
@@ -564,10 +564,19 @@ func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *Tr
 		}
 
 		result.Level[i] = w00*level00 + w01*level01 + w10*level10 + w11*level11
-		result.Phase[i] = w00*phase00 + w01*phase01 + w10*phase10 + w11*phase11
+		result.Phase[i] = interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11)
 	}
 
 	return result
+}
+
+func interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11 float64) float64 {
+	real := w00*math.Cos(phase00) + w01*math.Cos(phase01) + w10*math.Cos(phase10) + w11*math.Cos(phase11)
+	imag := w00*math.Sin(phase00) + w01*math.Sin(phase01) + w10*math.Sin(phase10) + w11*math.Sin(phase11)
+	if math.Abs(real) < 1e-12 && math.Abs(imag) < 1e-12 {
+		return w00*phase00 + w01*phase01 + w10*phase10 + w11*phase11
+	}
+	return math.Atan2(imag, real)
 }
 
 func normalizeGLLMeridian(meridianDeg float64, symmetry int) float64 {

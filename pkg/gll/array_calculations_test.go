@@ -118,6 +118,45 @@ func TestComputeSystemResponseAtUsesOrientationMatrix(t *testing.T) {
 	}
 }
 
+func TestComputeSystemResponseAtShowsPathLengthInterference(t *testing.T) {
+	def := LogSpectrumDefinition{
+		BandsPerOctave: 1,
+		StartFreq:      1000,
+		PointCount:     2,
+	}
+	source := &SourceDefinition{BalloonData: testUniformBalloonWithDefinition(0, def)}
+	halfWavelengthAt1k := 343.0 / (2.0 * 1000.0)
+	config := &ArrayConfig{
+		Elements: []ArrayElement{
+			{
+				Position:   Vector3D{},
+				SourceDefs: []*SourceDefinition{source},
+			},
+			{
+				Position:   Vector3D{X: halfWavelengthAt1k},
+				SourceDefs: []*SourceDefinition{source},
+			},
+		},
+	}
+
+	resp := ComputeSystemResponseAt(
+		config,
+		Vector3D{X: 1000},
+		AirProperties{Speed: 343},
+		false,
+	)
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if len(resp.Level) != 2 {
+		t.Fatalf("level len = %d, want 2", len(resp.Level))
+	}
+
+	if resp.Level[0] > resp.Level[1]-40 {
+		t.Fatalf("expected 1 kHz half-wavelength null well below 2 kHz peak, got %.2f dB vs %.2f dB", resp.Level[0], resp.Level[1])
+	}
+}
+
 func TestBalloonResponseAtGLLAnglesUsesParserSymmetryEnum(t *testing.T) {
 	t.Run("vertical", func(t *testing.T) {
 		balloon := testSymmetricBalloon(SymmetryVertical)
@@ -164,6 +203,22 @@ func TestBalloonResponseAtGLLAnglesUsesParserSymmetryEnum(t *testing.T) {
 	})
 }
 
+func TestBalloonResponseAtGLLAnglesInterpolatesPhaseAcrossWrap(t *testing.T) {
+	balloon := testUniformBalloon(0)
+	balloon.Responses[1].Phase[0] = math.Pi - 0.1  // Meridian 0, parallel 90
+	balloon.Responses[3].Phase[0] = -math.Pi + 0.1 // Meridian 90, parallel 90
+
+	resp := balloon.responseAtGLLAngles(45, 90)
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	got := math.Abs(resp.Phase[0])
+	if math.Abs(got-math.Pi) > 0.11 {
+		t.Fatalf("interpolated phase = %f, want near ±π", resp.Phase[0])
+	}
+}
+
 func testUniformBalloon(level float64) *BalloonData {
 	def := LogSpectrumDefinition{
 		BandsPerOctave: 1,
@@ -171,12 +226,19 @@ func testUniformBalloon(level float64) *BalloonData {
 		PointCount:     1,
 	}
 
+	return testUniformBalloonWithDefinition(level, def)
+}
+
+func testUniformBalloonWithDefinition(level float64, def LogSpectrumDefinition) *BalloonData {
 	responses := make([]TransferFunction, 6)
 	for i := range responses {
 		responses[i] = TransferFunction{
 			Definition: def,
-			Level:      []float64{level},
-			Phase:      []float64{0},
+			Level:      make([]float64, def.PointCount),
+			Phase:      make([]float64, def.PointCount),
+		}
+		for j := range responses[i].Level {
+			responses[i].Level[j] = level
 		}
 	}
 

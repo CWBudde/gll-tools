@@ -40,4 +40,13 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
   );
   await expect(page.locator("#polar-meta")).toContainText("Frequency");
   await expect(page.locator("#balloon-meta")).toContainText("Frequency");
+
+  await page.locator("#config-clear").click();
+  await page.locator("#config-add-element").click();
+  await expect(configRows).toHaveCount(1);
+  await expect(page.locator("#array-view-placeholder")).toBeHidden();
+
+  await configRows.first().getByRole("button", { name: "X" }).click();
+  await expect(configRows).toHaveCount(0);
+  await expect(page.locator("#array-view-placeholder")).toBeVisible();
 });
