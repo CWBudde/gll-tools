@@ -1084,6 +1084,26 @@ header h1 {
   color: var(--text);
 }
 
+.response-meta .chip-success {
+  border-color: #16a34a;
+  color: #166534;
+}
+
+.response-meta .chip-warning {
+  border-color: #d97706;
+  color: #92400e;
+}
+
+.response-meta .chip-error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.response-meta .chip-info {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 /* Config Lists */
 .config-item {
   padding: 0.75rem;

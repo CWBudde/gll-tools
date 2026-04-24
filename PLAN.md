@@ -314,11 +314,11 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
 ### 9.4 Visualization UX Sophistication
 
 - [x] Show determinate progress while computing array balloon grids.
-- [ ] Make visual computation state clearer:
+- [x] Make visual computation state clearer:
   - Show cached vs stale state when configuration changes and auto-recalculate is disabled.
   - Surface computation errors near the relevant chart instead of only metadata chips.
   - Keep chart controls disabled while their backing data is unavailable or stale.
-- [ ] Improve array response chart presentation:
+- [x] Improve array response chart presentation:
   - Add clear labels for absolute SPL vs normalized/directivity-only views.
   - Add receiver position, source count, active filter/preset, and air attenuation state in a compact summary.
   - Add optional normalized mode for comparing shapes without hiding absolute SPL mode.

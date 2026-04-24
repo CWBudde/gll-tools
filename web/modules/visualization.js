@@ -6,6 +6,7 @@ export function createVisualizationController({
   computePolarSlices,
   getBalloonGrid,
   getResponseWithSymmetry,
+  getArrayVisualizationState,
   escapeHtml,
 }) {
   // Chart and scene state
@@ -83,6 +84,14 @@ export function createVisualizationController({
       return;
     }
 
+    const state = getArrayVisualizationState?.();
+    if (state?.hasActiveConfig && !state.usable) {
+      freqSelect.disabled = true;
+      updateGlobalSliderState(null);
+      updatePolarMetaState(state);
+      return;
+    }
+
     const cached = getCachedArrayBalloon();
     if (!cached?.frequencies?.length) {
       // Fall back to single-source if no array data
@@ -118,6 +127,7 @@ export function createVisualizationController({
     }
 
     const frequencies = cached.frequencies;
+    freqSelect.disabled = false;
     const previousIndex = parseInt(freqSelect.value);
     freqSelect.innerHTML = frequencies
       .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
@@ -145,6 +155,15 @@ export function createVisualizationController({
       return;
     }
 
+    const state = getArrayVisualizationState?.();
+    if (state?.hasActiveConfig && !state.usable) {
+      freqSelect.disabled = true;
+      updateGlobalSliderState(null);
+      updateBalloonPlaceholder(true);
+      updateBalloonMetaState(state);
+      return;
+    }
+
     const cached = getCachedArrayBalloon();
     if (!cached?.frequencies?.length) {
       freqSelect.innerHTML = "";
@@ -155,6 +174,7 @@ export function createVisualizationController({
     }
 
     const frequencies = cached.frequencies;
+    freqSelect.disabled = false;
     const previousIndex = parseInt(freqSelect.value);
     freqSelect.innerHTML = frequencies
       .map((f, i) => `<option value="${i}">${formatFrequency(f)}</option>`)
@@ -242,6 +262,12 @@ export function createVisualizationController({
 
     const freqIndex = parseInt(freqSelect.value);
     if (isNaN(freqIndex)) {
+      return;
+    }
+
+    const state = getArrayVisualizationState?.();
+    if (state?.hasActiveConfig && !state.usable) {
+      updatePolarMetaState(state);
       return;
     }
 
@@ -680,6 +706,42 @@ export function createVisualizationController({
     meta.innerHTML = chips.join("");
   }
 
+  function buildArrayStateChipHtml(state) {
+    if (!state) return "";
+    const chips = [];
+    switch (state.status) {
+      case "stale":
+        chips.push('<span class="chip chip-warning">Array data stale</span>');
+        chips.push('<span class="chip">Recalculate to update charts</span>');
+        break;
+      case "computing":
+        chips.push('<span class="chip chip-info">Computing array data</span>');
+        break;
+      case "error":
+        chips.push(
+          `<span class="chip chip-error">${escapeHtml(state.error || "Array computation failed")}</span>`,
+        );
+        break;
+      case "pending":
+        chips.push('<span class="chip chip-warning">Array data not computed</span>');
+        break;
+      default:
+        chips.push('<span class="chip">No array data</span>');
+    }
+    return chips.join("");
+  }
+
+  function updatePolarMetaState(state) {
+    const meta = document.getElementById("polar-meta");
+    if (meta) meta.innerHTML = buildArrayStateChipHtml(state);
+  }
+
+  function updateBalloonMetaState(state) {
+    const meta = document.getElementById("balloon-meta");
+    if (meta) meta.innerHTML = buildArrayStateChipHtml(state);
+    updateBalloonLegend(null);
+  }
+
   function updateBalloonPlaceholder(show) {
     // Show or hide balloon placeholder
     const container = document.getElementById("balloon-viewer");
@@ -1041,6 +1103,13 @@ export function createVisualizationController({
     if (isNaN(freqIndex)) {
       updateBalloonPlaceholder(true);
       updateBalloonMeta(null);
+      return;
+    }
+
+    const state = getArrayVisualizationState?.();
+    if (state?.hasActiveConfig && !state.usable) {
+      updateBalloonPlaceholder(true);
+      updateBalloonMetaState(state);
       return;
     }
 

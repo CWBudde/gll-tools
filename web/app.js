@@ -57,6 +57,14 @@ let arrayViewer = null;
 let arrayViewerNeedsUpdate = false;
 let cachedArrayBalloon = null; // { frequencies, results: [{ level, phase }], grid: { merCount, parCount } }
 let configDirty = false;
+let arrayVisualizationState = {
+  status: "empty",
+  error: null,
+  computedAt: null,
+  sourceCount: 0,
+  receiverDistance: null,
+  airAttenOn: false,
+};
 
 const ARRAY_BALLOON_MER_COUNT = 72;
 const ARRAY_BALLOON_PAR_COUNT = 37;
@@ -85,6 +93,7 @@ const visualization = createVisualizationController({
   computePolarSlices,
   getBalloonGrid,
   getResponseWithSymmetry,
+  getArrayVisualizationState,
   escapeHtml,
 });
 const geometry = createGeometryController({
@@ -463,6 +472,16 @@ function clearResults() {
   responseChartInitialized = false;
   combinedChartInitialized = false;
   activeConfig = null;
+  cachedArrayBalloon = null;
+  configDirty = false;
+  setArrayVisualizationState({
+    status: "empty",
+    error: null,
+    computedAt: null,
+    sourceCount: 0,
+    receiverDistance: null,
+    airAttenOn: false,
+  });
   updateConfigEditorHint("");
   results.classList.add("hidden");
   loading.classList.add("hidden");
@@ -552,8 +571,129 @@ function isVisualizationTabActive() {
   return document.getElementById("tab-visualization")?.classList.contains("active");
 }
 
+function setArrayVisualizationState(next) {
+  arrayVisualizationState = {
+    ...arrayVisualizationState,
+    ...next,
+  };
+  updateVisualizationStateUI();
+}
+
+function getArrayVisualizationState() {
+  const hasCache = !!cachedArrayBalloon?.frequencies?.length;
+  const hasActiveConfig = !!activeConfig?.elements?.length;
+  const autoRecalc = document.getElementById("sim-auto-recalc")?.checked ?? true;
+  const stale = hasCache && configDirty;
+  const usable = hasCache && !configDirty && arrayVisualizationState.status !== "error";
+
+  let status = arrayVisualizationState.status;
+  if (recalcInProgress) {
+    status = "computing";
+  } else if (stale) {
+    status = "stale";
+  } else if (usable) {
+    status = "fresh";
+  } else if (!hasActiveConfig) {
+    status = "empty";
+  } else if (configDirty) {
+    status = "pending";
+  }
+
+  return {
+    ...arrayVisualizationState,
+    status,
+    hasActiveConfig,
+    hasCache,
+    stale,
+    usable,
+    autoRecalc,
+  };
+}
+
+function buildArrayStateChips(state = getArrayVisualizationState(), includeDetails = true) {
+  const chips = [];
+  switch (state.status) {
+    case "fresh":
+      chips.push('<span class="chip chip-success">Array data fresh</span>');
+      break;
+    case "stale":
+      chips.push('<span class="chip chip-warning">Array data stale</span>');
+      chips.push('<span class="chip">Recalculate to update charts</span>');
+      break;
+    case "computing":
+      chips.push('<span class="chip chip-info">Computing array data</span>');
+      break;
+    case "error":
+      chips.push(
+        `<span class="chip chip-error">${escapeHtml(state.error || "Array computation failed")}</span>`,
+      );
+      break;
+    case "pending":
+      chips.push('<span class="chip chip-warning">Array data not computed</span>');
+      break;
+  }
+
+  if (includeDetails && (state.status === "fresh" || state.status === "stale")) {
+    if (Number.isFinite(state.sourceCount)) {
+      chips.push(`<span class="chip">${state.sourceCount} sources</span>`);
+    }
+    if (Number.isFinite(state.receiverDistance)) {
+      chips.push(
+        `<span class="chip">Receiver ${state.receiverDistance.toFixed(1)} m</span>`,
+      );
+    }
+    chips.push(
+      `<span class="chip">Air ${state.airAttenOn ? "on" : "off"}</span>`,
+    );
+  }
+
+  return chips;
+}
+
+function setChartControlsDisabled(disabled) {
+  const ids = [
+    "polar-frequency",
+    "polar-normalize",
+    "balloon-frequency",
+    "balloon-normalize",
+    "balloon-range",
+    "balloon-scale",
+    "balloon-wireframe",
+    "balloon-coverage",
+    "balloon-autorotate",
+    "combined-filter-group",
+    "combined-filter",
+    "combined-phase-mode",
+    "combined-normalize",
+  ];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  }
+}
+
+function updateVisualizationStateUI() {
+  if (!isVisualizationTabActive()) return;
+  const state = getArrayVisualizationState();
+  const disableArrayControls =
+    state.status === "computing" ||
+    state.status === "stale" ||
+    state.status === "pending" ||
+    state.status === "error";
+  setChartControlsDisabled(disableArrayControls);
+
+  if (state.status === "stale" || state.status === "pending" || state.status === "error") {
+    const chips = buildArrayStateChips(state).join("");
+    for (const id of ["polar-meta", "balloon-meta", "combined-response-meta"]) {
+      const meta = document.getElementById(id);
+      if (meta) meta.innerHTML = chips;
+    }
+  }
+}
+
 function markConfigDirty() {
   configDirty = true;
+  updateVisualizationStateUI();
   // Only trigger computation when the visualization tab is visible.
   // Otherwise the heavy WASM call will be deferred until the tab is opened.
   if (!isVisualizationTabActive()) return;
@@ -583,6 +723,10 @@ async function triggerFullRecalculation() {
   if (recalcInProgress) return;
   recalcInProgress = true;
   configDirty = false;
+  setArrayVisualizationState({
+    status: "computing",
+    error: null,
+  });
   const btn = document.getElementById("sim-recalculate");
   if (btn) {
     btn.classList.add("hidden");
@@ -595,7 +739,7 @@ async function triggerFullRecalculation() {
     // Yield to let the progress UI render before WASM starts.
     await nextPaint();
 
-    await computeArrayBalloonGrid((completed, total) => {
+    const balloonComputed = await computeArrayBalloonGrid((completed, total) => {
       const pointLabel =
         total > 0
           ? ` (${completed.toLocaleString()} of ${total.toLocaleString()} points)`
@@ -610,14 +754,19 @@ async function triggerFullRecalculation() {
     await nextPaint();
 
     updateCombinedResponseChart();
-    visualization.updateBalloonOptions();
-    visualization.updatePolarOptions();
-    visualization.updateBalloonVisualization();
-    visualization.updatePolarChart();
+    if (balloonComputed) {
+      visualization.updateBalloonOptions();
+      visualization.updatePolarOptions();
+      visualization.updateBalloonVisualization();
+      visualization.updatePolarChart();
+    } else {
+      updateVisualizationStateUI();
+    }
   } finally {
     hideSimulationProgress();
     recalcInProgress = false;
     updateRecalcButtonVisibility();
+    updateVisualizationStateUI();
     const autoRecalc = document.getElementById("sim-auto-recalc");
     if (configDirty && autoRecalc?.checked && isVisualizationTabActive()) {
       triggerFullRecalculation();
@@ -687,12 +836,24 @@ async function computeArrayBalloonGrid(onProgress) {
       typeof window.computeArrayBalloon !== "function")
   ) {
     cachedArrayBalloon = null;
+    setArrayVisualizationState({
+      status: !activeConfig ? "empty" : "error",
+      error: !activeConfig ? null : "Array balloon helper not available",
+      computedAt: null,
+      sourceCount: 0,
+    });
     return false;
   }
 
   const elements = buildElementsFromConfig(activeConfig);
   if (!elements.length) {
     cachedArrayBalloon = null;
+    setArrayVisualizationState({
+      status: "pending",
+      error: "No valid sources found for this configuration",
+      computedAt: null,
+      sourceCount: 0,
+    });
     return false;
   }
 
@@ -705,6 +866,12 @@ async function computeArrayBalloonGrid(onProgress) {
   );
   if (!validElements.length) {
     cachedArrayBalloon = null;
+    setArrayVisualizationState({
+      status: "pending",
+      error: "No valid sources found for this configuration",
+      computedAt: null,
+      sourceCount: 0,
+    });
     return false;
   }
 
@@ -741,13 +908,37 @@ async function computeArrayBalloonGrid(onProgress) {
         grid: { merCount, parCount },
         receiverDistance: sim.receiverDistance,
       };
+      setArrayVisualizationState({
+        status: "fresh",
+        error: null,
+        computedAt: Date.now(),
+        sourceCount: validElements.length,
+        receiverDistance: sim.receiverDistance,
+        airAttenOn: sim.airAttenOn,
+      });
       return true;
     } else {
       cachedArrayBalloon = null;
+      setArrayVisualizationState({
+        status: "error",
+        error: result.error || "Failed to compute array balloon",
+        computedAt: null,
+        sourceCount: validElements.length,
+        receiverDistance: sim.receiverDistance,
+        airAttenOn: sim.airAttenOn,
+      });
       return false;
     }
-  } catch {
+  } catch (err) {
     cachedArrayBalloon = null;
+    setArrayVisualizationState({
+      status: "error",
+      error: err?.message || "Failed to compute array balloon",
+      computedAt: null,
+      sourceCount: validElements.length,
+      receiverDistance: sim.receiverDistance,
+      airAttenOn: sim.airAttenOn,
+    });
     return false;
   }
 }
@@ -818,16 +1009,19 @@ function switchTab(tabName) {
 
   // Initialize chart when switching to visualization tab
   if (tabName === "visualization" && currentData) {
+    const autoRecalc = document.getElementById("sim-auto-recalc");
     if (
       (configDirty || !cachedArrayBalloon) &&
       activeConfig &&
-      !recalcInProgress
+      !recalcInProgress &&
+      autoRecalc?.checked
     ) {
       triggerFullRecalculation();
     } else if (!recalcInProgress) {
       updateCombinedResponseChart();
       visualization.updatePolarChart();
       visualization.updateBalloonVisualization();
+      updateVisualizationStateUI();
     }
     visualization.handleBalloonResize();
     updateArrayViewer();
@@ -3346,8 +3540,8 @@ function autoGenerateFromFrame() {
   };
 
   updateConfigEditorHint(config.label);
-  updateCombinedResponseChart();
   scheduleArrayViewerUpdate();
+  markConfigDirty();
 }
 
 let configApplyTimer = null;
@@ -3377,6 +3571,12 @@ function setupConfigEditor() {
       document.getElementById("config-editor-body").innerHTML = "";
       activeConfig = null;
       cachedArrayBalloon = null;
+      setArrayVisualizationState({
+        status: "empty",
+        error: null,
+        computedAt: null,
+        sourceCount: 0,
+      });
       updateConfigEditorHint("Add elements to build a configuration.");
       scheduleArrayViewerUpdate();
       markConfigDirty();
@@ -3485,6 +3685,12 @@ function applyConfigFromEditor() {
   if (elements.length === 0) {
     activeConfig = null;
     cachedArrayBalloon = null;
+    setArrayVisualizationState({
+      status: "empty",
+      error: null,
+      computedAt: null,
+      sourceCount: 0,
+    });
     updateConfigEditorHint("Add elements to build a configuration.");
   } else {
     activeConfig = { elements, label: `Config (${elements.length} boxes)` };
@@ -5364,6 +5570,7 @@ function setupCombinedResponseControls() {
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
   const phaseSelect = document.getElementById("combined-phase-mode");
+  const normalizeToggle = document.getElementById("combined-normalize");
   if (!groupSelect || !filterSelect) {
     return;
   }
@@ -5373,6 +5580,7 @@ function setupCombinedResponseControls() {
     groupSelect.addEventListener("change", updateCombinedFilterOptions);
     filterSelect.addEventListener("change", updateCombinedResponseChart);
     phaseSelect?.addEventListener("change", updateCombinedResponseChart);
+    normalizeToggle?.addEventListener("change", updateCombinedResponseChart);
     combinedListenersBound = true;
   }
 
@@ -5683,6 +5891,7 @@ function updateCombinedResponseChart() {
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
   const phaseSelect = document.getElementById("combined-phase-mode");
+  const normalizeToggle = document.getElementById("combined-normalize");
   const meta = document.getElementById("combined-response-meta");
   const ctx = document
     .getElementById("combined-response-chart")
@@ -5690,6 +5899,18 @@ function updateCombinedResponseChart() {
 
   if (!ctx || !meta) {
     // Missing DOM nodes
+    return;
+  }
+
+  const state = getArrayVisualizationState();
+  if (
+    activeConfig &&
+    (state.status === "stale" ||
+      state.status === "pending" ||
+      state.status === "computing" ||
+      state.status === "error")
+  ) {
+    meta.innerHTML = buildArrayStateChips(state).join("");
     return;
   }
 
@@ -5761,6 +5982,7 @@ function updateCombinedResponseChart() {
 
   let combinedLevel = arrayResponse.level?.slice() || [];
   let combinedPhase = arrayResponse.phase?.slice() || [];
+  const normalizedMode = !!normalizeToggle?.checked;
   // Optional filter group application
   let filterMessage = null;
   let filterLabel = null;
@@ -5822,7 +6044,7 @@ function updateCombinedResponseChart() {
 
   const frequencyData = buildFrequencyPoints(
     arrayResponse.frequencies,
-    combinedLevel,
+    normalizedMode ? normalizeLevelSeries(combinedLevel) : combinedLevel,
   );
   if (!frequencyData) {
     // No data to chart
@@ -5869,7 +6091,7 @@ function updateCombinedResponseChart() {
     data: {
       datasets: [
         {
-          label: "Level (dB)",
+          label: normalizedMode ? "Level (dB, normalized)" : "Level (dB SPL)",
           data: frequencyData.points,
           borderColor: "#2563eb",
           backgroundColor: "rgba(37, 99, 235, 0.1)",
@@ -5913,7 +6135,7 @@ function updateCombinedResponseChart() {
           position: "left",
           title: {
             display: true,
-            text: "Level (dB)",
+            text: normalizedMode ? "Level (dB re max)" : "Level (dB SPL)",
           },
           grid: combinedGridColor ? { color: combinedGridColor } : undefined,
         },
@@ -5965,10 +6187,19 @@ function updateCombinedResponseChart() {
     elements.length,
     0,
     sim.receiverDistance,
+    sim.airAttenOn,
     groupLabel,
     filterLabel,
     filterMessage,
+    normalizedMode,
   );
+}
+
+function normalizeLevelSeries(levels) {
+  const finite = levels.filter((value) => Number.isFinite(value));
+  if (!finite.length) return levels;
+  const maxLevel = Math.max(...finite);
+  return levels.map((value) => (Number.isFinite(value) ? value - maxLevel : value));
 }
 
 function computeCombinedFilterResponse(groupIndex, filterIndex) {
@@ -6044,12 +6275,14 @@ function updateCombinedResponseMeta(
   elementCount,
   gainOffset,
   receiverDistance,
+  airAttenOn,
   groupLabel,
   filterLabel,
   filterMessage,
+  normalizedMode,
 ) {
   // Compose metadata chip list for combined response
-  const chips = [];
+  const chips = buildArrayStateChips(getArrayVisualizationState(), false);
   if (box) {
     chips.push(
       `<span class="chip">${escapeHtml(box.label || box.key || "Box")}</span>`,
@@ -6058,6 +6291,10 @@ function updateCombinedResponseMeta(
   chips.push(`<span class="chip">${elementCount} sources</span>`);
   chips.push(
     `<span class="chip">Receiver ${receiverDistance.toFixed(1)} m</span>`,
+  );
+  chips.push(`<span class="chip">Air ${airAttenOn ? "on" : "off"}</span>`);
+  chips.push(
+    `<span class="chip">${normalizedMode ? "Normalized shape" : "Absolute SPL"}</span>`,
   );
   if (Number.isFinite(gainOffset) && gainOffset !== 0) {
     chips.push(`<span class="chip">Gain ${gainOffset.toFixed(1)} dB</span>`);
