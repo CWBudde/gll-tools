@@ -200,7 +200,7 @@ def test_array_calculator_with_receiver(line_array_gll: Path) -> None:
     config = ArrayConfig()
     config.add_element(box_types[0])
 
-    receiver = Vector3D(0, 20, -5)
+    receiver = Vector3D(20, 0, -5)
     response = calc.compute_response(config, receiver=receiver)
     # Just check it doesn't error
     assert response is not None

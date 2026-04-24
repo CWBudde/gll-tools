@@ -12,6 +12,12 @@ This document captures the current acoustic assumptions used by the visualizatio
   - `meridian=0 deg`: top (`+Z`)
   - `meridian=90 deg`: right (`+Y`)
 - Source placement rotations are H/V/R angles in radians. The web demo passes an explicit world-from-local orientation matrix for source placements; the Go engine falls back to Euler angles when no matrix is supplied.
+- Go, WASM, Python, and native JSON bindings use receiver coordinates where
+  `+X` is in front/on-axis, `+Y` is right, and `+Z` is up.
+- Box/source placement expansion creates one concrete acoustic element per
+  source placement. Source placement offsets are stored in millimeters, rotated
+  by the box orientation, converted to meters, and added to the box position
+  before array summation.
 
 ## Source Response Components
 

@@ -284,15 +284,15 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
 
 ### 9.2 Coordinate & Placement Consistency
 
-- [ ] Audit coordinate conventions across Go, WASM, Python, and the web UI:
+- [x] Audit coordinate conventions across Go, WASM, Python, and the web UI:
   - Confirm that `+X` is the firing/on-axis direction everywhere.
   - Fix or document legacy/default paths that still treat `+Y` as front.
   - Add tests for receiver placement at front/right/top/back.
-- [ ] Validate box/source placement handling:
+- [x] Validate box/source placement handling:
   - Confirm that every source placement position and H/V/R angle is applied before array summation.
   - Ensure web, WASM, CLI/Python bindings, and any future API use the same expansion model.
   - Add a multi-way synthetic box test where two source offsets produce a predictable phase difference.
-- [ ] Review rotation matrix composition:
+- [x] Review rotation matrix composition:
   - Verify `buildRotationMatrix()` against GLL H/V/R conventions and the Go fallback Euler path.
   - Add cross-language tests for several known rotations and direction-to-GLL-angle mappings.
 

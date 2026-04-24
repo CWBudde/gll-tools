@@ -118,6 +118,42 @@ func TestComputeSystemResponseAtUsesOrientationMatrix(t *testing.T) {
 	}
 }
 
+func TestComputeSystemResponseAtReceiverPlacementDirections(t *testing.T) {
+	source := &SourceDefinition{BalloonData: testDirectionalBalloon()}
+	config := &ArrayConfig{
+		Elements: []ArrayElement{
+			{
+				Position:   Vector3D{},
+				SourceDefs: []*SourceDefinition{source},
+			},
+		},
+	}
+	airProps := AirProperties{Speed: 343}
+
+	tests := []struct {
+		name      string
+		receiver  Vector3D
+		wantLevel float64
+	}{
+		{"front +X", Vector3D{X: 1}, 20},
+		{"right +Y", Vector3D{Y: 1}, 30},
+		{"top +Z", Vector3D{Z: 1}, 40},
+		{"back -X", Vector3D{X: -1}, 50},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := ComputeSystemResponseAt(config, tt.receiver, airProps, false)
+			if resp == nil {
+				t.Fatal("expected response, got nil")
+			}
+			if got := resp.Level[0]; math.Abs(got-tt.wantLevel) > 1e-6 {
+				t.Fatalf("level = %f, want %f", got, tt.wantLevel)
+			}
+		})
+	}
+}
+
 func TestComputeSystemResponseAtShowsPathLengthInterference(t *testing.T) {
 	def := LogSpectrumDefinition{
 		BandsPerOctave: 1,

@@ -207,8 +207,8 @@ class ArrayCalculator:
 
         Args:
             config: Array configuration with elements.
-            receiver: Receiver position in meters. Defaults to (0, 10, 0)
-                     which is 10m directly in front.
+            receiver: Receiver position in meters. Defaults to (10, 0, 0)
+                     which is 10m directly in front on the +X firing axis.
             air: Air properties for calculations. Defaults to 20°C, 50% humidity,
                  and 101.325 kPa.
             air_attenuation: Whether to include air absorption. Default False.
@@ -224,7 +224,7 @@ class ArrayCalculator:
             raise ConfigurationError("Array configuration has no elements")
 
         if receiver is None:
-            receiver = Vector3D(0, 10, 0)
+            receiver = Vector3D(10, 0, 0)
 
         if air is None:
             air = self._default_air

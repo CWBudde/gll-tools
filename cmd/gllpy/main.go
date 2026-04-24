@@ -424,44 +424,18 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 			continue
 		}
 
-		arrayElem := gll.ArrayElement{
-			Gain: elem.Gain,
-		}
-
-		if elem.Position != nil {
-			arrayElem.Position = gll.Vector3D{
-				X: elem.Position.X,
-				Y: elem.Position.Y,
-				Z: elem.Position.Z,
-			}
-		}
-
-		if elem.Angles != nil {
-			arrayElem.Angles = gll.Vector3D{
-				X: elem.Angles.X,
-				Y: elem.Angles.Y,
-				Z: elem.Angles.Z,
-			}
-		}
-
-		// Collect source definitions for this box type
-		for _, placement := range bt.SourcePlacements {
-			if sd, ok := sourceDefMap[placement.SourceDefKey]; ok {
-				arrayElem.SourceDefs = append(arrayElem.SourceDefs, sd)
-			}
-		}
-
-		if len(arrayElem.SourceDefs) > 0 {
-			arrayConfig.Elements = append(arrayConfig.Elements, arrayElem)
-		}
+		arrayConfig.Elements = append(
+			arrayConfig.Elements,
+			expandBoxElementSources(elem, bt, sourceDefMap)...,
+		)
 	}
 
 	if len(arrayConfig.Elements) == 0 {
 		return makeJSONResult(ArrayResponseJSON{Error: "no valid elements in array config"})
 	}
 
-	// Set up receiver position (default: 10m on-axis)
-	receiver := gll.Vector3D{X: 0, Y: 10, Z: 0}
+	// Set up receiver position (default: 10m on-axis, +X firing direction)
+	receiver := gll.Vector3D{X: 10, Y: 0, Z: 0}
 	if config.Receiver != nil {
 		receiver = gll.Vector3D{
 			X: config.Receiver.X,
@@ -512,6 +486,112 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 	}
 
 	return makeJSONResult(result)
+}
+
+func expandBoxElementSources(
+	elem ArrayElementJSON,
+	bt *gll.BoxType,
+	sourceDefMap map[string]*gll.SourceDefinition,
+) []gll.ArrayElement {
+	boxPosition := vectorFromJSON(elem.Position)
+	boxAngles := vectorFromJSON(elem.Angles)
+	boxMatrix := buildRotationMatrix(boxAngles)
+
+	if len(bt.SourcePlacements) == 0 {
+		elements := make([]gll.ArrayElement, 0, len(bt.Sources))
+		for _, sourceKey := range bt.Sources {
+			if sd, ok := sourceDefMap[sourceKey]; ok {
+				orientation := boxMatrix
+				elements = append(elements, gll.ArrayElement{
+					Position:    boxPosition,
+					Angles:      boxAngles,
+					Orientation: &orientation,
+					Gain:        elem.Gain,
+					SourceDefs:  []*gll.SourceDefinition{sd},
+				})
+			}
+		}
+		return elements
+	}
+
+	elements := make([]gll.ArrayElement, 0, len(bt.SourcePlacements))
+	for _, placement := range bt.SourcePlacements {
+		sd, ok := sourceDefMap[placement.SourceDefKey]
+		if !ok {
+			continue
+		}
+
+		rotatedPlacement := rotateVector(boxMatrix, placement.Position)
+		placementMatrix := buildRotationMatrix(placement.Angles)
+		orientation := composeRotationMatrices(boxMatrix, placementMatrix)
+		combinedAngles := gll.Vector3D{
+			X: boxAngles.X + placement.Angles.X,
+			Y: boxAngles.Y + placement.Angles.Y,
+			Z: boxAngles.Z + placement.Angles.Z,
+		}
+
+		elements = append(elements, gll.ArrayElement{
+			Position: gll.Vector3D{
+				X: boxPosition.X + rotatedPlacement.X/1000,
+				Y: boxPosition.Y + rotatedPlacement.Y/1000,
+				Z: boxPosition.Z + rotatedPlacement.Z/1000,
+			},
+			Angles:      combinedAngles,
+			Orientation: &orientation,
+			Gain:        elem.Gain,
+			SourceDefs:  []*gll.SourceDefinition{sd},
+		})
+	}
+
+	return elements
+}
+
+func vectorFromJSON(vec *Vector3DJSON) gll.Vector3D {
+	if vec == nil {
+		return gll.Vector3D{}
+	}
+	return gll.Vector3D{X: vec.X, Y: vec.Y, Z: vec.Z}
+}
+
+func buildRotationMatrix(angles gll.Vector3D) [9]float64 {
+	h, v, r := angles.X, angles.Y, angles.Z
+	sh, ch := math.Sin(h), math.Cos(h)
+	sv, cv := math.Sin(v), math.Cos(v)
+	sr, cr := math.Sin(r), math.Cos(r)
+
+	return [9]float64{
+		ch*cr - sv*sh*sr,
+		sh*cr + sv*ch*sr,
+		cv * sr,
+		-cv * sh,
+		cv * ch,
+		-sv,
+		-ch*sr - sv*sh*cr,
+		-sh*sr + sv*ch*cr,
+		cv * cr,
+	}
+}
+
+func rotateVector(matrix [9]float64, vec gll.Vector3D) gll.Vector3D {
+	return gll.Vector3D{
+		X: matrix[0]*vec.X + matrix[1]*vec.Y + matrix[2]*vec.Z,
+		Y: matrix[3]*vec.X + matrix[4]*vec.Y + matrix[5]*vec.Z,
+		Z: matrix[6]*vec.X + matrix[7]*vec.Y + matrix[8]*vec.Z,
+	}
+}
+
+func composeRotationMatrices(left, right [9]float64) [9]float64 {
+	return [9]float64{
+		left[0]*right[0] + left[1]*right[3] + left[2]*right[6],
+		left[0]*right[1] + left[1]*right[4] + left[2]*right[7],
+		left[0]*right[2] + left[1]*right[5] + left[2]*right[8],
+		left[3]*right[0] + left[4]*right[3] + left[5]*right[6],
+		left[3]*right[1] + left[4]*right[4] + left[5]*right[7],
+		left[3]*right[2] + left[4]*right[5] + left[5]*right[8],
+		left[6]*right[0] + left[7]*right[3] + left[8]*right[6],
+		left[6]*right[1] + left[7]*right[4] + left[8]*right[7],
+		left[6]*right[2] + left[7]*right[5] + left[8]*right[8],
+	}
 }
 
 func makeTransferFunctionJSON(tf *gll.TransferFunction) *TransferFunctionJSON {
@@ -581,8 +661,8 @@ func receiverOnSphere(radius, azimuthDeg, elevationDeg float64) gll.Vector3D {
 	horizontal := radius * math.Cos(elevation)
 
 	return gll.Vector3D{
-		X: horizontal * math.Sin(azimuth),
-		Y: horizontal * math.Cos(azimuth),
+		X: horizontal * math.Cos(azimuth),
+		Y: horizontal * math.Sin(azimuth),
 		Z: radius * math.Sin(elevation),
 	}
 }

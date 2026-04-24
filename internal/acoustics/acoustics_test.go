@@ -387,6 +387,72 @@ func TestDirectionToGLLAngles(t *testing.T) {
 	}
 }
 
+func TestDirectionToGLLAnglesWithMatrix(t *testing.T) {
+	rotatedToY := [9]float64{
+		0, -1, 0,
+		1, 0, 0,
+		0, 0, 1,
+	}
+
+	tests := []struct {
+		name                       string
+		vecX, vecY, vecZ           float64
+		orientation                [9]float64
+		wantMeridian, wantParallel float64
+	}{
+		{
+			name:         "identity front +X",
+			vecX:         1,
+			orientation:  [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
+			wantMeridian: 0,
+			wantParallel: 0,
+		},
+		{
+			name:         "identity right +Y",
+			vecY:         1,
+			orientation:  [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
+			wantMeridian: 90,
+			wantParallel: 90,
+		},
+		{
+			name:         "identity top +Z",
+			vecZ:         1,
+			orientation:  [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
+			wantMeridian: 0,
+			wantParallel: 90,
+		},
+		{
+			name:         "rotated source points to +Y",
+			vecY:         1,
+			orientation:  rotatedToY,
+			wantMeridian: 0,
+			wantParallel: 0,
+		},
+		{
+			name:         "rotated source sees +X on left",
+			vecX:         1,
+			orientation:  rotatedToY,
+			wantMeridian: 270,
+			wantParallel: 90,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meridian, parallel := DirectionToGLLAnglesWithMatrix(tt.vecX, tt.vecY, tt.vecZ, tt.orientation)
+			if math.Abs(meridian-tt.wantMeridian) > 1e-6 || math.Abs(parallel-tt.wantParallel) > 1e-6 {
+				t.Errorf(
+					"DirectionToGLLAnglesWithMatrix = (%f,%f), want (%f,%f)",
+					meridian,
+					parallel,
+					tt.wantMeridian,
+					tt.wantParallel,
+				)
+			}
+		})
+	}
+}
+
 // TestToComplexFromComplex tests round-trip conversion
 func TestToComplexFromComplex(t *testing.T) {
 	// Test data: level in dB, phase in radians

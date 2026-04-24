@@ -59,10 +59,10 @@ def main():
     print("\n=== Computing Responses ===")
 
     receivers = [
-        Vector3D(0, 10, 0),    # 10m on-axis
-        Vector3D(0, 20, 0),    # 20m on-axis
-        Vector3D(0, 20, -5),   # 20m away, 5m below
-        Vector3D(5, 20, 0),    # 20m away, 5m to the side
+        Vector3D(10, 0, 0),    # 10m on-axis (+X)
+        Vector3D(20, 0, 0),    # 20m on-axis (+X)
+        Vector3D(20, 0, -5),   # 20m in front, 5m below
+        Vector3D(20, 5, 0),    # 20m in front, 5m to the right
     ]
 
     air = AirProperties(temperature=20.0, humidity=0.5, pressure=101.325)

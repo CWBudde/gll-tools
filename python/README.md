@@ -113,7 +113,7 @@ config.add_element("K2", splay=1.0)  # Second box, 1.0° splay
 config.add_element("K2", splay=1.5)  # Third box, 1.5° splay
 
 # Compute response at receiver position
-receiver = Vector3D(0, 20, -5)  # 20m away, 5m below
+receiver = Vector3D(20, 0, -5)  # 20m in front (+X), 5m below
 response = calc.compute_response(config, receiver=receiver)
 
 if response.is_valid:
