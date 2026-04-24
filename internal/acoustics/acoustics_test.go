@@ -28,22 +28,23 @@ func TestAirLossPerMeter(t *testing.T) {
 		temperature float64
 		humidity    float64
 		pressure    float64
-		wantMin     float64
-		wantMax     float64
+		want        float64
 	}{
-		{"1kHz 20C 50% humidity", 1000, 20, 0.5, ReferencePressureKPa, 0.0034, 0.0036},
-		{"10kHz 20C 50% humidity", 10000, 20, 0.5, ReferencePressureKPa, 0.019, 0.020},
-		{"1kHz dry air", 1000, 20, 0.0, ReferencePressureKPa, 0.0015, 0.0017},
-		{"1kHz humid air", 1000, 20, 1.0, ReferencePressureKPa, 0.0049, 0.0052},
-		{"10kHz cold dry air", 10000, 0, 0.2, ReferencePressureKPa, 0.008, 0.010},
+		{"1kHz 20C 50% humidity", 1000, 20, 0.5, ReferencePressureKPa, 0.003497981668435808},
+		{"10kHz 20C 50% humidity", 10000, 20, 0.5, ReferencePressureKPa, 0.019332064293880853},
+		{"1kHz dry air", 1000, 20, 0.0, ReferencePressureKPa, 0.0015298579366498817},
+		{"1kHz humid air", 1000, 20, 1.0, ReferencePressureKPa, 0.006671748422991222},
+		{"10kHz cold dry air", 10000, 0, 0.2, ReferencePressureKPa, 0.016446609261933694},
+		{"1kHz 20C 50% humidity low pressure", 1000, 20, 0.5, 80, 0.003426690851040758},
+		{"1kHz 20C 50% humidity high pressure", 1000, 20, 0.5, 120, 0.003621659374769194},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			loss := AirLossPerMeter(tt.freq, tt.temperature, tt.humidity, tt.pressure)
-			if loss < tt.wantMin || loss > tt.wantMax {
-				t.Errorf("AirLossPerMeter(%f, %f, %f, %f) = %f, want between %f and %f",
-					tt.freq, tt.temperature, tt.humidity, tt.pressure, loss, tt.wantMin, tt.wantMax)
+			if math.Abs(loss-tt.want) > 1e-9 {
+				t.Errorf("AirLossPerMeter(%f, %f, %f, %f) = %.15f, want %.15f",
+					tt.freq, tt.temperature, tt.humidity, tt.pressure, loss, tt.want)
 			}
 		})
 	}

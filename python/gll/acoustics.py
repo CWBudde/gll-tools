@@ -209,7 +209,8 @@ class ArrayCalculator:
             config: Array configuration with elements.
             receiver: Receiver position in meters. Defaults to (0, 10, 0)
                      which is 10m directly in front.
-            air: Air properties for calculations. Defaults to 20°C, 50% humidity.
+            air: Air properties for calculations. Defaults to 20°C, 50% humidity,
+                 and 101.325 kPa.
             air_attenuation: Whether to include air absorption. Default False.
             frequency: Optional single frequency in Hz for combined balloon output.
 

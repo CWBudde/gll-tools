@@ -533,12 +533,17 @@ function setupSimulationParams() {
   }
 }
 
+function readNumberInput(id, fallback) {
+  const value = parseFloat(document.getElementById(id)?.value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function getSimulationParams() {
   return {
-    receiverDistance: Math.max(0.1, parseFloat(document.getElementById("sim-receiver-distance")?.value) || 10),
-    temperature: parseFloat(document.getElementById("sim-temperature")?.value) || 20,
-    humidity: (parseFloat(document.getElementById("sim-humidity")?.value) || 50) / 100,
-    pressure: parseFloat(document.getElementById("sim-pressure")?.value) || 101.325,
+    receiverDistance: Math.max(0.1, readNumberInput("sim-receiver-distance", 10)),
+    temperature: readNumberInput("sim-temperature", 20),
+    humidity: readNumberInput("sim-humidity", 50) / 100,
+    pressure: readNumberInput("sim-pressure", 101.325),
     airAttenOn: document.getElementById("sim-air-atten")?.checked || false,
   };
 }

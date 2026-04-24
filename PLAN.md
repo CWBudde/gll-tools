@@ -276,10 +276,11 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
   - [ ] Decide whether display-only visualization paths should use dB interpolation or the same complex-pressure interpolation.
   - [x] Add tests around phase wrap boundaries near `+π/-π`.
 - [ ] Validate air attenuation expectations:
-  - [x] Mark the current simplified model as approximate in UI/docs.
-  - [ ] Replace the simplified attenuation model with ISO 9613-1 atmospheric absorption.
-  - [ ] Add ISO 9613-1 reference-value tests across frequency, humidity, temperature, and pressure.
-  - [ ] Wire temperature/pressure inputs consistently through Go, WASM, web, and Python APIs.
+  - [x] Remove approximate UI/docs wording after replacing the simplified model.
+  - [x] Replace the simplified attenuation model with ISO 9613-1 atmospheric absorption.
+  - [x] Add ISO 9613-1 reference-value tests across frequency, humidity, temperature, and pressure.
+  - [x] Wire temperature/pressure inputs consistently through Go, WASM, web, and Python APIs.
+  - [ ] Cross-check ISO 9613-1 coefficients against an external calculator or published reference table before treating the web demo as prediction-grade.
 
 ### 9.2 Coordinate & Placement Consistency
 

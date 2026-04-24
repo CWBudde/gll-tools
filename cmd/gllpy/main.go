@@ -321,9 +321,9 @@ type Vector3DJSON struct {
 
 // AirPropertiesJSON represents air properties in JSON.
 type AirPropertiesJSON struct {
-	Temperature float64 `json:"temperature"`
-	Humidity    float64 `json:"humidity"`
-	Pressure    float64 `json:"pressure"`
+	Temperature *float64 `json:"temperature"`
+	Humidity    *float64 `json:"humidity"`
+	Pressure    *float64 `json:"pressure"`
 }
 
 // ArrayResponseJSON is the JSON output format for array response.
@@ -473,9 +473,15 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 	// Set up air properties
 	airProps := gll.DefaultAirProperties()
 	if config.Air != nil {
-		airProps.Temperature = config.Air.Temperature
-		airProps.Humidity = config.Air.Humidity
-		airProps.Pressure = config.Air.Pressure
+		if config.Air.Temperature != nil {
+			airProps.Temperature = *config.Air.Temperature
+		}
+		if config.Air.Humidity != nil {
+			airProps.Humidity = *config.Air.Humidity
+		}
+		if config.Air.Pressure != nil {
+			airProps.Pressure = *config.Air.Pressure
+		}
 	}
 
 	// Compute response

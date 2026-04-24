@@ -412,19 +412,7 @@ func computeArrayResponse(_ js.Value, args []js.Value) any {
 		})
 	}
 
-	// Set up air properties
-	airProps := gll.AirProperties{
-		Temperature: req.AirProps.Temperature,
-		Humidity:    req.AirProps.Humidity,
-		Pressure:    req.AirProps.Pressure,
-		Speed:       req.AirProps.Speed,
-	}
-	if airProps.Speed == 0 {
-		airProps.Speed = 343.0 // Default speed of sound
-	}
-	if airProps.Temperature == 0 {
-		airProps.Temperature = 20.0
-	}
+	airProps := airPropertiesFromInput(req.AirProps)
 
 	// Set up receiver position
 	receiver := gll.Vector3D{
@@ -634,19 +622,7 @@ func computeArrayBalloonData(
 		receivers[i] = gll.Vector3D{X: r.X, Y: r.Y, Z: r.Z}
 	}
 
-	// Set up air properties
-	airProps := gll.AirProperties{
-		Temperature: req.AirProps.Temperature,
-		Humidity:    req.AirProps.Humidity,
-		Pressure:    req.AirProps.Pressure,
-		Speed:       req.AirProps.Speed,
-	}
-	if airProps.Speed == 0 {
-		airProps.Speed = 343.0
-	}
-	if airProps.Temperature == 0 {
-		airProps.Temperature = 20.0
-	}
+	airProps := airPropertiesFromInput(req.AirProps)
 
 	// Compute grid
 	responses := gll.ComputeSystemResponseGridWithProgress(config, receivers, airProps, req.AirProps.AirAttenOn, progress)
