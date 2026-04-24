@@ -16,12 +16,14 @@ class AirProperties:
 
     temperature: float = 20.0  # Celsius
     humidity: float = 0.5  # Relative humidity (0-1)
+    pressure: float = 101.325  # kPa
 
     def to_dict(self) -> dict[str, float]:
         """Convert to dictionary for JSON serialization."""
         return {
             "temperature": self.temperature,
             "humidity": self.humidity,
+            "pressure": self.pressure,
         }
 
 

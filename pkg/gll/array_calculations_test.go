@@ -186,8 +186,9 @@ func TestBalloonResponseAtGLLAnglesUsesParserSymmetryEnum(t *testing.T) {
 		if resp == nil {
 			t.Fatal("expected response, got nil")
 		}
-		if got := resp.Level[0]; math.Abs(got-30) > 1e-6 {
-			t.Fatalf("level = %f, want 30.000000", got)
+		want := pressureAverageDB(20, 40)
+		if got := resp.Level[0]; math.Abs(got-want) > 1e-6 {
+			t.Fatalf("level = %f, want %f", got, want)
 		}
 	})
 
@@ -217,6 +218,36 @@ func TestBalloonResponseAtGLLAnglesInterpolatesPhaseAcrossWrap(t *testing.T) {
 	if math.Abs(got-math.Pi) > 0.11 {
 		t.Fatalf("interpolated phase = %f, want near ±π", resp.Phase[0])
 	}
+}
+
+func TestBalloonResponseAtGLLAnglesInterpolatesComplexPressure(t *testing.T) {
+	balloon := testUniformBalloon(0)
+	balloon.Responses[1].Phase[0] = 0       // Meridian 0, parallel 90
+	balloon.Responses[3].Phase[0] = math.Pi // Meridian 90, parallel 90
+
+	resp := balloon.responseAtGLLAngles(45, 90)
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	if resp.Level[0] > -190 {
+		t.Fatalf("interpolated level = %f, want near cancellation", resp.Level[0])
+	}
+}
+
+func pressureAverageDB(levels ...float64) float64 {
+	if len(levels) == 0 {
+		return -200
+	}
+	sum := 0.0
+	for _, level := range levels {
+		sum += math.Pow(10, level/20.0)
+	}
+	avg := sum / float64(len(levels))
+	if avg <= 0 {
+		return -200
+	}
+	return 20 * math.Log10(avg)
 }
 
 func testUniformBalloon(level float64) *BalloonData {

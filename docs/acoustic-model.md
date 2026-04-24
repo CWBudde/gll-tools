@@ -51,25 +51,27 @@ Open contract to validate:
 
 Current implementation behavior:
 
-- Levels are interpolated linearly in dB over the surrounding angular samples.
-- Phase is interpolated on the unit circle to avoid wrap-boundary artifacts near `+pi/-pi`.
-- This is still not full complex-pressure interpolation because level and phase are not interpolated together.
+- Angular samples are interpolated as complex pressure:
+  - `level` is converted from dB to linear pressure magnitude.
+  - `phase` is applied as the complex angle.
+  - The surrounding angular samples are weighted in the complex plane.
+  - Interpolated `level` and `phase` are derived from the resulting complex value.
 
 Open contract to validate:
 
-- Determine whether array response should interpolate complex pressure directly.
-- Keep direct dB interpolation only for display if reference validation shows it matches viewer behavior.
+- Decide whether display-only visualization paths should use the same complex-pressure interpolation everywhere or retain dB interpolation for purely visual surfaces.
+- Validate complex-pressure interpolation against EASE GLL Viewer output.
 
 ## Air Attenuation
 
 Current implementation behavior:
 
 - Air attenuation is optional in the array-response engine.
-- The current model is a simplified frequency/humidity approximation, not a full ISO 9613-1 implementation.
-- The web demo labels this control as approximate.
-- Temperature is currently used only to default the speed of sound in some call paths; it is not part of the attenuation formula.
+- The attenuation coefficient is calculated from the ISO 9613-1 atmospheric absorption model using frequency, temperature, relative humidity, and pressure.
+- The web demo exposes temperature, humidity, and pressure inputs for array-response and array-balloon calculations.
+- Temperature still does not automatically change propagation speed; speed remains an explicit air property with the existing 343 m/s fallback.
 
 Open contract to validate:
 
-- Decide whether the web demo should keep the approximate control visible or hide it behind an advanced/experimental state.
-- Implement a standards-based attenuation model before presenting attenuation as prediction-grade.
+- Validate ISO 9613-1 reference points against an independent implementation or published calculator.
+- Decide whether the web demo should expose propagation speed separately from attenuation temperature.

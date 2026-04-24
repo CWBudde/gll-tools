@@ -323,6 +323,7 @@ type Vector3DJSON struct {
 type AirPropertiesJSON struct {
 	Temperature float64 `json:"temperature"`
 	Humidity    float64 `json:"humidity"`
+	Pressure    float64 `json:"pressure"`
 }
 
 // ArrayResponseJSON is the JSON output format for array response.
@@ -474,6 +475,7 @@ func GLL_ComputeArrayResponse(configJSON *C.char) C.GLL_Result {
 	if config.Air != nil {
 		airProps.Temperature = config.Air.Temperature
 		airProps.Humidity = config.Air.Humidity
+		airProps.Pressure = config.Air.Pressure
 	}
 
 	// Compute response

@@ -65,7 +65,7 @@ def main():
         Vector3D(5, 20, 0),    # 20m away, 5m to the side
     ]
 
-    air = AirProperties(temperature=20.0, humidity=0.5)
+    air = AirProperties(temperature=20.0, humidity=0.5, pressure=101.325)
 
     for i, recv in enumerate(receivers):
         print(f"\nReceiver {i+1}: ({recv.x}, {recv.y}, {recv.z}) meters")

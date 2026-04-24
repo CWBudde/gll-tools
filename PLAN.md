@@ -272,11 +272,14 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
   - Align `TransferFunction.AddDelay`, web phase display, and group-delay calculation semantics.
 - [ ] Validate angular interpolation:
   - [x] Replace direct linear interpolation of wrapped phase with unit-circle interpolation.
-  - Consider complex-pressure interpolation for array calculations, while keeping dB interpolation only for display if appropriate.
+  - [x] Replace array-calculation angular interpolation with full complex-pressure interpolation.
+  - [ ] Decide whether display-only visualization paths should use dB interpolation or the same complex-pressure interpolation.
   - [x] Add tests around phase wrap boundaries near `+π/-π`.
 - [ ] Validate air attenuation expectations:
   - [x] Mark the current simplified model as approximate in UI/docs.
-  - Decide whether the visualization tab needs a proper ISO 9613-1 implementation before presenting attenuation as prediction-grade.
+  - [ ] Replace the simplified attenuation model with ISO 9613-1 atmospheric absorption.
+  - [ ] Add ISO 9613-1 reference-value tests across frequency, humidity, temperature, and pressure.
+  - [ ] Wire temperature/pressure inputs consistently through Go, WASM, web, and Python APIs.
 
 ### 9.2 Coordinate & Placement Consistency
 

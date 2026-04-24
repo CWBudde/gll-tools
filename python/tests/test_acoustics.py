@@ -95,13 +95,15 @@ def test_air_properties_default() -> None:
     air = AirProperties()
     assert air.temperature == 20.0
     assert air.humidity == 0.5
+    assert air.pressure == 101.325
 
 
 def test_air_properties_custom() -> None:
     """Test custom air properties."""
-    air = AirProperties(temperature=25.0, humidity=0.6)
+    air = AirProperties(temperature=25.0, humidity=0.6, pressure=99.5)
     assert air.temperature == 25.0
     assert air.humidity == 0.6
+    assert air.pressure == 99.5
 
 
 def test_array_calculator_creation(line_array_gll: Path) -> None:

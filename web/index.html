@@ -218,12 +218,23 @@
                   value="50"
                 />
               </label>
+              <label>
+                Pressure (kPa):
+                <input
+                  id="sim-pressure"
+                  type="number"
+                  step="0.5"
+                  min="50"
+                  max="120"
+                  value="101.325"
+                />
+              </label>
               <label
                 class="balloon-toggle"
-                title="Uses the current simplified frequency/humidity attenuation model, not full ISO 9613-1."
+                title="Uses ISO 9613-1 atmospheric absorption from temperature, humidity, and pressure."
               >
                 <input id="sim-air-atten" type="checkbox" />
-                Air Attenuation (approx.)
+                Air Attenuation
               </label>
               <label class="balloon-toggle">
                 <input id="sim-auto-recalc" type="checkbox" checked />

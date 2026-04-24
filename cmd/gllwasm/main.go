@@ -334,10 +334,28 @@ type Vector3Input struct {
 
 // AirPropsInput is air properties for the calculation.
 type AirPropsInput struct {
-	Temperature float64 `json:"temperature"`  // Celsius
-	Humidity    float64 `json:"humidity"`     // 0-1
-	Speed       float64 `json:"speed"`        // m/s (optional, calculated if 0)
-	AirAttenOn  bool    `json:"air_atten_on"` // Enable air absorption
+	Temperature *float64 `json:"temperature"`  // Celsius
+	Humidity    *float64 `json:"humidity"`     // 0-1
+	Pressure    *float64 `json:"pressure"`     // kPa
+	Speed       float64  `json:"speed"`        // m/s (optional, calculated if 0)
+	AirAttenOn  bool     `json:"air_atten_on"` // Enable air absorption
+}
+
+func airPropertiesFromInput(input AirPropsInput) gll.AirProperties {
+	airProps := gll.DefaultAirProperties()
+	if input.Temperature != nil {
+		airProps.Temperature = *input.Temperature
+	}
+	if input.Humidity != nil {
+		airProps.Humidity = *input.Humidity
+	}
+	if input.Pressure != nil {
+		airProps.Pressure = *input.Pressure
+	}
+	if input.Speed != 0 {
+		airProps.Speed = input.Speed
+	}
+	return airProps
 }
 
 // ArrayResponseResult is the output of computeArrayResponse.
@@ -398,6 +416,7 @@ func computeArrayResponse(_ js.Value, args []js.Value) any {
 	airProps := gll.AirProperties{
 		Temperature: req.AirProps.Temperature,
 		Humidity:    req.AirProps.Humidity,
+		Pressure:    req.AirProps.Pressure,
 		Speed:       req.AirProps.Speed,
 	}
 	if airProps.Speed == 0 {
@@ -619,6 +638,7 @@ func computeArrayBalloonData(
 	airProps := gll.AirProperties{
 		Temperature: req.AirProps.Temperature,
 		Humidity:    req.AirProps.Humidity,
+		Pressure:    req.AirProps.Pressure,
 		Speed:       req.AirProps.Speed,
 	}
 	if airProps.Speed == 0 {

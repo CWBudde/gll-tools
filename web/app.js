@@ -500,6 +500,7 @@ function setupSimulationParams() {
   const distance = document.getElementById("sim-receiver-distance");
   const temperature = document.getElementById("sim-temperature");
   const humidity = document.getElementById("sim-humidity");
+  const pressure = document.getElementById("sim-pressure");
   const airAtten = document.getElementById("sim-air-atten");
   const autoRecalc = document.getElementById("sim-auto-recalc");
   const recalcBtn = document.getElementById("sim-recalculate");
@@ -508,7 +509,7 @@ function setupSimulationParams() {
     markConfigDirty();
   };
 
-  for (const el of [distance, temperature, humidity]) {
+  for (const el of [distance, temperature, humidity, pressure]) {
     if (el) el.addEventListener("input", onParamChange);
   }
   if (airAtten) airAtten.addEventListener("change", onParamChange);
@@ -537,6 +538,7 @@ function getSimulationParams() {
     receiverDistance: Math.max(0.1, parseFloat(document.getElementById("sim-receiver-distance")?.value) || 10),
     temperature: parseFloat(document.getElementById("sim-temperature")?.value) || 20,
     humidity: (parseFloat(document.getElementById("sim-humidity")?.value) || 50) / 100,
+    pressure: parseFloat(document.getElementById("sim-pressure")?.value) || 101.325,
     airAttenOn: document.getElementById("sim-air-atten")?.checked || false,
   };
 }
@@ -716,6 +718,7 @@ async function computeArrayBalloonGrid(onProgress) {
     air_props: {
       temperature: sim.temperature,
       humidity: sim.humidity,
+      pressure: sim.pressure,
       speed: 0,
       air_atten_on: sim.airAttenOn,
     },
@@ -5726,6 +5729,7 @@ function updateCombinedResponseChart() {
     air_props: {
       temperature: sim.temperature,
       humidity: sim.humidity,
+      pressure: sim.pressure,
       speed: 0,
       air_atten_on: sim.airAttenOn,
     },

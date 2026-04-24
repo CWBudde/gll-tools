@@ -238,6 +238,7 @@ class GllFile:
         air: "AirProperties | None" = None,
         air_temperature: float | None = None,
         air_humidity: float | None = None,
+        air_pressure: float | None = None,
         air_attenuation: bool = False,
         frequency: float | None = None,
     ) -> "ArrayResponse":
@@ -249,10 +250,15 @@ class GllFile:
         from .acoustics import AirProperties, ArrayCalculator
 
         calculator = ArrayCalculator(self)
-        if air is None and (air_temperature is not None or air_humidity is not None):
+        if air is None and (
+            air_temperature is not None
+            or air_humidity is not None
+            or air_pressure is not None
+        ):
             air = AirProperties(
                 temperature=20.0 if air_temperature is None else air_temperature,
                 humidity=0.5 if air_humidity is None else air_humidity,
+                pressure=101.325 if air_pressure is None else air_pressure,
             )
 
         return calculator.compute_response(

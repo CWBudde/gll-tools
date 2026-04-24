@@ -144,7 +144,7 @@ Compute combined array response from a JSON configuration.
     { "box_type": "K2", "angles": { "x": 0, "y": 0.0175, "z": 0 }, "gain": 0 }
   ],
   "receiver": { "x": 0, "y": 20, "z": 0 },
-  "air": { "temperature": 20, "humidity": 0.5 },
+  "air": { "temperature": 20, "humidity": 0.5, "pressure": 101.325 },
   "air_atten": false
 }
 ```

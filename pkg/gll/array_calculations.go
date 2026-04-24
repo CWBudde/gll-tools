@@ -11,6 +11,7 @@ import (
 type AirProperties struct {
 	Temperature float64 // Celsius
 	Humidity    float64 // Relative humidity (0-1)
+	Pressure    float64 // Atmospheric pressure in kPa
 	Speed       float64 // Speed of sound in m/s
 }
 
@@ -20,16 +21,19 @@ func DefaultAirProperties() AirProperties {
 	return AirProperties{
 		Temperature: temp,
 		Humidity:    humidity,
+		Pressure:    acoustics.ReferencePressureKPa,
 		Speed:       speed,
 	}
 }
 
 // GetAirLossPerMeter returns air absorption in dB/m at the given frequency
-// Based on simplified ISO 9613-1 model
+// Based on ISO 9613-1 atmospheric absorption for pure-tone sound.
 func (ap AirProperties) GetAirLossPerMeter(freq float64) float64 {
-	// Simplified air absorption model
-	// Real implementation would use full ISO 9613-1 equations
-	return acoustics.AirLossPerMeter(freq, ap.Humidity)
+	pressure := ap.Pressure
+	if pressure == 0 {
+		pressure = acoustics.ReferencePressureKPa
+	}
+	return acoustics.AirLossPerMeter(freq, ap.Temperature, ap.Humidity, pressure)
 }
 
 // CopyDeep creates a deep copy of the TransferFunction
@@ -450,30 +454,13 @@ func (bd *BalloonData) GetResponseAtAngle(theta, phi float64) *TransferFunction 
 	result := &TransferFunction{
 		Definition: r00.Definition,
 		Level:      make([]float64, len(r00.Level)),
-		Phase:      make([]float64, len(r00.Phase)),
+		Phase:      make([]float64, len(r00.Level)),
 	}
 
 	w00, w01, w10, w11 := acoustics.BilinearWeights(merIdx, parIdx)
 
 	for i := range result.Level {
-		level00, level01, level10, level11 := 0.0, 0.0, 0.0, 0.0
-		phase00, phase01, phase10, phase11 := 0.0, 0.0, 0.0, 0.0
-
-		if i < len(r00.Level) {
-			level00, phase00 = r00.Level[i], r00.Phase[i]
-		}
-		if i < len(r01.Level) {
-			level01, phase01 = r01.Level[i], r01.Phase[i]
-		}
-		if i < len(r10.Level) {
-			level10, phase10 = r10.Level[i], r10.Phase[i]
-		}
-		if i < len(r11.Level) {
-			level11, phase11 = r11.Level[i], r11.Phase[i]
-		}
-
-		result.Level[i] = w00*level00 + w01*level01 + w10*level10 + w11*level11
-		result.Phase[i] = interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11)
+		result.Level[i], result.Phase[i] = interpolateComplexPressureBand(i, w00, w01, w10, w11, r00, r01, r10, r11)
 	}
 
 	return result
@@ -541,42 +528,49 @@ func (bd *BalloonData) responseAtGLLAngles(meridianDeg, parallelDeg float64) *Tr
 	result := &TransferFunction{
 		Definition: r00.Definition,
 		Level:      make([]float64, len(r00.Level)),
-		Phase:      make([]float64, len(r00.Phase)),
+		Phase:      make([]float64, len(r00.Level)),
 	}
 
 	w00, w01, w10, w11 := acoustics.BilinearWeights(merIdx, parIdx)
 
 	for i := range result.Level {
-		level00, level01, level10, level11 := 0.0, 0.0, 0.0, 0.0
-		phase00, phase01, phase10, phase11 := 0.0, 0.0, 0.0, 0.0
-
-		if i < len(r00.Level) {
-			level00, phase00 = r00.Level[i], r00.Phase[i]
-		}
-		if i < len(r01.Level) {
-			level01, phase01 = r01.Level[i], r01.Phase[i]
-		}
-		if i < len(r10.Level) {
-			level10, phase10 = r10.Level[i], r10.Phase[i]
-		}
-		if i < len(r11.Level) {
-			level11, phase11 = r11.Level[i], r11.Phase[i]
-		}
-
-		result.Level[i] = w00*level00 + w01*level01 + w10*level10 + w11*level11
-		result.Phase[i] = interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11)
+		result.Level[i], result.Phase[i] = interpolateComplexPressureBand(i, w00, w01, w10, w11, r00, r01, r10, r11)
 	}
 
 	return result
 }
 
-func interpolateWrappedPhase(w00, w01, w10, w11, phase00, phase01, phase10, phase11 float64) float64 {
-	real := w00*math.Cos(phase00) + w01*math.Cos(phase01) + w10*math.Cos(phase10) + w11*math.Cos(phase11)
-	imag := w00*math.Sin(phase00) + w01*math.Sin(phase01) + w10*math.Sin(phase10) + w11*math.Sin(phase11)
+func interpolateComplexPressureBand(
+	band int,
+	w00, w01, w10, w11 float64,
+	r00, r01, r10, r11 *TransferFunction,
+) (float64, float64) {
+	real00, imag00 := weightedComplexPressure(w00, r00, band)
+	real01, imag01 := weightedComplexPressure(w01, r01, band)
+	real10, imag10 := weightedComplexPressure(w10, r10, band)
+	real11, imag11 := weightedComplexPressure(w11, r11, band)
+
+	real := real00 + real01 + real10 + real11
+	imag := imag00 + imag01 + imag10 + imag11
 	if math.Abs(real) < 1e-12 && math.Abs(imag) < 1e-12 {
-		return w00*phase00 + w01*phase01 + w10*phase10 + w11*phase11
+		return -200.0, 0.0
 	}
-	return math.Atan2(imag, real)
+
+	level := 20.0 * math.Log10(math.Hypot(real, imag))
+	phase := math.Atan2(imag, real)
+	return level, phase
+}
+
+func weightedComplexPressure(weight float64, response *TransferFunction, band int) (float64, float64) {
+	if weight == 0 || response == nil || band < 0 || band >= len(response.Level) {
+		return 0, 0
+	}
+	phase := 0.0
+	if band < len(response.Phase) {
+		phase = response.Phase[band]
+	}
+	magnitude := weight * math.Pow(10, response.Level[band]/20.0)
+	return magnitude * math.Cos(phase), magnitude * math.Sin(phase)
 }
 
 func normalizeGLLMeridian(meridianDeg float64, symmetry int) float64 {
