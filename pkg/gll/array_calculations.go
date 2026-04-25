@@ -132,19 +132,50 @@ func ComputeSystemResponseGridWithProgress(
 	airAttenOn bool,
 	progress func(completed, total int),
 ) []*TransferFunction {
+	results, _ := ComputeSystemResponseGridWithProgressCancel(
+		config,
+		receivers,
+		airProps,
+		airAttenOn,
+		progress,
+		nil,
+	)
+	return results
+}
+
+// ComputeSystemResponseGridWithProgressCancel calculates the combined array
+// response at multiple receiver positions, reports progress, and stops early
+// when shouldCancel returns true. The returned bool is true when canceled.
+func ComputeSystemResponseGridWithProgressCancel(
+	config *ArrayConfig,
+	receivers []Vector3D,
+	airProps AirProperties,
+	airAttenOn bool,
+	progress func(completed, total int),
+	shouldCancel func() bool,
+) ([]*TransferFunction, bool) {
 	results := make([]*TransferFunction, len(receivers))
+	if shouldCancel != nil && shouldCancel() {
+		return results, true
+	}
 	if progress != nil {
 		progress(0, len(receivers))
 	}
 	progressEvery := progressReportInterval(len(receivers))
 	for i, recv := range receivers {
+		if shouldCancel != nil && shouldCancel() {
+			return results, true
+		}
 		results[i] = ComputeSystemResponseAt(config, recv, airProps, airAttenOn)
 		completed := i + 1
 		if progress != nil && (completed == len(receivers) || completed%progressEvery == 0) {
 			progress(completed, len(receivers))
 		}
+		if shouldCancel != nil && shouldCancel() {
+			return results, true
+		}
 	}
-	return results
+	return results, false
 }
 
 func progressReportInterval(total int) int {

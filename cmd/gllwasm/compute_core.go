@@ -150,6 +150,7 @@ type ArrayBalloonRequest struct {
 type ArrayBalloonResult struct {
 	Success     bool                      `json:"success"`
 	Error       string                    `json:"error,omitempty"`
+	Canceled    bool                      `json:"canceled,omitempty"`
 	Frequencies []float64                 `json:"frequencies,omitempty"`
 	Results     []ArrayBalloonPointResult `json:"results,omitempty"`
 }
@@ -159,6 +160,7 @@ type ArrayBalloonProgressEvent struct {
 	Type      string              `json:"type"`
 	Success   bool                `json:"success,omitempty"`
 	Error     string              `json:"error,omitempty"`
+	Canceled  bool                `json:"canceled,omitempty"`
 	Completed int                 `json:"completed,omitempty"`
 	Total     int                 `json:"total,omitempty"`
 	Result    *ArrayBalloonResult `json:"result,omitempty"`
@@ -174,6 +176,15 @@ func computeArrayBalloonData(
 	data []byte,
 	configJSON string,
 	progress func(completed, total int),
+) ArrayBalloonResult {
+	return computeArrayBalloonDataWithCancel(data, configJSON, progress, nil)
+}
+
+func computeArrayBalloonDataWithCancel(
+	data []byte,
+	configJSON string,
+	progress func(completed, total int),
+	shouldCancel func() bool,
 ) ArrayBalloonResult {
 	reader := bytes.NewReader(data)
 	file, err := gll.Parse(reader)
@@ -192,7 +203,7 @@ func computeArrayBalloonData(
 		}
 	}
 
-	return computeArrayBalloonForFile(file, reader, req, progress)
+	return computeArrayBalloonForFileWithCancel(file, reader, req, progress, shouldCancel)
 }
 
 func computeArrayBalloonForFile(
@@ -200,6 +211,16 @@ func computeArrayBalloonForFile(
 	reader *bytes.Reader,
 	req ArrayBalloonRequest,
 	progress func(completed, total int),
+) ArrayBalloonResult {
+	return computeArrayBalloonForFileWithCancel(file, reader, req, progress, nil)
+}
+
+func computeArrayBalloonForFileWithCancel(
+	file *gll.File,
+	reader *bytes.Reader,
+	req ArrayBalloonRequest,
+	progress func(completed, total int),
+	shouldCancel func() bool,
 ) ArrayBalloonResult {
 	config := buildArrayConfig(file, reader, req.Elements)
 	if len(config.Elements) == 0 {
@@ -214,13 +235,21 @@ func computeArrayBalloonForFile(
 		receivers[i] = gll.Vector3D{X: r.X, Y: r.Y, Z: r.Z}
 	}
 
-	responses := gll.ComputeSystemResponseGridWithProgress(
+	responses, canceled := gll.ComputeSystemResponseGridWithProgressCancel(
 		config,
 		receivers,
 		airPropertiesFromInput(req.AirProps),
 		req.AirProps.AirAttenOn,
 		progress,
+		shouldCancel,
 	)
+	if canceled {
+		return ArrayBalloonResult{
+			Success:  false,
+			Canceled: true,
+			Error:    "calculation canceled",
+		}
+	}
 
 	result := ArrayBalloonResult{
 		Success: true,

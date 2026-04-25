@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"sync/atomic"
 	"syscall/js"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/cwbudde/gll-tools/internal/mime"
 	"github.com/cwbudde/gll-tools/pkg/gll"
 )
+
+var arrayBalloonJobID atomic.Int64
 
 // WASMResult is the JSON structure returned to JavaScript.
 type WASMResult struct {
@@ -103,6 +106,9 @@ func main() {
 
 	// Register the async computeArrayBalloon function
 	js.Global().Set("computeArrayBalloonAsync", js.FuncOf(computeArrayBalloonAsync))
+
+	// Register the array balloon cancellation function
+	js.Global().Set("cancelArrayBalloon", js.FuncOf(cancelArrayBalloon))
 
 	// Keep the program running
 	select {}
@@ -398,26 +404,44 @@ func computeArrayBalloonAsync(_ js.Value, args []js.Value) any {
 
 	configJSON := args[1].String()
 	callback := args[2]
+	jobID := arrayBalloonJobID.Add(1)
 
 	go func() {
-		result := computeArrayBalloonData(data, configJSON, func(completed, total int) {
+		shouldCancel := func() bool {
+			return arrayBalloonJobID.Load() != jobID
+		}
+		result := computeArrayBalloonDataWithCancel(data, configJSON, func(completed, total int) {
+			if shouldCancel() {
+				return
+			}
 			callback.Invoke(marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
 				Type:      "progress",
 				Completed: completed,
 				Total:     total,
 			}))
 			time.Sleep(time.Millisecond)
-		})
+		}, shouldCancel)
 		callback.Invoke(marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
-			Type:    "complete",
-			Success: result.Success,
-			Error:   result.Error,
-			Result:  &result,
+			Type:     "complete",
+			Success:  result.Success,
+			Error:    result.Error,
+			Canceled: result.Canceled,
+			Result:   &result,
 		}))
 	}()
 
 	return marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
 		Type:    "started",
 		Success: true,
+	})
+}
+
+// cancelArrayBalloon requests cancellation of the active async array balloon calculation.
+func cancelArrayBalloon(_ js.Value, _ []js.Value) any {
+	arrayBalloonJobID.Add(1)
+	return marshalBalloonProgressEvent(ArrayBalloonProgressEvent{
+		Type:     "canceled",
+		Success:  true,
+		Canceled: true,
 	})
 }

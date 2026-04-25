@@ -59,6 +59,42 @@ func TestComputeSystemResponseAtAppliesDelayOnce(t *testing.T) {
 	}
 }
 
+func TestComputeSystemResponseGridWithProgressCancelStopsEarly(t *testing.T) {
+	source := &SourceDefinition{BalloonData: testUniformBalloon()}
+	config := &ArrayConfig{
+		Elements: []ArrayElement{
+			{
+				Position:   Vector3D{},
+				SourceDefs: []*SourceDefinition{source},
+			},
+		},
+	}
+	receivers := []Vector3D{{X: 1}, {Y: 1}, {Z: 1}}
+	cancel := false
+
+	responses, canceled := ComputeSystemResponseGridWithProgressCancel(
+		config,
+		receivers,
+		AirProperties{Speed: 343},
+		false,
+		func(completed, total int) {
+			if completed == 0 && total == len(receivers) {
+				cancel = true
+			}
+		},
+		func() bool { return cancel },
+	)
+
+	if !canceled {
+		t.Fatal("expected computation to be canceled")
+	}
+	for i, response := range responses {
+		if response != nil {
+			t.Fatalf("response %d was computed after cancellation", i)
+		}
+	}
+}
+
 func TestComputeSystemResponseAtUsesRotatedGLLAngles(t *testing.T) {
 	source := &SourceDefinition{BalloonData: testRotationBalloon()}
 	config := &ArrayConfig{

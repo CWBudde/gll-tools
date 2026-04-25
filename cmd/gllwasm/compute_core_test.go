@@ -89,6 +89,39 @@ func TestComputeArrayBalloonForFileProgressAndResponseParity(t *testing.T) {
 	}
 }
 
+func TestComputeArrayBalloonForFileCancellation(t *testing.T) {
+	file := syntheticVisualizationFile()
+	req := ArrayBalloonRequest{
+		Elements: []ArrayElementInput{{SourceKey: "src"}},
+		Receivers: []ReceiverInput{
+			{X: 1},
+			{Y: 1},
+			{Z: 1},
+		},
+		AirProps: AirPropsInput{Speed: 343},
+	}
+	canceled := false
+
+	result := computeArrayBalloonForFileWithCancel(
+		file,
+		nil,
+		req,
+		func(completed, total int) {
+			if completed == 0 && total == len(req.Receivers) {
+				canceled = true
+			}
+		},
+		func() bool { return canceled },
+	)
+
+	if !result.Canceled {
+		t.Fatalf("expected canceled result, got success=%v error=%q", result.Success, result.Error)
+	}
+	if result.Success {
+		t.Fatal("canceled result must not be successful")
+	}
+}
+
 func TestComputeArrayBalloonDataReportsParseErrors(t *testing.T) {
 	result := computeArrayBalloonData([]byte("not a gll"), "{}", nil)
 	if result.Success {

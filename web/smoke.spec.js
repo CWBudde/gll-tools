@@ -50,3 +50,52 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
   await expect(configRows).toHaveCount(0);
   await expect(page.locator("#array-view-placeholder")).toBeVisible();
 });
+
+test("auto-recalculate cancels the active array computation when a row is removed", async ({
+  page,
+}) => {
+  const sampleFile = path.join(
+    __dirname,
+    "..",
+    "testdata",
+    "gll",
+    "D20-V10.gll",
+  );
+
+  await page.goto("/web/");
+  await page.waitForFunction(() => typeof window.parseGLL === "function");
+  await page.evaluate(() => {
+    window.__cancelArrayBalloonCalls = 0;
+    window.__arrayBalloonStarts = 0;
+    window.computeArrayBalloonAsync = (_data, _payload, callback) => {
+      window.__arrayBalloonStarts += 1;
+      setTimeout(() => {
+        callback(
+          JSON.stringify({
+            type: "progress",
+            completed: 0,
+            total: 2664,
+          }),
+        );
+      }, 0);
+      return JSON.stringify({ type: "started", success: true });
+    };
+    window.cancelArrayBalloon = () => {
+      window.__cancelArrayBalloonCalls += 1;
+      return JSON.stringify({ type: "canceled", success: true, canceled: true });
+    };
+  });
+
+  await page.locator("#file-input").setInputFiles(sampleFile);
+  await expect(page.locator("#results")).toBeVisible();
+  await page.getByRole("button", { name: "Visualization" }).click();
+  await page.waitForFunction(() => window.__arrayBalloonStarts > 0);
+
+  await page
+    .locator("#config-editor-body tr")
+    .first()
+    .getByRole("button", { name: "X" })
+    .click();
+
+  await page.waitForFunction(() => window.__cancelArrayBalloonCalls > 0);
+});

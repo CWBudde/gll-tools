@@ -579,15 +579,16 @@ function setArrayVisualizationState(next) {
   updateVisualizationStateUI();
 }
 
-function getArrayVisualizationState() {
+function getArrayVisualizationState(options = {}) {
   const hasCache = !!cachedArrayBalloon?.frequencies?.length;
   const hasActiveConfig = !!activeConfig?.elements?.length;
   const autoRecalc = document.getElementById("sim-auto-recalc")?.checked ?? true;
   const stale = hasCache && configDirty;
   const usable = hasCache && !configDirty && arrayVisualizationState.status !== "error";
+  const ignoreRecalcInProgress = options.ignoreRecalcInProgress === true;
 
   let status = arrayVisualizationState.status;
-  if (recalcInProgress) {
+  if (recalcInProgress && !ignoreRecalcInProgress) {
     status = "computing";
   } else if (stale) {
     status = "stale";
@@ -699,6 +700,7 @@ function markConfigDirty() {
   if (!isVisualizationTabActive()) return;
   const autoRecalc = document.getElementById("sim-auto-recalc");
   if (autoRecalc?.checked) {
+    cancelActiveRecalculation();
     triggerFullRecalculation();
   } else {
     updateRecalcButtonVisibility();
@@ -718,10 +720,22 @@ function updateRecalcButtonVisibility() {
 }
 
 let recalcInProgress = false;
+let activeRecalcAbortController = null;
+
+function cancelActiveRecalculation() {
+  if (!recalcInProgress) return;
+  if (activeRecalcAbortController) {
+    activeRecalcAbortController.abort();
+  } else if (typeof window.cancelArrayBalloon === "function") {
+    window.cancelArrayBalloon();
+  }
+}
 
 async function triggerFullRecalculation() {
   if (recalcInProgress) return;
   recalcInProgress = true;
+  const abortController = new AbortController();
+  activeRecalcAbortController = abortController;
   configDirty = false;
   setArrayVisualizationState({
     status: "computing",
@@ -738,22 +752,29 @@ async function triggerFullRecalculation() {
   try {
     // Yield to let the progress UI render before WASM starts.
     await nextPaint();
+    if (abortController.signal.aborted) return;
 
-    const balloonComputed = await computeArrayBalloonGrid((completed, total) => {
-      const pointLabel =
-        total > 0
-          ? ` (${completed.toLocaleString()} of ${total.toLocaleString()} points)`
-          : "";
-      setSimulationProgress(
-        total > 0 ? (completed / total) * 100 : 0,
-        `Computing array response${pointLabel}...`,
-      );
-    });
+    const balloonComputed = await computeArrayBalloonGrid(
+      (completed, total) => {
+        if (abortController.signal.aborted) return;
+        const pointLabel =
+          total > 0
+            ? ` (${completed.toLocaleString()} of ${total.toLocaleString()} points)`
+            : "";
+        setSimulationProgress(
+          total > 0 ? (completed / total) * 100 : 0,
+          `Computing array response${pointLabel}...`,
+        );
+      },
+      abortController.signal,
+    );
+    if (abortController.signal.aborted) return;
 
     setSimulationProgress(100, "Updating visualizations...");
     await nextPaint();
+    if (abortController.signal.aborted) return;
 
-    updateCombinedResponseChart();
+    updateCombinedResponseChart({ ignoreRecalcInProgress: true });
     if (balloonComputed) {
       visualization.updateBalloonOptions();
       visualization.updatePolarOptions();
@@ -763,6 +784,9 @@ async function triggerFullRecalculation() {
       updateVisualizationStateUI();
     }
   } finally {
+    if (activeRecalcAbortController === abortController) {
+      activeRecalcAbortController = null;
+    }
     hideSimulationProgress();
     recalcInProgress = false;
     updateRecalcButtonVisibility();
@@ -827,8 +851,9 @@ function generateSphericalGrid(distance, merCount, parCount) {
   return receivers;
 }
 
-async function computeArrayBalloonGrid(onProgress) {
+async function computeArrayBalloonGrid(onProgress, signal) {
   // Compute array response at a full spherical grid for balloon/polar
+  if (signal?.aborted) return false;
   if (
     !activeConfig ||
     !currentFileBytes ||
@@ -897,10 +922,12 @@ async function computeArrayBalloonGrid(onProgress) {
   });
 
   try {
+    if (signal?.aborted) return false;
     const result =
       typeof window.computeArrayBalloonAsync === "function"
-        ? await computeArrayBalloonGridAsync(payload, onProgress)
+        ? await computeArrayBalloonGridAsync(payload, onProgress, signal)
         : JSON.parse(window.computeArrayBalloon(currentFileBytes, payload));
+    if (signal?.aborted || result.canceled) return false;
     if (result.success) {
       cachedArrayBalloon = {
         frequencies: result.frequencies,
@@ -943,8 +970,34 @@ async function computeArrayBalloonGrid(onProgress) {
   }
 }
 
-function computeArrayBalloonGridAsync(payload, onProgress) {
+function computeArrayBalloonGridAsync(payload, onProgress, signal) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    };
+    const onAbort = () => {
+      if (typeof window.cancelArrayBalloon === "function") {
+        window.cancelArrayBalloon();
+      }
+      finish({ success: false, canceled: true });
+    };
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+
     let started;
     try {
       started = JSON.parse(
@@ -956,9 +1009,10 @@ function computeArrayBalloonGridAsync(payload, onProgress) {
             try {
               event = JSON.parse(eventJSON);
             } catch (err) {
-              reject(err);
+              fail(err);
               return;
             }
+            if (settled || signal?.aborted) return;
 
             if (event.type === "progress") {
               onProgress?.(event.completed || 0, event.total || 0);
@@ -966,10 +1020,12 @@ function computeArrayBalloonGridAsync(payload, onProgress) {
             }
 
             if (event.type === "complete") {
-              if (event.success && event.result) {
-                resolve(event.result);
+              if (event.canceled || event.result?.canceled) {
+                finish({ success: false, canceled: true });
+              } else if (event.success && event.result) {
+                finish(event.result);
               } else {
-                resolve({
+                finish({
                   success: false,
                   error:
                     event.error ||
@@ -982,13 +1038,14 @@ function computeArrayBalloonGridAsync(payload, onProgress) {
         ),
       );
     } catch (err) {
-      reject(err);
+      fail(err);
       return;
     }
 
     if (!started.success) {
-      resolve({
+      finish({
         success: false,
+        canceled: !!started.canceled,
         error: started.error || "Failed to start array response computation",
       });
     }
@@ -5886,7 +5943,7 @@ function updateResponseChart() {
   document.getElementById("response-meta").classList.remove("empty-state");
 }
 
-function updateCombinedResponseChart() {
+function updateCombinedResponseChart(options = {}) {
   // Compute and render combined array response
   const groupSelect = document.getElementById("combined-filter-group");
   const filterSelect = document.getElementById("combined-filter");
@@ -5902,7 +5959,9 @@ function updateCombinedResponseChart() {
     return;
   }
 
-  const state = getArrayVisualizationState();
+  const state = getArrayVisualizationState({
+    ignoreRecalcInProgress: options.ignoreRecalcInProgress === true,
+  });
   if (
     activeConfig &&
     (state.status === "stale" ||
@@ -6282,7 +6341,10 @@ function updateCombinedResponseMeta(
   normalizedMode,
 ) {
   // Compose metadata chip list for combined response
-  const chips = buildArrayStateChips(getArrayVisualizationState(), false);
+  const chips = buildArrayStateChips(
+    getArrayVisualizationState({ ignoreRecalcInProgress: true }),
+    false,
+  );
   if (box) {
     chips.push(
       `<span class="chip">${escapeHtml(box.label || box.key || "Box")}</span>`,

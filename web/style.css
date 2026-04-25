@@ -1726,8 +1726,12 @@ footer a:hover {
   width: 100%;
 }
 
+#sim-computing-message {
+  flex: 1;
+  min-width: 0;
+}
+
 .sim-computing-percent {
-  margin-left: auto;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--text);
@@ -1756,6 +1760,7 @@ footer a:hover {
   border: 2px solid var(--border);
   border-top-color: var(--primary, #2563eb);
   border-radius: 50%;
+  margin: 0;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
 }
