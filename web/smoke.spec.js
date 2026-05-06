@@ -9,7 +9,7 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
     "..",
     "testdata",
     "gll",
-    "D20-V10.gll",
+    "example-cl.gll",
   );
 
   await page.goto("/web/");
@@ -20,7 +20,7 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
   await page.locator("#file-input").setInputFiles(sampleFile);
 
   await expect(page.locator("#results")).toBeVisible();
-  await expect(page.locator("#file-name")).toHaveText("D20-V10.gll");
+  await expect(page.locator("#file-name")).toHaveText("example-cl.gll");
 
   await page.getByRole("button", { name: "Visualization" }).click();
 
@@ -59,7 +59,7 @@ test("auto-recalculate cancels the active array computation when a row is remove
     "..",
     "testdata",
     "gll",
-    "D20-V10.gll",
+    "example-cl.gll",
   );
 
   await page.goto("/web/");

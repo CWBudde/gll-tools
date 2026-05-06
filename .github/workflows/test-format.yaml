@@ -23,16 +23,16 @@ jobs:
 
       - name: Install Go formatters
         run: |
-          go install mvdan.cc/gofumpt@latest
-          go install github.com/daixiang0/gci@latest
+          go install mvdan.cc/gofumpt@v0.9.2
+          go install github.com/daixiang0/gci@v0.13.7
 
       - name: Install shell formatters
         run: |
-          go install mvdan.cc/sh/v3/cmd/shfmt@latest
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
 
       - name: Install Prettier
         run: |
-          npm install -g prettier
+          npm install -g prettier@3.8.0
 
       - name: Run treefmt check
         uses: isbecker/treefmt-action@v2
@@ -40,4 +40,4 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fail-on-change: true
           allow-missing-formatter: true
-          treefmt-version: "2.5.0"
+          version: "2.5.0"
