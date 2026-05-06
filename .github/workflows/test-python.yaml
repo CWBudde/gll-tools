@@ -1,0 +1,50 @@
+name: test-python
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-python:
+    name: test-python-${{ matrix.os_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_name: linux-amd64
+            lib_name: _libgll.so
+          - runner: macos-latest
+            os_name: macos-arm64
+            lib_name: _libgll.dylib
+          - runner: windows-latest
+            os_name: windows-amd64
+            lib_name: _libgll.dll
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build shared library
+        run: go build -buildmode=c-shared -o python/gll/${{ matrix.lib_name }} ./cmd/gllpy
+
+      - name: Install Python package with dev dependencies
+        run: pip install -e "python/[dev]"
+
+      - name: Run Python tests
+        working-directory: python
+        run: python -m pytest tests/ -v

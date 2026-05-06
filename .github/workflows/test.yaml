@@ -21,3 +21,6 @@ jobs:
 
   test-web:
     uses: ./.github/workflows/test-web.yaml
+
+  test-python:
+    uses: ./.github/workflows/test-python.yaml
