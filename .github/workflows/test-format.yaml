@@ -40,3 +40,4 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fail-on-change: true
           allow-missing-formatter: true
+          treefmt-version: "2.5.0"
