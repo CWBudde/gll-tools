@@ -108,7 +108,7 @@ func ExportSource(w io.Writer, src *gll.SourceDefinition, gen *gll.GenSystem, op
 		manufacturer = gen.Company
 	}
 
-	radiation := "halfsphere"
+	radiation := defaultRadiation
 	if !angRes.FrontHalfOnly {
 		radiation = "fullsphere"
 	}
@@ -126,7 +126,7 @@ func ExportSource(w io.Writer, src *gll.SourceDefinition, gen *gll.GenSystem, op
 		Impedance:           src.RatedImpedance,
 		Radiation:           radiation,
 		Symmetry:            GLLSymmetryToCLF(angRes.Symmetry),
-		Reference:           "absolute",
+		Reference:           defaultReference,
 		AzimuthCount:        merCount,
 		PolarCount:          parCount,
 		StepDeg:             math.Min(merStep, parStep),

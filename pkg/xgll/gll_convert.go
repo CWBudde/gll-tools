@@ -443,8 +443,8 @@ func parseBoxTypeContent(box *gllbin.BoxType, statements []Statement, startIdx i
 	// Parse statements that belong to this BoxType
 	// Stop at next BoxType, Frame, Connector, or other major keyword
 	majorKeywords := map[string]bool{
-		"BoxType": true, "Frame": true, "Frames": true,
-		"Connector": true, "Connectors": true,
+		kwBoxType: true, kwFrame: true, kwFrames: true,
+		kwConnector: true, kwConnectors: true,
 		"Limit": true, "Limits": true,
 		"Warning": true, "Warnings": true,
 		"SourceDefinition": true, "SourceDefinitions": true,

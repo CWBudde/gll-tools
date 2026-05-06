@@ -80,6 +80,13 @@ path = "cmd/"  # Allow certain patterns in CLI code
 linters = ["errcheck"]
 path = "_test\\.go"  # Allow unchecked errors in tests
 
+[linters.settings.goconst]
+ignore-tests = true  # Test string literals are intentionally repeated
+
+[[linters.exclusions.rules]]
+linters = ["goconst"]
+path = "_test\\.go"  # Suppress goconst reports originating from test files
+
 # Exclude third-party code
 [[linters.exclusions.rules]]
 path = "third_party"

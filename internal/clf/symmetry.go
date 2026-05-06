@@ -11,11 +11,14 @@ const (
 	SymmetryAxial      int32 = 4
 )
 
+// CLF symmetry tag for no symmetry.
+const clfTagNone = "<none>"
+
 // GLLSymmetryToCLF maps a GLL symmetry type to the corresponding CLF symmetry tag.
 func GLLSymmetryToCLF(gllSym int32) string {
 	switch gllSym {
 	case SymmetryNone:
-		return "<none>"
+		return clfTagNone
 	case SymmetryVertical:
 		return "<vertical>"
 	case SymmetryHorizontal:
@@ -25,7 +28,7 @@ func GLLSymmetryToCLF(gllSym int32) string {
 	case SymmetryAxial:
 		return "<rotational>"
 	default:
-		return "<none>"
+		return clfTagNone
 	}
 }
 

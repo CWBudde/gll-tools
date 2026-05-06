@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+const (
+	defaultRadiation = "halfsphere"
+	defaultReference = "absolute"
+)
+
 // ExportParams contains all data needed to write a CLF text file.
 type ExportParams struct {
 	CLFType int // 1 or 2
@@ -123,7 +128,7 @@ func Write(w io.Writer, p *ExportParams) error {
 	wl("<IMPEDANCE>\t%.0f", p.Impedance)
 	wl("<IMPEDANCE-INFO>\t#")
 	wl("<TOTMAXINPUT>\t0\t0")
-	wl("<RADIATION>\t<%s>", or(p.Radiation, "halfsphere"))
+	wl("<RADIATION>\t<%s>", or(p.Radiation, defaultRadiation))
 
 	// Axial spectrum
 	if len(p.AxialSpectrum) > 0 {
@@ -137,9 +142,9 @@ func Write(w io.Writer, p *ExportParams) error {
 	}
 	wl("<AXIAL-SPECTRUM-INFO>\tat 1m")
 
-	wl("<BALLOON-SYMMETRY>\t%s", or(p.Symmetry, "<none>"))
+	wl("<BALLOON-SYMMETRY>\t%s", or(p.Symmetry, clfTagNone))
 	wl("<BALLOON-ARC-ORDER>\t<default>")
-	wl("<BALLOON-REF>\t<%s>\t<SIGN>\t<actual>", or(p.Reference, "absolute"))
+	wl("<BALLOON-REF>\t<%s>\t<SIGN>\t<actual>", or(p.Reference, defaultReference))
 
 	// Band data
 	for f, freq := range p.BandFrequencies {

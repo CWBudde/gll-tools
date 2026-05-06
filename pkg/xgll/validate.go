@@ -5,6 +5,23 @@ import (
 	"strings"
 )
 
+const (
+	kwBoxType             = "BoxType"
+	kwSourceDefinition    = "SourceDefinition"
+	kwInputConfigurations = "Input Configurations"
+	kwInputConfiguration  = "Input Configuration"
+	kwInputs              = "Inputs"
+	kwInput               = "Input"
+	kwLinks               = "Links"
+	kwLink                = "Link"
+	kwFilterGroup         = "FilterGroup"
+	kwFrame               = "Frame"
+	kwConnector           = "Connector"
+	kwConnectors          = "Connectors"
+	kwFrames              = "Frames"
+	kwSetups              = "Setups"
+)
+
 // ValidateSystemConstraints checks block presence and system type consistency.
 func ValidateSystemConstraints(doc *Document) []Diagnostic {
 	// Quick exit on empty input
@@ -32,13 +49,13 @@ func ValidateSystemConstraints(doc *Document) []Diagnostic {
 	// Validate block requirements by system type
 	switch systemType {
 	case "LA":
-		requireKeyword(&diags, keywordSet, "Frames", sysStmt.Line, sysStmt.Column)
-		requireKeyword(&diags, keywordSet, "Connectors", sysStmt.Line, sysStmt.Column)
+		requireKeyword(&diags, keywordSet, kwFrames, sysStmt.Line, sysStmt.Column)
+		requireKeyword(&diags, keywordSet, kwConnectors, sysStmt.Line, sysStmt.Column)
 	case "CL":
-		requireKeyword(&diags, keywordSet, "Setups", sysStmt.Line, sysStmt.Column)
+		requireKeyword(&diags, keywordSet, kwSetups, sysStmt.Line, sysStmt.Column)
 	case "LS":
 		// LS must not contain LA/CL-specific blocks
-		for _, disallowed := range []string{"Frames", "Connectors", "Setups"} {
+		for _, disallowed := range []string{kwFrames, kwConnectors, kwSetups} {
 			if keywordSet[strings.ToLower(disallowed)] {
 				diags = append(diags, Diagnostic{
 					Severity: SeverityWarning,
@@ -89,10 +106,10 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		switch stmt.Keyword {
 		case "BoxTypes":
 			// Declared count for BoxType
-			expect.set("BoxType", stmt, &diags)
-		case "BoxType":
+			expect.set(kwBoxType, stmt, &diags)
+		case kwBoxType:
 			// Count BoxType entry
-			expect.see("BoxType", stmt, &diags)
+			expect.see(kwBoxType, stmt, &diags)
 
 			// Collect BoxType names
 			if name := argString(stmt, 1); name != "" {
@@ -112,26 +129,26 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 
 			// Capture SourceDefinition reference
 			if ref := argString(stmt, 8); ref != "" {
-				refSourceDefs = append(refSourceDefs, refCheck{Kind: "SourceDefinition", Name: ref, Stmt: stmt})
+				refSourceDefs = append(refSourceDefs, refCheck{Kind: kwSourceDefinition, Name: ref, Stmt: stmt})
 			}
-		case "Input Configurations":
+		case kwInputConfigurations:
 			// Declared count for Input Configuration
-			expect.set("Input Configuration", stmt, &diags)
-		case "Input Configuration":
+			expect.set(kwInputConfiguration, stmt, &diags)
+		case kwInputConfiguration:
 			// Count Input Configuration entry
-			expect.see("Input Configuration", stmt, &diags)
-		case "Inputs":
+			expect.see(kwInputConfiguration, stmt, &diags)
+		case kwInputs:
 			// Declared count for Input
-			expect.set("Input", stmt, &diags)
-		case "Input":
+			expect.set(kwInput, stmt, &diags)
+		case kwInput:
 			// Count Input entry
-			expect.see("Input", stmt, &diags)
-		case "Links":
+			expect.see(kwInput, stmt, &diags)
+		case kwLinks:
 			// Declared count for Link
-			expect.set("Link", stmt, &diags)
-		case "Link":
+			expect.set(kwLink, stmt, &diags)
+		case kwLink:
 			// Count Link entry
-			expect.see("Link", stmt, &diags)
+			expect.see(kwLink, stmt, &diags)
 
 			// Capture Link references
 			if ref := argString(stmt, 0); ref != "" {
@@ -139,7 +156,7 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 			}
 
 			if ref := argString(stmt, 1); ref != "" {
-				refFilterGroups = append(refFilterGroups, refCheck{Kind: "FilterGroup", Name: ref, Stmt: stmt})
+				refFilterGroups = append(refFilterGroups, refCheck{Kind: kwFilterGroup, Name: ref, Stmt: stmt})
 			}
 		case "GeometryFiles":
 			// Declared count for GeometryFile
@@ -147,12 +164,12 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		case "GeometryFile":
 			// Count GeometryFile entry
 			expect.see("GeometryFile", stmt, &diags)
-		case "Frames":
+		case kwFrames:
 			// Declared count for Frame
-			expect.set("Frame", stmt, &diags)
-		case "Frame":
+			expect.set(kwFrame, stmt, &diags)
+		case kwFrame:
 			// Count Frame entry
-			expect.see("Frame", stmt, &diags)
+			expect.see(kwFrame, stmt, &diags)
 
 			// Collect frame names
 			if name := argString(stmt, 1); name != "" {
@@ -164,20 +181,20 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		case "PinPoint":
 			// Count PinPoint entry
 			expect.see("PinPoint", stmt, &diags)
-		case "Connectors":
+		case kwConnectors:
 			// Declared count for Connector
-			expect.set("Connector", stmt, &diags)
-		case "Connector":
+			expect.set(kwConnector, stmt, &diags)
+		case kwConnector:
 			// Count Connector entry
-			expect.see("Connector", stmt, &diags)
+			expect.see(kwConnector, stmt, &diags)
 
 			// Capture connector references
 			if ref := argString(stmt, 0); ref != "" {
-				refConnectors = append(refConnectors, refCheck{Kind: "Connector", Name: ref, Stmt: stmt})
+				refConnectors = append(refConnectors, refCheck{Kind: kwConnector, Name: ref, Stmt: stmt})
 			}
 
 			if ref := argString(stmt, 1); ref != "" {
-				refConnectors = append(refConnectors, refCheck{Kind: "Connector", Name: ref, Stmt: stmt})
+				refConnectors = append(refConnectors, refCheck{Kind: kwConnector, Name: ref, Stmt: stmt})
 			}
 		case "Angles":
 			// Declared count for Angle
@@ -194,12 +211,12 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 
 			// Capture frame reference
 			if ref := argString(stmt, 1); ref != "" {
-				refFrames = append(refFrames, refCheck{Kind: "Frame", Name: ref, Stmt: stmt})
+				refFrames = append(refFrames, refCheck{Kind: kwFrame, Name: ref, Stmt: stmt})
 			}
 
 			// Capture box type reference
 			if ref := argString(stmt, 2); ref != "" {
-				refBoxTypes = append(refBoxTypes, refCheck{Kind: "BoxType", Name: ref, Stmt: stmt})
+				refBoxTypes = append(refBoxTypes, refCheck{Kind: kwBoxType, Name: ref, Stmt: stmt})
 			}
 		case "Warnings":
 			// Declared count for Warning
@@ -210,14 +227,14 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 
 			// Capture frame reference
 			if ref := argString(stmt, 2); ref != "" {
-				refFrames = append(refFrames, refCheck{Kind: "Frame", Name: ref, Stmt: stmt})
+				refFrames = append(refFrames, refCheck{Kind: kwFrame, Name: ref, Stmt: stmt})
 			}
 		case "SourceDefinitions":
 			// Declared count for SourceDefinition
-			expect.set("SourceDefinition", stmt, &diags)
-		case "SourceDefinition":
+			expect.set(kwSourceDefinition, stmt, &diags)
+		case kwSourceDefinition:
 			// Count SourceDefinition entry
-			expect.see("SourceDefinition", stmt, &diags)
+			expect.see(kwSourceDefinition, stmt, &diags)
 
 			// Collect SourceDefinition names
 			if name := argString(stmt, 0); name != "" {
@@ -225,10 +242,10 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 			}
 		case "FilterGroups":
 			// Declared count for FilterGroup
-			expect.set("FilterGroup", stmt, &diags)
-		case "FilterGroup":
+			expect.set(kwFilterGroup, stmt, &diags)
+		case kwFilterGroup:
 			// Count FilterGroup entry
-			expect.see("FilterGroup", stmt, &diags)
+			expect.see(kwFilterGroup, stmt, &diags)
 
 			// Collect FilterGroup names
 			if name := argString(stmt, 1); name != "" {
@@ -240,7 +257,7 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		case "FilterDefinition":
 			// Count FilterDefinition entry
 			expect.see("FilterDefinition", stmt, &diags)
-		case "Setups":
+		case kwSetups:
 			// Declared count for Setup
 			expect.set("Setup", stmt, &diags)
 		case "Setup":
@@ -255,7 +272,7 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 
 			// Capture BoxType reference
 			if ref := argString(stmt, 6); ref != "" {
-				refBoxTypes = append(refBoxTypes, refCheck{Kind: "BoxType", Name: ref, Stmt: stmt})
+				refBoxTypes = append(refBoxTypes, refCheck{Kind: kwBoxType, Name: ref, Stmt: stmt})
 			}
 		}
 	}
