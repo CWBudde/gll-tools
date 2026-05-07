@@ -83,10 +83,10 @@ func TestShannonEntropy(t *testing.T) {
 
 func TestCountPrintable(t *testing.T) {
 	cases := []struct {
-		name           string
-		in             []byte
-		wantPrintable  int
-		wantTotal      int
+		name          string
+		in            []byte
+		wantPrintable int
+		wantTotal     int
 	}{
 		{"empty", nil, 0, 0},
 		{"all printable", []byte("Hello, World!"), 13, 13},

@@ -80,49 +80,62 @@ func TestGLLEncoderGeometryRoundTrip(t *testing.T) {
 		t.Errorf("SymmetryAxis: want 12.5, got %v", got.SymmetryAxis)
 	}
 
-	// Vertices round-trip
-	if len(got.Vertices) != len(geom.Vertices) {
-		t.Fatalf("vertex count: want %d, got %d", len(geom.Vertices), len(got.Vertices))
-	}
-	for i, want := range geom.Vertices {
-		gotV := got.Vertices[i]
-		if gotV.Color != want.Color || gotV.X != want.X || gotV.Y != want.Y ||
-			gotV.Z != want.Z || gotV.Label != want.Label || gotV.HasTwin != want.HasTwin {
-			t.Errorf("vertex[%d]: want %+v, got %+v", i, want, gotV)
-		}
-	}
+	checkVertices(t, geom.Vertices, got.Vertices)
+	checkEdges(t, geom.Edges, got.Edges)
+	checkFaces(t, geom.Faces, got.Faces)
+}
 
-	// Edges round-trip
-	if len(got.Edges) != len(geom.Edges) {
-		t.Fatalf("edge count: want %d, got %d", len(geom.Edges), len(got.Edges))
+func checkVertices(t *testing.T, want, got []gllbin.Vertex) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("vertex count: want %d, got %d", len(want), len(got))
 	}
-	for i, want := range geom.Edges {
-		gotE := got.Edges[i]
-		if gotE.Color != want.Color || gotE.V1 != want.V1 || gotE.V2 != want.V2 ||
-			gotE.Label != want.Label || gotE.HasTwin != want.HasTwin {
-			t.Errorf("edge[%d]: want %+v, got %+v", i, want, gotE)
+	for i, w := range want {
+		g := got[i]
+		if g.Color != w.Color || g.X != w.X || g.Y != w.Y ||
+			g.Z != w.Z || g.Label != w.Label || g.HasTwin != w.HasTwin {
+			t.Errorf("vertex[%d]: want %+v, got %+v", i, w, g)
 		}
 	}
+}
 
-	// Faces round-trip (only if sub_version >= 1, which we set)
-	if len(got.Faces) != len(geom.Faces) {
-		t.Fatalf("face count: want %d, got %d", len(geom.Faces), len(got.Faces))
+func checkEdges(t *testing.T, want, got []gllbin.Edge) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("edge count: want %d, got %d", len(want), len(got))
 	}
-	for i, want := range geom.Faces {
-		gotF := got.Faces[i]
-		if gotF.HasTwin != want.HasTwin || gotF.Color != want.Color || gotF.Label != want.Label {
-			t.Errorf("face[%d] meta: want %+v, got %+v", i, want, gotF)
+	for i, w := range want {
+		g := got[i]
+		if g.Color != w.Color || g.V1 != w.V1 || g.V2 != w.V2 ||
+			g.Label != w.Label || g.HasTwin != w.HasTwin {
+			t.Errorf("edge[%d]: want %+v, got %+v", i, w, g)
 		}
-		if len(gotF.Vertices) != len(want.Vertices) {
-			t.Errorf("face[%d] vertex count: want %d, got %d",
-				i, len(want.Vertices), len(gotF.Vertices))
-			continue
+	}
+}
+
+func checkFaces(t *testing.T, want, got []gllbin.Face) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("face count: want %d, got %d", len(want), len(got))
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.HasTwin != w.HasTwin || g.Color != w.Color || g.Label != w.Label {
+			t.Errorf("face[%d] meta: want %+v, got %+v", i, w, g)
 		}
-		for j := range want.Vertices {
-			if gotF.Vertices[j] != want.Vertices[j] {
-				t.Errorf("face[%d].Vertices[%d]: want %d, got %d",
-					i, j, want.Vertices[j], gotF.Vertices[j])
-			}
+		checkFaceVertices(t, i, w.Vertices, g.Vertices)
+	}
+}
+
+func checkFaceVertices(t *testing.T, faceIdx int, want, got []int32) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("face[%d] vertex count: want %d, got %d", faceIdx, len(want), len(got))
+		return
+	}
+	for j := range want {
+		if got[j] != want[j] {
+			t.Errorf("face[%d].Vertices[%d]: want %d, got %d", faceIdx, j, want[j], got[j])
 		}
 	}
 }
