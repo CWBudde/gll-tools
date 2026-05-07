@@ -18,7 +18,7 @@ func makeTF(bandsPerOctave int32, startFreq float64, n int, level, phase float64
 		Definition: LogSpectrumDefinition{
 			BandsPerOctave: bandsPerOctave,
 			StartFreq:      startFreq,
-			PointCount:     int32(n),
+			PointCount:     int32(n), //nolint:gosec // n is a small test parameter
 		},
 		Level: make([]float64, n),
 		Phase: make([]float64, n),

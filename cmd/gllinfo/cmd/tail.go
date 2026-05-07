@@ -323,6 +323,7 @@ func printASCIIRuns(data []byte, minLen int) {
 	}
 }
 
+//nolint:unparam // window kept configurable for tests covering different sizes
 func printRepeats(data []byte, window int) {
 	if len(data) < window*2 {
 		fmt.Printf("Repeats (window %d): none\n", window)

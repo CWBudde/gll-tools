@@ -9,6 +9,8 @@ import (
 
 // makeTestBalloon constructs a minimal SourceDefinition with synthetic
 // balloon data covering meridianCount × parallelCount points at the given step.
+//
+//nolint:unparam // meridianStep kept for symmetry with parallelStep across callers
 func makeTestBalloon(meridianStep, parallelStep float64, levelDB float64) *gll.SourceDefinition {
 	mCount := int(math.Round(360.0 / meridianStep))
 	pCount := int(math.Round(180.0/parallelStep)) + 1
@@ -17,7 +19,7 @@ func makeTestBalloon(meridianStep, parallelStep float64, levelDB float64) *gll.S
 	specDef := gll.LogSpectrumDefinition{
 		StartFreq:      100,
 		BandsPerOctave: 1,
-		PointCount:     int32(len(levels)),
+		PointCount:     int32(len(levels)), //nolint:gosec // bounded by literal slice
 	}
 
 	responses := make([]gll.TransferFunction, mCount*pCount)
@@ -33,7 +35,7 @@ func makeTestBalloon(meridianStep, parallelStep float64, levelDB float64) *gll.S
 				ParallelStep: parallelStep,
 			},
 			Responses:     responses,
-			ResponseCount: int32(len(responses)),
+			ResponseCount: int32(len(responses)), //nolint:gosec // bounded by mCount*pCount in tests
 		},
 	}
 }

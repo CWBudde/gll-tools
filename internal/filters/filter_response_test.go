@@ -292,8 +292,7 @@ func TestBuildFilterResponseSkippedFilters(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("unexpected error: %s", result.Error)
 	}
-	// No usable data → empty response with informational message
-	if result.SkippedFilters == 0 && len(result.Frequencies) == 0 {
-		// acceptable: either skipped or empty
-	}
+	// No usable data → either skipped or empty response is acceptable.
+	// Both branches are valid; we only assert Success above.
+	_ = result.SkippedFilters
 }
