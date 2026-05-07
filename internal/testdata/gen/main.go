@@ -38,8 +38,8 @@ func buildFile() *gllbin.File {
 	src := xgll.SyntheticSource("Full Range", "sdFullRange", 90.0)
 
 	boxType := gllbin.BoxType{
-		Label: "Test Cabinet",
-		Key:   "bxTest",
+		Label:   "Test Cabinet",
+		Key:     "bxTest",
 		Sources: []string{src.Key},
 		SourcePlacements: []gllbin.BoxSource{
 			{
