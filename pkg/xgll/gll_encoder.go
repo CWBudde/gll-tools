@@ -245,9 +245,17 @@ func (e *gllEncoder) encodeDatabase(db *gllbin.Database) ([]byte, error) {
 		return nil, fmt.Errorf("write limits block: %w", err)
 	}
 
-	// SourceDefinitions count
-	if err := binary.Write(&payload, binary.LittleEndian, int32(0)); err != nil {
-		return nil, fmt.Errorf("write source count: %w", err)
+	// SourceDefinitions
+	var sourceItems []gllbin.SourceDefinitionItem
+	if db != nil {
+		sourceItems = db.SourceDefinitions
+	}
+	sourceDefs, err := e.encodeSourceDefinitionsBuffer(sourceItems)
+	if err != nil {
+		return nil, fmt.Errorf("encode source definitions: %w", err)
+	}
+	if _, err := payload.Write(sourceDefs); err != nil {
+		return nil, fmt.Errorf("write source definitions: %w", err)
 	}
 
 	// Choose sub-version

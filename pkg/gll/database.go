@@ -169,13 +169,8 @@ func parseDatabase(br *gll.ByteReader, file *File) error {
 	}
 
 	// 6. SourceDefinitions - the main acoustic data
-	sources, err := parseSourceDefinitionBuffer(br)
-	if err != nil || len(sources) == 0 {
-		// Try fallback: search for source definitions in the file
-		sources, _ = findSourceDefinitions(br, startOffset, endOffset)
-	}
-
-	if len(sources) > 0 {
+	sources, err := parseSourceDefinitionBuffer(br, endOffset)
+	if err == nil && len(sources) > 0 {
 		file.Database.SourceDefinitions = sources
 	}
 

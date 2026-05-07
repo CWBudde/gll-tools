@@ -173,29 +173,10 @@ type SourceDefinitionItem struct {
 	Definition *SourceDefinition `json:"definition"`
 }
 
-// parseSourceDefinitionBuffer parses the source definitions buffer
-func parseSourceDefinitionBuffer(br *gll.ByteReader) ([]SourceDefinitionItem, error) {
-	count, err := br.ReadInt32()
-	if err != nil {
-		return nil, fmt.Errorf("reading source count: %w", err)
-	}
-
-	if count <= 0 {
-		return nil, nil
-	}
-
-	sources := make([]SourceDefinitionItem, 0, count)
-
-	for i := range count {
-		item, err := parseSourceDefinitionItem(br)
-		if err != nil {
-			return sources, fmt.Errorf("parsing source %d: %w", i, err)
-		}
-
-		sources = append(sources, *item)
-	}
-
-	return sources, nil
+// parseSourceDefinitionBuffer parses the source definitions buffer using the
+// standard ObjectLSCBuffer wrapper (block_size + vcheck + sver + count + items).
+func parseSourceDefinitionBuffer(br *gll.ByteReader, maxOffset int64) ([]SourceDefinitionItem, error) {
+	return parseBufferItems(br, maxOffset, 0, parseSourceDefinitionItem)
 }
 
 func parseSourceDefinitionItem(br *gll.ByteReader) (*SourceDefinitionItem, error) {

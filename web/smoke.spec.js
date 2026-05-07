@@ -1,6 +1,27 @@
 const path = require("path");
 const { test, expect } = require("@playwright/test");
 
+// Minimal fake parsed GLL data: one box type referencing one source definition.
+// The actual file bytes (example-cl.gll) are still loaded so currentFileBytes is
+// set, but parseGLL is overridden so the test never depends on the file's contents.
+const fakeGLLResult = JSON.stringify({
+  success: true,
+  data: {
+    header: { format_version: 4 },
+    gen_system: { label: "Test Speaker", type: 2 },
+    metadata: { product_name: "Test Speaker", display_name: "Test Speaker" },
+    database: {
+      sub_version: 3,
+      box_types: [{ key: "bxTest", label: "Test Box", sources: ["sdTest"] }],
+      source_definitions: [{ key: "sdTest", label: "Test Source" }],
+    },
+  },
+});
+
+const fakeFrequencies = [125, 250, 500, 1000, 2000, 4000, 8000];
+const fakeLevel = fakeFrequencies.map(() => 90);
+const fakePhase = fakeFrequencies.map(() => 0);
+
 test("web demo parses a sample GLL and recalculates visualization outputs", async ({
   page,
 }) => {
@@ -16,6 +37,36 @@ test("web demo parses a sample GLL and recalculates visualization outputs", asyn
   await expect(page.locator("#drop-zone")).toBeVisible();
 
   await page.waitForFunction(() => typeof window.parseGLL === "function");
+
+  // Override WASM functions with deterministic mocks so the test never depends
+  // on actual acoustic data from the file.
+  await page.evaluate(
+    ({ gllResult, freqs, level, phase }) => {
+      window.parseGLL = () => gllResult;
+      window.computeArrayResponse = () =>
+        JSON.stringify({ success: true, frequencies: freqs, level, phase });
+      window.computeArrayBalloonAsync = (_bytes, _payload, callback) => {
+        // 72 meridian × 37 parallel = 2664 grid points
+        const results = Array.from({ length: 72 * 37 }, () => ({
+          level: freqs.map(() => 90),
+          phase: freqs.map(() => 0),
+        }));
+        setTimeout(
+          () =>
+            callback(
+              JSON.stringify({
+                type: "complete",
+                success: true,
+                result: { success: true, frequencies: freqs, results },
+              }),
+            ),
+          0,
+        );
+        return JSON.stringify({ type: "started", success: true });
+      };
+    },
+    { gllResult: fakeGLLResult, freqs: fakeFrequencies, level: fakeLevel, phase: fakePhase },
+  );
 
   await page.locator("#file-input").setInputFiles(sampleFile);
 
@@ -64,9 +115,10 @@ test("auto-recalculate cancels the active array computation when a row is remove
 
   await page.goto("/web/");
   await page.waitForFunction(() => typeof window.parseGLL === "function");
-  await page.evaluate(() => {
+  await page.evaluate(({ gllResult }) => {
     window.__cancelArrayBalloonCalls = 0;
     window.__arrayBalloonStarts = 0;
+    window.parseGLL = () => gllResult;
     window.computeArrayBalloonAsync = (_data, _payload, callback) => {
       window.__arrayBalloonStarts += 1;
       setTimeout(() => {
@@ -84,7 +136,7 @@ test("auto-recalculate cancels the active array computation when a row is remove
       window.__cancelArrayBalloonCalls += 1;
       return JSON.stringify({ type: "canceled", success: true, canceled: true });
     };
-  });
+  }, { gllResult: fakeGLLResult });
 
   await page.locator("#file-input").setInputFiles(sampleFile);
   await expect(page.locator("#results")).toBeVisible();

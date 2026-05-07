@@ -3,6 +3,8 @@ package xgll
 import (
 	"fmt"
 	"io"
+
+	gllbin "github.com/cwbudde/gll-tools/pkg/gll"
 )
 
 type gllWriter struct{}
@@ -33,4 +35,9 @@ func (w gllWriter) Write(doc *Document, out io.Writer) error {
 func init() {
 	// Register GLL writer
 	RegisterWriter(gllWriter{})
+}
+
+// EncodeFile writes f to w in GLL binary format.
+func EncodeFile(f *gllbin.File, w io.Writer) error {
+	return newGLLEncoder(w).writeFile(f)
 }
