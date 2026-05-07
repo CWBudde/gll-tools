@@ -97,10 +97,10 @@ func scanResources(r io.ReadSeeker, file *File) error {
 				// Try to decompress to verify it's valid zlib
 				reader, err := zlib.NewReader(bytes.NewReader(data[pos:]))
 				if err == nil {
-					decompressed, err := io.ReadAll(reader)
+					decompressed, err := io.ReadAll(io.LimitReader(reader, int64(maxDecompressedSize)+1))
 					reader.Close()
 
-					if err == nil && len(decompressed) > 20 {
+					if err == nil && len(decompressed) > 20 && len(decompressed) <= maxDecompressedSize {
 						// Valid zlib block - find its compressed size
 						compressedSize := findZlibEnd(data[pos:])
 
@@ -155,34 +155,26 @@ func findResourceName(data []byte, offset int) string {
 	return ""
 }
 
-// findZlibEnd estimates the compressed size of a zlib block
-// by scanning for the next zlib signature or end of meaningful data
+// findZlibEnd returns the exact compressed size of a zlib block by reading the
+// stream and reporting how many input bytes the decoder consumed. bytes.Reader
+// implements io.ByteReader, so flate consumes it directly without an internal
+// buffer, making the unread length an exact measure. Decompressed output is
+// capped at maxDecompressedSize to avoid zip-bomb DoS.
 func findZlibEnd(data []byte) int {
-	// Decompress to find actual end
-	reader, err := zlib.NewReader(bytes.NewReader(data))
+	src := bytes.NewReader(data)
+
+	reader, err := zlib.NewReader(src)
 	if err != nil {
 		return len(data)
 	}
 	defer reader.Close()
 
-	// Read all to consume the compressed data
-	_, _ = io.ReadAll(reader)
-
-	// The reader doesn't expose bytes consumed, so estimate from decompression
-	// Look for next structure marker after current block
-	// Common markers: block size (4-byte int), version check (0x0000)
-	for i := 2; i < len(data) && i < 100000; i++ {
-		// Check if this looks like end of zlib stream (Adler-32 checksum followed by new structure)
-		if i > 10 {
-			// Try to find a valid block header after this point
-			if data[i] == 0 && i+1 < len(data) && data[i+1] == 0 {
-				// Possible version check (0x0000)
-				return i
-			}
-		}
+	limited := io.LimitReader(reader, int64(maxDecompressedSize)+1)
+	if _, err := io.Copy(io.Discard, limited); err != nil {
+		return len(data)
 	}
 
-	return len(data)
+	return len(data) - src.Len()
 }
 
 // identifyZlibContent attempts to identify the type of decompressed content
