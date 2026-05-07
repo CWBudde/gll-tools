@@ -24,3 +24,10 @@ jobs:
 
       - name: Run unit tests
         run: just test
+
+      - name: Check coverage threshold
+        run: |
+          go test -coverprofile=coverage.out ./... -timeout 120s
+          total=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          awk -v cov="$total" 'BEGIN { if (cov+0 < 49) { print "Coverage " cov "% is below minimum 49%"; exit 1 } }'

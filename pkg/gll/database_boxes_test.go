@@ -8,7 +8,7 @@ import (
 
 func TestBoxTypeParsing(t *testing.T) {
 	cases := []struct {
-		file     string
+		file      string
 		wantBoxes int
 	}{
 		{"APS-V1_1.gll", 5},
