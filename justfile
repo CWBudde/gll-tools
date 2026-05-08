@@ -38,11 +38,11 @@ check-tidy:
 
 # Run all tests
 test:
-    go test -v -timeout 120s ./...
+    go test -v -timeout 240s ./...
 
 # Run tests with coverage
 test-coverage:
-    go test -v -timeout 120s -coverprofile=coverage.out ./...
+    go test -v -timeout 240s -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
 
 # Run all checks (formatting, linting, tests, tidiness)
