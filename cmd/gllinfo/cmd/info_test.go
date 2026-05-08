@@ -9,8 +9,10 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const testGLLFile = "../../../testdata/gll/D12-v10.gll"
-const testGLLFileFilters = "../../../testdata/gll/3Way-LR.gll"
+const (
+	testGLLFile        = "../../../testdata/gll/D12-v10.gll"
+	testGLLFileFilters = "../../../testdata/gll/3Way-LR.gll"
+)
 
 // resetFlags restores every flag in cmd and its subcommands to its default
 // value. Cobra retains parsed flag values in package-level variables across
