@@ -64,9 +64,11 @@ func AddGain(level []float64, gainDB float64) {
 	}
 }
 
-// AddDelay shifts phase based on frequency to simulate time delay.
+// AddDelay shifts phase based on frequency to simulate time delay using the
+// physical convention X(f) ↦ X(f)·e^{−j2πfδ} for a wave delayed by δ. A
+// positive delay therefore subtracts 2π·f·δ from the stored phase.
 func AddDelay(phase []float64, freqs []float64, delay float64) {
 	for i := range phase {
-		phase[i] += 2.0 * math.Pi * freqs[i] * delay
+		phase[i] -= 2.0 * math.Pi * freqs[i] * delay
 	}
 }

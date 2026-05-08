@@ -573,7 +573,9 @@ func TestAddGain(t *testing.T) {
 	}
 }
 
-// TestAddDelay tests phase shift from time delay
+// TestAddDelay tests phase shift from time delay. Physical convention:
+// a wave delayed by δ has its spectrum multiplied by e^{−j2πfδ}, so the
+// stored phase decreases by 2π·f·δ.
 func TestAddDelay(t *testing.T) {
 	phase := []float64{0, 0, 0}
 	freqs := []float64{100, 1000, 10000}
@@ -581,8 +583,8 @@ func TestAddDelay(t *testing.T) {
 
 	AddDelay(phase, freqs, delay)
 
-	// At 1 kHz, 1ms delay = 360° = 2π radians
-	expectedPhase := 2.0 * math.Pi * 1000 * 0.001
+	// At 1 kHz, 1 ms delay → −2π rad.
+	expectedPhase := -2.0 * math.Pi * 1000 * 0.001
 	if math.Abs(phase[1]-expectedPhase) > 1e-6 {
 		t.Errorf("Phase shift at 1kHz: got %f, want %f", phase[1], expectedPhase)
 	}

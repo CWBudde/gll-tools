@@ -46,17 +46,15 @@ Still open:
 
 Transfer functions are stored as level in dB and phase in radians. Coherent summation converts level/phase to complex pressure, sums complex values, and converts back to level/phase.
 
-Current implementation behavior:
+Sign convention (resolved):
 
-- `TransferFunction.AddDelay` adds `+2*pi*f*delay` to phase.
-- Response visualization subtracts `2*pi*f*delay` before unwrapping and computing group delay.
-- The existing unit test suite characterizes the positive phase-addition behavior.
+- Engineering DSP convention `X(f) = ∫ x(t) e^{−j2πft} dt`. A wave delayed by `δ` has its spectrum multiplied by `e^{−j2πfδ}`, so `TransferFunction.AddDelay(δ)` subtracts `2·pi·f·δ` from each band's stored phase.
+- Response visualization (`internal/viz/applyDelayToPhase`) uses the same convention: it subtracts `2·pi·f·δ` from `response.Delay` before unwrapping and computing group delay.
+- Pinning tests: `TestResolvedContract_AddDelaySign` (`pkg/gll/array_calculations_acoustic_test.go`), `TestAddDelaySignConvention` (`pkg/gll/transfer_function_math_test.go`), `TestAddDelay` (`internal/acoustics/acoustics_test.go`).
 
-Open contract to validate:
+Still open:
 
-- Confirm the sign convention used by parsed GLL phase data.
-- Decide whether propagation delay should be represented as positive stored phase, negative display phase, or normalized before summation.
-- Add a two-source synthetic interference test with known null/peak frequencies before changing this behavior.
+- Confirm the sign convention used by parsed GLL phase data is consistent with the above (i.e. EASE stores phase in the same e^{−j2πfδ} convention). The current implementation propagates whatever sign the file uses without inversion.
 
 ## Angular Interpolation
 

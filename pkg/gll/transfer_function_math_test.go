@@ -318,22 +318,17 @@ func TestAddDelayLeavesLevelUntouched(t *testing.T) {
 	}
 }
 
-// TestAddDelaySignConvention captures the sign convention used by AddDelay
-// and surfaces it explicitly. Engineering DSP convention
-// X(f) = ∫ x(t) e^{-j2πft} dt makes a delayed signal multiply its spectrum
-// by e^{-j2πfτ}, i.e. phase shifts by -2πfτ. The implementation in
-// internal/acoustics/transfer.go uses +2πfτ — verify which sign is in use
-// and document it for downstream consumers.
+// TestAddDelaySignConvention pins the physical sign convention used by
+// AddDelay: X(f) = ∫ x(t) e^{−j2πft} dt makes a delayed signal multiply its
+// spectrum by e^{−j2πfτ}, i.e. phase shifts by −2π·f·τ.
 func TestAddDelaySignConvention(t *testing.T) {
 	tf := makeTF(1, 1000, 1, 0, 0) // single 1 kHz band, phase 0
-	tf.AddDelay(0.00025)           // 0.25 ms → |Δφ| = π/2
+	tf.AddDelay(0.00025)           // 0.25 ms → Δφ = −π/2
 	got := tf.Phase[0]
-	want := 2 * math.Pi * 1000 * 0.00025
+	want := -2 * math.Pi * 1000 * 0.00025
 	if math.Abs(got-want) > phaseTolerance {
-		t.Errorf("AddDelay sign convention: got phase %v, expected +%v "+
-			"(implementation uses phase += 2πfτ). Tighten this test if the "+
-			"convention is intentionally e^{-jωτ}.",
-			got, want)
+		t.Errorf("AddDelay sign convention: got phase %v, expected %v "+
+			"(physical: phase −= 2π·f·τ).", got, want)
 	}
 }
 

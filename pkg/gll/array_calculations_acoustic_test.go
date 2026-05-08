@@ -21,14 +21,12 @@ package gll
 //      TestSourceDefinitionOnAxisSpectrumIsApplied below pins the fixed
 //      behavior. See docs/acoustic-model.md → "Source Response Components".
 //
-// Open contracts (currently asserted, but flagged for review):
-//
-//   - Phase sign of AddDelay. internal/acoustics.AddDelay adds +2π·f·δ to the
-//     stored phase, which is the inverse of the physical convention
-//     e^{-j2πfδ} for a delayed wavefront. The visualization layer compensates
-//     by subtracting the same quantity. Synthetic interference at λ/2 is
-//     symmetric under sign flip, so it cannot detect this; explicit asymmetric
-//     tests are needed. See docs/acoustic-model.md → "Phase And Delay".
+//   2. Phase sign of AddDelay. internal/acoustics.AddDelay now subtracts
+//      2π·f·δ from the stored phase, matching the physical convention
+//      X(f) ↦ X(f)·e^{−j2πfδ}. TestResolvedContract_AddDelaySign below pins
+//      the fix. The visualization layer (internal/viz) was already using the
+//      same physical convention, so no compensating change was needed.
+//      See docs/acoustic-model.md → "Phase And Delay".
 
 import (
 	"math"
@@ -583,32 +581,25 @@ func TestSourceDefinitionOnAxisSpectrum_GridMismatchIsIgnored(t *testing.T) {
 	}
 }
 
-// TestOpenContract_AddDelaySign documents that AddDelay adds +2π·f·δ to the
-// stored phase, opposite of the physical convention (a wave delayed by δ
-// observed at the receiver carries phase −2π·f·δ).
+// TestResolvedContract_AddDelaySign pins the physical sign convention used by
+// AddDelay: a wave delayed by δ observed at the receiver carries phase
+// −2π·f·δ (engineering DSP convention X(f) = ∫ x(t) e^{−j2πft} dt).
 //
 // The destructive-interference test at λ/2 is symmetric under sign flip, so
-// it cannot detect this. We test directly on a single TransferFunction.
+// it cannot detect this — hence this dedicated direct test.
 //
 // See docs/acoustic-model.md → "Phase And Delay".
-func TestOpenContract_AddDelaySign(t *testing.T) {
-	def := LogSpectrumDefinition{BandsPerOctave: 1, StartFreq: 1000, PointCount: 1}
+func TestResolvedContract_AddDelaySign(t *testing.T) {
+	// Apply a 1 ms delay at 250 Hz (0.25 cycle = π/2 rad in magnitude).
 	tf := &TransferFunction{
-		Definition: def,
+		Definition: LogSpectrumDefinition{BandsPerOctave: 1, StartFreq: 250, PointCount: 1},
 		Level:      []float64{0},
 		Phase:      []float64{0},
 	}
-	// Apply a 1 ms delay at 250 Hz (0.25 cycle = π/2 rad).
-	tf.Definition = LogSpectrumDefinition{BandsPerOctave: 1, StartFreq: 250, PointCount: 1}
 	tf.AddDelay(1e-3)
 
-	// Physical convention would give phase = -π/2.
-	// Current implementation gives phase = +π/2.
-	if math.Abs(tf.Phase[0]-math.Pi/2) > 1e-9 {
-		t.Errorf("BEHAVIOR CHANGED: phase after +1 ms delay at 250 Hz = %v rad. "+
-			"Was previously +π/2 (= +2π·f·δ). If the sign convention has been "+
-			"corrected to physical −2π·f·δ, update the contract in "+
-			"docs/acoustic-model.md and remove the visualization-layer "+
-			"compensation that subtracts the same quantity.", tf.Phase[0])
+	if math.Abs(tf.Phase[0]-(-math.Pi/2)) > 1e-9 {
+		t.Errorf("phase after +1 ms delay at 250 Hz = %v rad, want -π/2 (= −2π·f·δ)",
+			tf.Phase[0])
 	}
 }
