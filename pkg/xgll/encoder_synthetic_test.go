@@ -107,15 +107,46 @@ func TestEncoderSynthetic_BoxTypeFull(t *testing.T) {
 	if len(got.SourcePlacements) != 1 || got.SourcePlacements[0].SourceDefKey != "src1" {
 		t.Errorf("SourcePlacements = %+v", got.SourcePlacements)
 	}
-	// NOTE: InputConfig, CaseGeometry, and the opening-angle fields are not
-	// asserted here. The encoder runs through them (driving coverage of
-	// encodeBoxInputConfig / encodeBoxInputBuffer / encodeBoxInput /
-	// encodeSourceFilterLink / encodeCaseGeometry / encodeVertex /
-	// encodeEdge), but the encoder/parser pair has a known asymmetry for
-	// these fields (parser expects an extra outer int32 size header that
-	// the encoder doesn't emit). Fixing that is out of scope for this
-	// coverage push; the fields are populated to drive the encoder paths,
-	// but we only assert on the fields that genuinely round-trip.
+	if got.VerticalOpeningAngle != 60.0 {
+		t.Errorf("VerticalOpeningAngle = %v, want 60", got.VerticalOpeningAngle)
+	}
+	if got.HorizontalOpeningAngle != 90.0 {
+		t.Errorf("HorizontalOpeningAngle = %v, want 90", got.HorizontalOpeningAngle)
+	}
+	if got.InputConfig == nil {
+		t.Fatal("InputConfig is nil after round-trip")
+	}
+	if got.InputConfig.Label != "Bi-Amp" || got.InputConfig.Key != "ic1" {
+		t.Errorf("InputConfig Label/Key = %q/%q", got.InputConfig.Label, got.InputConfig.Key)
+	}
+	if len(got.InputConfig.Inputs) != 2 {
+		t.Fatalf("Inputs len = %d, want 2", len(got.InputConfig.Inputs))
+	}
+	if got.InputConfig.Inputs[0].Label != "LF" || got.InputConfig.Inputs[1].Label != "HF" {
+		t.Errorf("input labels = %q, %q", got.InputConfig.Inputs[0].Label, got.InputConfig.Inputs[1].Label)
+	}
+	if got.InputConfig.Inputs[0].RatedImpedance != 8.0 {
+		t.Errorf("RatedImpedance = %v, want 8", got.InputConfig.Inputs[0].RatedImpedance)
+	}
+	if len(got.InputConfig.Inputs[0].SourceLinks) != 1 ||
+		got.InputConfig.Inputs[0].SourceLinks[0].SourceKey != "src1" {
+		t.Errorf("SourceLinks = %+v", got.InputConfig.Inputs[0].SourceLinks)
+	}
+	if got.CaseGeometry == nil {
+		t.Fatal("CaseGeometry is nil after round-trip")
+	}
+	if !got.CaseGeometry.IsSymmetric {
+		t.Error("CaseGeometry.IsSymmetric should be true")
+	}
+	if len(got.CaseGeometry.Vertices) != 3 {
+		t.Errorf("Vertices len = %d, want 3", len(got.CaseGeometry.Vertices))
+	}
+	if len(got.CaseGeometry.Edges) != 2 {
+		t.Errorf("Edges len = %d, want 2", len(got.CaseGeometry.Edges))
+	}
+	if got.Weight != 12.5 {
+		t.Errorf("Weight = %v, want 12.5", got.Weight)
+	}
 }
 
 // TestReverseSymmetryCode_AllValues covers each switch arm of

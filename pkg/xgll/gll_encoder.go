@@ -721,15 +721,26 @@ func (e *gllEncoder) encodeInputConfigBuffer(inputConfig *gllbin.BoxInputConfig)
 		return buf.Bytes(), nil
 	}
 
-	// Encode the BoxInputConfig
+	// Encode the BoxInputConfig (which itself starts with an int32 size +
+	// vcheck + subver + content).
 	configBlock, err := e.encodeBoxInputConfig(inputConfig)
 	if err != nil {
 		return nil, fmt.Errorf("encode box input config: %w", err)
 	}
 
-	// The buffer contains the single BoxInputConfig block directly
-	// (not wrapped in a count+items structure like other buffers)
-	return configBlock, nil
+	// The InputConfigBuffer wraps the single BoxInputConfig block in an
+	// outer size header. The outer size is just int32 (no vcheck/subver of
+	// its own). parseInputConfigBuffer reads the outer size, then descends
+	// into parseBoxInputConfig which reads its own size+vcheck+subver.
+	//
+	// Total buffer size = 4 (size field) + len(configBlock).
+	var buf bytes.Buffer
+	//nolint:gosec // configBlock length is bounded by encoder output
+	if err := binary.Write(&buf, binary.LittleEndian, int32(4+len(configBlock))); err != nil {
+		return nil, fmt.Errorf("write input config buffer size: %w", err)
+	}
+	buf.Write(configBlock)
+	return buf.Bytes(), nil
 }
 
 func (e *gllEncoder) encodeBoxInputConfig(config *gllbin.BoxInputConfig) ([]byte, error) {
