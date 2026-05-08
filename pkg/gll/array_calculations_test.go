@@ -166,15 +166,19 @@ func TestComputeSystemResponseAtReceiverPlacementDirections(t *testing.T) {
 	}
 	airProps := AirProperties{Speed: 343}
 
+	// Expected levels equal the raw balloon values: with no OnAxisSpectrum on
+	// the synthetic source, computeElementResponseAt no longer adds a
+	// front-pole correction. 1/r at d=1m contributes 0 dB. See
+	// docs/acoustic-model.md → "Source Response Components".
 	tests := []struct {
 		name      string
 		receiver  Vector3D
 		wantLevel float64
 	}{
-		{"front +X", Vector3D{X: 1}, 20},
-		{"right +Y", Vector3D{Y: 1}, 30},
-		{"top +Z", Vector3D{Z: 1}, 40},
-		{"back -X", Vector3D{X: -1}, 50},
+		{"front +X", Vector3D{X: 1}, 10},
+		{"right +Y", Vector3D{Y: 1}, 20},
+		{"top +Z", Vector3D{Z: 1}, 30},
+		{"back -X", Vector3D{X: -1}, 40},
 	}
 
 	for _, tt := range tests {
@@ -196,7 +200,7 @@ func TestComputeSystemResponseAtShowsPathLengthInterference(t *testing.T) {
 		StartFreq:      1000,
 		PointCount:     2,
 	}
-	source := &SourceDefinition{BalloonData: testUniformBalloonWithDefinition(0, def)}
+	source := &SourceDefinition{BalloonData: testUniformBalloonWithDefinition(def)}
 	halfWavelengthAt1k := 343.0 / (2.0 * 1000.0)
 	config := &ArrayConfig{
 		Elements: []ArrayElement{
@@ -329,19 +333,20 @@ func testUniformBalloon() *BalloonData {
 		PointCount:     1,
 	}
 
-	return testUniformBalloonWithDefinition(0, def)
+	return testUniformBalloonWithDefinition(def)
 }
 
-func testUniformBalloonWithDefinition(level float64, def LogSpectrumDefinition) *BalloonData {
+// testUniformBalloonWithDefinition returns a 6-direction balloon where every
+// response is 0 dB / 0 phase across the whole spectrum (Convention A "no
+// directivity" baseline). Tests that need a non-uniform balloon mutate the
+// returned Responses slice directly (see testDirectionalBalloon).
+func testUniformBalloonWithDefinition(def LogSpectrumDefinition) *BalloonData {
 	responses := make([]TransferFunction, 6)
 	for i := range responses {
 		responses[i] = TransferFunction{
 			Definition: def,
 			Level:      make([]float64, def.PointCount),
 			Phase:      make([]float64, def.PointCount),
-		}
-		for j := range responses[i].Level {
-			responses[i].Level[j] = level
 		}
 	}
 

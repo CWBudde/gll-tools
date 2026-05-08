@@ -182,3 +182,82 @@ func syntheticVisualizationFile() *gll.File {
 		},
 	}
 }
+
+func TestParseOrientationMatrix(t *testing.T) {
+	t.Run("nil for wrong length", func(t *testing.T) {
+		if got := parseOrientationMatrix(nil); got != nil {
+			t.Errorf("nil input: got %v, want nil", got)
+		}
+		if got := parseOrientationMatrix([]float64{1, 2, 3}); got != nil {
+			t.Errorf("3-elem input: got %v, want nil", got)
+		}
+	})
+	t.Run("copies 9 elements", func(t *testing.T) {
+		in := []float64{1, 2, 3, 4, 5, 6, 7, 8, 9}
+		got := parseOrientationMatrix(in)
+		if got == nil {
+			t.Fatal("got nil")
+		}
+		for i, want := range in {
+			if got[i] != want {
+				t.Errorf("[%d] = %v, want %v", i, got[i], want)
+			}
+		}
+		// Mutating the input must not affect the returned matrix.
+		in[0] = 999
+		if got[0] == 999 {
+			t.Error("matrix shares memory with input slice")
+		}
+	})
+}
+
+func TestFrequenciesClose(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b []float64
+		want bool
+	}{
+		{"empty rejected", nil, nil, false},
+		{"length mismatch", []float64{1, 2}, []float64{1}, false},
+		{"identical", []float64{100, 1000}, []float64{100, 1000}, true},
+		{"within tolerance", []float64{1000, 2000}, []float64{1000.5, 2000.5}, true},
+		{"outside tolerance high freq", []float64{1000, 2000}, []float64{1000, 2010}, false},
+		{"sub-1 frequencies use scale=1", []float64{0.5}, []float64{0.500001}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := frequenciesClose(tc.a, tc.b); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFindFilterGroupIndex(t *testing.T) {
+	t.Run("nil file returns -1", func(t *testing.T) {
+		if got := findFilterGroupIndex(nil, "k"); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+	t.Run("nil database returns -1", func(t *testing.T) {
+		if got := findFilterGroupIndex(&gll.File{}, "k"); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+	t.Run("missing key returns -1", func(t *testing.T) {
+		f := &gll.File{Database: &gll.Database{
+			FilterGroups: []gll.FilterGroup{{Key: "a"}, {Key: "b"}},
+		}}
+		if got := findFilterGroupIndex(f, "missing"); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+	t.Run("returns first matching index", func(t *testing.T) {
+		f := &gll.File{Database: &gll.Database{
+			FilterGroups: []gll.FilterGroup{{Key: "a"}, {Key: "b"}, {Key: "c"}},
+		}}
+		if got := findFilterGroupIndex(f, "b"); got != 1 {
+			t.Errorf("got %d, want 1", got)
+		}
+	})
+}

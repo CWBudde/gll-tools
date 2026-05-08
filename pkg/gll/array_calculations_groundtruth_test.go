@@ -81,12 +81,15 @@ package gll
 //       }
 //       // Convention B: do nothing — the balloon already encodes absolute SPL.
 //
-// HOW TO READ THESE TESTS
+// STATUS: RESOLVED
 //
-//   TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum is the executable
-//   form of the bug report. It is currently t.Skip()-ed with the failure
-//   summary inline so CI stays green; remove the skip to turn it into a hard
-//   assertion and use as a regression gate once the fix lands.
+//   The proposed fix has landed: computeElementResponseAt now applies
+//   SourceDefinition.OnAxisSpectrum when present and grid-aligned (see
+//   applyOnAxisSpectrum in array_calculations.go). This file's tests are now
+//   regression gates rather than bug reports.
+//
+//   TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum asserts that
+//   D12 at 1 m on-axis returns ~96.23 dB SPL (its OnAxisSpectrum midband).
 //
 //   TestGroundTruth_OnAxisSpectrum_ConventionAcrossFixtures inventories which
 //   fixtures fall into Convention A vs Convention B, logging counts. It only
@@ -104,13 +107,8 @@ import (
 // single GLL source, computed by the array engine at 1 m on-axis with no
 // filters and no air loss, produces SPL equal to its OnAxisSpectrum.
 //
-// The test currently fails by ~96 dB on D12. It is t.Skip()-ed to keep CI
-// green; remove the skip after the OnAxisSpectrum-application fix lands.
+// This is a regression gate for the on-axis SPL fix.
 func TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum(t *testing.T) {
-	t.Skip("KNOWN BROKEN: array engine does not apply SourceDefinition.OnAxisSpectrum. " +
-		"Currently returns ~0 dB instead of ~96 dB at 1 m on-axis for D12. " +
-		"Remove this skip once computeElementResponseAt is fixed; see file header.")
-
 	// D12 is the cleanest fixture: single source, single coaxial driver,
 	// well-defined OnAxisSpectrum from the parser. Other 1-source files
 	// (Hybrid-1, IG-80, IG-100, LX-10, LX-20, LX-60) work the same way.

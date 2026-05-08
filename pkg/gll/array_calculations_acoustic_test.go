@@ -12,20 +12,23 @@ package gll
 // makes a non-obvious modeling choice, the test documents the current behavior
 // and links to the open contract in docs/acoustic-model.md.
 //
+// Resolved contracts:
+//
+//   1. On-axis SPL application. computeElementResponseAt now multiplies the
+//      directivity response by SourceDefinition.OnAxisSpectrum (when present
+//      and on the same frequency grid). The previous "multiply by balloon
+//      front pole" was a misnamed no-op that dropped absolute SPL entirely.
+//      TestSourceDefinitionOnAxisSpectrumIsApplied below pins the fixed
+//      behavior. See docs/acoustic-model.md → "Source Response Components".
+//
 // Open contracts (currently asserted, but flagged for review):
 //
-//   1. On-axis multiplication. computeElementResponseAt multiplies the
-//      interpolated balloon response by responseAtGLLAngles(0,0). Whether this
-//      is correct depends on whether BalloonData.Responses store relative
-//      directivity gains or absolute SPL. See docs/acoustic-model.md
-//      "Source Response Components".
-//
-//   2. Phase sign of AddDelay. internal/acoustics.AddDelay adds +2π·f·δ to the
-//      stored phase, which is the inverse of the physical convention
-//      e^{-j2πfδ} for a delayed wavefront. The visualization layer compensates
-//      by subtracting the same quantity. Synthetic interference at λ/2 is
-//      symmetric under sign flip, so it cannot detect this; explicit asymmetric
-//      tests are needed. See docs/acoustic-model.md "Phase And Delay".
+//   - Phase sign of AddDelay. internal/acoustics.AddDelay adds +2π·f·δ to the
+//     stored phase, which is the inverse of the physical convention
+//     e^{-j2πfδ} for a delayed wavefront. The visualization layer compensates
+//     by subtracting the same quantity. Synthetic interference at λ/2 is
+//     symmetric under sign flip, so it cannot detect this; explicit asymmetric
+//     tests are needed. See docs/acoustic-model.md → "Phase And Delay".
 
 import (
 	"math"
@@ -42,7 +45,7 @@ func twoBandUniformBalloon() *BalloonData {
 		StartFreq:      1000,
 		PointCount:     2, // 1 kHz, 2 kHz
 	}
-	return testUniformBalloonWithDefinition(0, def)
+	return testUniformBalloonWithDefinition(def)
 }
 
 func newOmniArray(positions ...Vector3D) *ArrayConfig {
@@ -519,49 +522,64 @@ func TestProgressReportInterval(t *testing.T) {
 
 // ---- documenting the open contracts (concerns) ----
 
-// TestOpenContract_OnAxisIsMultiplied documents the current behavior:
-// the on-axis spectrum (responseAtGLLAngles(0,0)) is multiplicatively applied
-// on top of the interpolated directivity response.
+// TestSourceDefinitionOnAxisSpectrumIsApplied verifies the post-fix behavior:
+// when SourceDefinition.OnAxisSpectrum is present and shares the balloon's
+// frequency grid, computeElementResponseAt multiplies it onto the directivity
+// response. The receiver lies 1 m on-axis, so 1/r contributes 0 dB and the
+// total equals the OnAxisSpectrum level.
 //
-// Demonstration: a balloon with all directions at 20 dB and the front pole at
-// 5 dB should — under "balloon stores absolute SPL" semantics — yield 20 dB at
-// any non-front angle. Under the current code, it yields 20 + 5 = 25 dB
-// because on-axis (5 dB) is multiplied on.
-//
-// If the GLL convention is "balloon stores relative directivity, on-axis is the
-// source spectrum stored elsewhere", this multiply is correct only when the
-// balloon's front pole is 0 dB (relative). In a real GLL where the balloon
-// includes the source spectrum, this double-counts the on-axis response.
-//
-// See docs/acoustic-model.md → "Source Response Components".
-func TestOpenContract_OnAxisIsMultiplied(t *testing.T) {
-	bd := testUniformBalloon()
-	// Bias the whole balloon up to 20 dB except the front pole at 5 dB.
-	for i := range bd.Responses {
-		bd.Responses[i].Level[0] = 20
+// The companion test TestSourceDefinitionOnAxisSpectrum_GridMismatchIsIgnored
+// pins the safety guard: a mismatched grid skips the multiply rather than
+// causing array-bounds panics or silently combining unaligned bins.
+func TestSourceDefinitionOnAxisSpectrumIsApplied(t *testing.T) {
+	def := LogSpectrumDefinition{BandsPerOctave: 1, StartFreq: 1000, PointCount: 1}
+	bd := testUniformBalloonWithDefinition(def) // balloon front pole = 0 dB (Convention A)
+
+	src := &SourceDefinition{
+		BalloonData: bd,
+		OnAxisSpectrum: &TransferFunction{
+			Definition: def,
+			Level:      []float64{96.23},
+			Phase:      []float64{0},
+		},
 	}
-	bd.Responses[0].Level[0] = 5 // front pole
+	cfg := &ArrayConfig{Elements: []ArrayElement{{
+		Position: Vector3D{}, SourceDefs: []*SourceDefinition{src},
+	}}}
 
-	src := &SourceDefinition{BalloonData: bd}
-	cfg := &ArrayConfig{Elements: []ArrayElement{{Position: Vector3D{}, SourceDefs: []*SourceDefinition{src}}}}
-
-	// Receiver to the right (+Y) → meridian=90, parallel=90 → balloon "right" cell = 20 dB.
-	resp := ComputeSystemResponseAt(cfg, Vector3D{Y: 1}, AirProperties{Speed: 343}, false)
+	resp := ComputeSystemResponseAt(cfg, Vector3D{X: 1}, AirProperties{Speed: 343}, false)
 	if resp == nil {
 		t.Fatal("nil response")
 	}
+	if got, want := resp.Level[0], 96.23; math.Abs(got-want) > 1e-6 {
+		t.Errorf("on-axis SPL = %.4f dB, want %.4f dB (= OnAxisSpectrum)", got, want)
+	}
+}
 
-	// Current implementation: 20 (directivity) + 5 (on-axis multiply) + 0 (1/r at 1m) = 25 dB
-	const observed = 25.0
-	// A "balloon stores absolute SPL" model would predict 20 dB.
-	const absoluteSPLPrediction = 20.0
-	if math.Abs(resp.Level[0]-observed) > 1e-6 {
-		t.Errorf("BEHAVIOR CHANGED: level = %v, was previously %v.\n"+
-			"If the on-axis multiplication has been replaced (e.g. with "+
-			"OnAxisSpectrum or removed entirely), update this test and the "+
-			"contract in docs/acoustic-model.md. The 'balloon stores absolute "+
-			"SPL' interpretation would expect %v dB.",
-			resp.Level[0], observed, absoluteSPLPrediction)
+func TestSourceDefinitionOnAxisSpectrum_GridMismatchIsIgnored(t *testing.T) {
+	balloonDef := LogSpectrumDefinition{BandsPerOctave: 1, StartFreq: 1000, PointCount: 1}
+	bd := testUniformBalloonWithDefinition(balloonDef)
+
+	// OnAxisSpectrum has a different frequency grid (twice the bands per octave).
+	// applyOnAxisSpectrum should detect the mismatch and leave the response untouched.
+	src := &SourceDefinition{
+		BalloonData: bd,
+		OnAxisSpectrum: &TransferFunction{
+			Definition: LogSpectrumDefinition{BandsPerOctave: 2, StartFreq: 1000, PointCount: 1},
+			Level:      []float64{96.23},
+			Phase:      []float64{0},
+		},
+	}
+	cfg := &ArrayConfig{Elements: []ArrayElement{{
+		Position: Vector3D{}, SourceDefs: []*SourceDefinition{src},
+	}}}
+
+	resp := ComputeSystemResponseAt(cfg, Vector3D{X: 1}, AirProperties{Speed: 343}, false)
+	if resp == nil {
+		t.Fatal("nil response")
+	}
+	if got := resp.Level[0]; math.Abs(got) > 1e-6 {
+		t.Errorf("grid mismatch should skip OnAxisSpectrum multiply: level = %.4f dB, want 0", got)
 	}
 }
 

@@ -26,16 +26,21 @@ Each `SourceDefinition` can contain two relevant acoustic response components:
 - `BalloonData.Responses`: transfer functions sampled on the angular directivity grid.
 - `OnAxisSpectrum`: separately parsed on-axis frequency response.
 
-Current visualization behavior:
+Current behavior (resolved):
 
 - Single-source response charts and polar slices treat balloon responses as directivity data and optionally add `OnAxisSpectrum` when the frequency grids match.
-- The array-response engine currently multiplies an interpolated balloon response by the balloon response at `(meridian=0, parallel=0)`.
+- The array-response engine multiplies an interpolated balloon response by `SourceDefinition.OnAxisSpectrum` when present and on the same frequency grid as the balloon. Implementation: `applyOnAxisSpectrum` in `pkg/gll/array_calculations.go`.
 
-Open contract to validate:
+Resolved contracts (from a fixture inventory across `testdata/gll/`):
 
-- Whether `BalloonData.Responses` are relative directivity-only data, absolute SPL data, or data requiring a separate on-axis correction.
-- Whether array response should use `SourceDefinition.OnAxisSpectrum` instead of the front-pole balloon response for on-axis normalization.
-- Whether `OnAxisLevel` should be folded into chart labels, SPL calibration, or future sensitivity export.
+- `BalloonData.Responses` store **relative directivity** in dB across the dominant convention. The on-axis cell `(meridian=0, parallel=0)` is ≈ 0 dB; off-axis cells are mostly negative. Inventory: 60 of 65 sources match this, 4 are placeholder (zero balloon + zero spectrum), 0 pure absolute-SPL balloons, 1 hybrid (`example-vis.gll` "Full Range" — both populated at 90 dB; likely a malformed EASE example).
+- The array engine applies `SourceDefinition.OnAxisSpectrum` for absolute SPL. The previous `Multiply(responseAtGLLAngles(0,0))` was a misnamed no-op for the dominant convention (multiplier ≈ 0 dB) and dropped the source spectrum entirely. Ground-truth test: `TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum` (D12 returns 96.23 dB SPL at 1 m on-axis).
+- The grid-equality guard in `applyOnAxisSpectrum` (matching `LogSpectrumDefinition` and length) prevents double-counting when a fixture follows a different convention or stores the spectrum on a different grid. No real fixture currently triggers the guard's negative branch — across D12, APS, HOPS7-Pro, LX-10 and others the balloon and `OnAxisSpectrum` share `BPO=24, Start=22.1 Hz, N=241`.
+
+Still open:
+
+- Whether `OnAxisLevel` (universally 94.00 dB across fixtures = IEC reference 1 Pa) should be folded into chart labels, SPL calibration, or future sensitivity export.
+- Whether the hybrid `example-vis.gll` case represents a third valid encoding or malformed data; needs comparison against EASE GLL Viewer output.
 
 ## Phase And Delay
 

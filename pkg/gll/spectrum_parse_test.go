@@ -90,6 +90,44 @@ func TestLogSpectrumDefinitionMethods(t *testing.T) {
 	}
 }
 
+func TestGetResolutionTypeBranches(t *testing.T) {
+	tests := []struct {
+		bpo  int32
+		want string
+	}{
+		{24, "EQTones"},
+		{3, "EThirds"},
+		{1, "EOctaves"},
+		{6, "Custom"},
+		{0, "Custom"},
+	}
+	for _, tc := range tests {
+		def := LogSpectrumDefinition{BandsPerOctave: tc.bpo}
+		if got := def.GetResolutionType(); got != tc.want {
+			t.Errorf("BPO=%d: got %q, want %q", tc.bpo, got, tc.want)
+		}
+	}
+}
+
+func TestGetEndFreq_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		def  LogSpectrumDefinition
+		want float64
+	}{
+		{"zero point count", LogSpectrumDefinition{BandsPerOctave: 3, PointCount: 0}, 0},
+		{"zero bands per octave", LogSpectrumDefinition{BandsPerOctave: 0, PointCount: 4}, 0},
+		{"negative point count", LogSpectrumDefinition{BandsPerOctave: 3, PointCount: -1}, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.def.GetEndFreq(); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStandardBands(t *testing.T) {
 	if len(Standard1_3OctaveBands) != 21 {
 		t.Fatalf("expected 21 standard bands, got %d", len(Standard1_3OctaveBands))

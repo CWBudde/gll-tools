@@ -305,7 +305,7 @@ func computeElementResponseAt(
 		}
 
 		// Get directivity response at receiver angle
-		response, onAxis, propagationFactor := getSourceResponseAt(
+		response, propagationFactor := getSourceResponseAt(
 			srcDef,
 			elem.Position,
 			elem.Angles,
@@ -326,10 +326,14 @@ func computeElementResponseAt(
 		// Apply element gain
 		response.AddGain(elem.Gain)
 
-		// Apply on-axis normalization
-		if onAxis != nil {
-			response.Multiply(onAxis)
-		}
+		// Apply absolute on-axis SPL spectrum (GLL Convention A: BalloonData
+		// stores relative directivity gain — front pole ≈ 0 dB — and
+		// SourceDefinition.OnAxisSpectrum stores absolute SPL at the measurement
+		// distance, typically 1 m). The grid-equality guard prevents
+		// double-counting if a future fixture follows Convention B (balloon
+		// already encodes absolute SPL with no separate spectrum) or stores
+		// the spectrum on a different frequency grid.
+		applyOnAxisSpectrum(response, srcDef)
 
 		// Apply distance attenuation (1/r spherical spreading)
 		response.AddGain(20.0 * math.Log10(propagationFactor))
@@ -365,9 +369,9 @@ func getSourceResponseAt(
 	sourceAngles Vector3D,
 	orientation *[9]float64,
 	receiver Vector3D,
-) (*TransferFunction, *TransferFunction, float64) {
+) (*TransferFunction, float64) {
 	if srcDef.BalloonData == nil || len(srcDef.BalloonData.Responses) == 0 {
-		return nil, nil, 1.0
+		return nil, 1.0
 	}
 
 	// Calculate vector from source to receiver
@@ -403,10 +407,20 @@ func getSourceResponseAt(
 	// Get response at that angle from balloon data (with interpolation).
 	response := srcDef.BalloonData.responseAtGLLAngles(meridianDeg, parallelDeg)
 
-	// Get on-axis response for normalization.
-	onAxis := srcDef.BalloonData.responseAtGLLAngles(0, 0)
+	return response, propagationFactor
+}
 
-	return response, onAxis, propagationFactor
+// applyOnAxisSpectrum multiplies the response by srcDef.OnAxisSpectrum when it
+// is present and shares the response's frequency grid. Otherwise it is a no-op.
+//
+// See docs/acoustic-model.md → "Source Response Components" for the convention.
+func applyOnAxisSpectrum(response *TransferFunction, srcDef *SourceDefinition) {
+	if srcDef.OnAxisSpectrum == nil ||
+		len(srcDef.OnAxisSpectrum.Level) != len(response.Level) ||
+		srcDef.OnAxisSpectrum.Definition != response.Definition {
+		return
+	}
+	response.Multiply(srcDef.OnAxisSpectrum)
 }
 
 // GetResponseAtAngle retrieves the interpolated response at the given angles.
