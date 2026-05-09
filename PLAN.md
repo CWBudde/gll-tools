@@ -281,9 +281,19 @@ All database buffers implemented:
 
 ### 7.6 SOFA Export (Spatially Oriented Format for Acoustics)
 
-- [ ] Export to SOFA format
-  - HDF5-based format used in academic research
-  - Requires: go-hdf5 library or h5py via cgo
+- [x] TF export via FreeFieldDirectivityTF (one .sofa per BalloonData)
+  - go-sofa extended upstream with TF read+write support (Frequencies,
+    TFReal, TFImag fields; Save/Open dispatch on DataType)
+  - `pkg/sofaexport` library: BuildSOFAFile (pure), ExportSourceBalloon,
+    ExportFile (parses GLL and emits one .sofa per source/balloon)
+  - GLL-native log frequency grid preserved (no resampling)
+  - Combined absolute TF by default (balloon × OnAxisSpectrum, scaled by
+    OnAxisLevel); `--relative` flag emits raw balloon TF
+  - CLI: `gllinfo export sofa <file.gll> [-o dir] [--relative] [--source]
+[--use-case] [--pattern] [--overwrite] [-v]`
+  - Round-trip tests pass against `testdata/gll/3Way-LR.gll`
+- [ ] FIR export via IFFT (`--fir` flag, GeneralFIR convention)
+- [ ] External validation against SOFA Toolbox / pysofaconventions
 
 ## Phase 8: WebAssembly Demo
 

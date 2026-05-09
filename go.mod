@@ -3,12 +3,19 @@ module github.com/cwbudde/gll-tools
 go 1.25.0
 
 require (
+	github.com/cwbudde/go-sofa v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 )
 
+replace (
+	github.com/cwbudde/go-hdf5 => ../go-hdf
+	github.com/cwbudde/go-sofa => ../go-sofa
+)
+
 require (
+	github.com/cwbudde/go-hdf5 v0.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
