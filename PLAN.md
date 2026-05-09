@@ -232,7 +232,17 @@ All database buffers implemented:
       angles via `TestEncoderSynthetic_BoxTypeFull` (encoder now wraps the
       InputConfigBuffer in its outer `int32` size header to match
       `parseInputConfigBuffer`)
-  - [ ] SourceDefinitions with balloon/transfer function data
+  - [x] SourceDefinitions with balloon/transfer function data
+    - XGLL text output via `buildSourceDefinitionStatements()` emits
+      human-readable metadata (Label, Bandwidth, DataType, OnAxisLevel,
+      Company, Description) plus a `BinarySourceDefinition` base64 blob
+      that preserves BalloonData and OnAxisSpectrum
+    - XGLL text parsing via `parseSourceDefinitionStatements()` inflates the
+      blob using the new exported `gll.ParseSourceDefinitionItemBytes` helper,
+      which eagerly loads balloon responses for self-contained items
+    - Round-trip tested: `TestRoundTripSourceDefinitionsViaXGLLText` covers
+      GLL → XGLL text → GLL → binary GLL → re-parse with metadata + balloon
+      response counts preserved
   - [ ] FilterGroups with filter definitions
   - [ ] Limits, Warnings, Connectors, Frames
 

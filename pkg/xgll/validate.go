@@ -8,6 +8,7 @@ import (
 const (
 	kwBoxType             = "BoxType"
 	kwSourceDefinition    = "SourceDefinition"
+	kwSourceDefinitions   = "SourceDefinitions"
 	kwInputConfigurations = "Input Configurations"
 	kwInputConfiguration  = "Input Configuration"
 	kwInputs              = "Inputs"
@@ -15,11 +16,16 @@ const (
 	kwLinks               = "Links"
 	kwLink                = "Link"
 	kwFilterGroup         = "FilterGroup"
+	kwFilterGroups        = "FilterGroups"
 	kwFrame               = "Frame"
 	kwConnector           = "Connector"
 	kwConnectors          = "Connectors"
 	kwFrames              = "Frames"
 	kwSetups              = "Setups"
+	kwLimit               = "Limit"
+	kwLimits              = "Limits"
+	kwWarning             = "Warning"
+	kwWarnings            = "Warnings"
 )
 
 // ValidateSystemConstraints checks block presence and system type consistency.
@@ -202,12 +208,12 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 		case "Angle":
 			// Count Angle entry
 			expect.see("Angle", stmt, &diags)
-		case "Limits":
+		case kwLimits:
 			// Declared count for Limit
-			expect.set("Limit", stmt, &diags)
-		case "Limit":
+			expect.set(kwLimit, stmt, &diags)
+		case kwLimit:
 			// Count Limit entry
-			expect.see("Limit", stmt, &diags)
+			expect.see(kwLimit, stmt, &diags)
 
 			// Capture frame reference
 			if ref := argString(stmt, 1); ref != "" {
@@ -218,18 +224,18 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 			if ref := argString(stmt, 2); ref != "" {
 				refBoxTypes = append(refBoxTypes, refCheck{Kind: kwBoxType, Name: ref, Stmt: stmt})
 			}
-		case "Warnings":
+		case kwWarnings:
 			// Declared count for Warning
-			expect.set("Warning", stmt, &diags)
-		case "Warning":
+			expect.set(kwWarning, stmt, &diags)
+		case kwWarning:
 			// Count Warning entry
-			expect.see("Warning", stmt, &diags)
+			expect.see(kwWarning, stmt, &diags)
 
 			// Capture frame reference
 			if ref := argString(stmt, 2); ref != "" {
 				refFrames = append(refFrames, refCheck{Kind: kwFrame, Name: ref, Stmt: stmt})
 			}
-		case "SourceDefinitions":
+		case kwSourceDefinitions:
 			// Declared count for SourceDefinition
 			expect.set(kwSourceDefinition, stmt, &diags)
 		case kwSourceDefinition:
@@ -240,7 +246,7 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 			if name := argString(stmt, 0); name != "" {
 				sourceDefs[name] = struct{}{}
 			}
-		case "FilterGroups":
+		case kwFilterGroups:
 			// Declared count for FilterGroup
 			expect.set(kwFilterGroup, stmt, &diags)
 		case kwFilterGroup:

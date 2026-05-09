@@ -128,6 +128,11 @@ func BuildXGLLDocument(file *gllbin.File) (*Document, error) {
 	if file.Database != nil {
 		statements = append(statements, buildDataFileStatements(file.Database)...)
 		statements = append(statements, buildBoxTypeStatements(file.Database)...)
+		sourceStmts, err := buildSourceDefinitionStatements(file.Database)
+		if err != nil {
+			return nil, fmt.Errorf("build source definitions: %w", err)
+		}
+		statements = append(statements, sourceStmts...)
 	}
 
 	// Assemble document and validate blocks

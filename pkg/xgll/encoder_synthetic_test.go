@@ -149,6 +149,120 @@ func TestEncoderSynthetic_BoxTypeFull(t *testing.T) {
 	}
 }
 
+// TestRoundTripSourceDefinitionsViaXGLLText verifies that SourceDefinitions
+// (with full BalloonData and OnAxisSpectrum) survive a GLL → XGLL text → GLL
+// round-trip. The XGLL text encoder serializes each item as metadata
+// statements + a BinarySourceDefinition base64 blob; the parser inflates the
+// blob back into a SourceDefinitionItem.
+func TestRoundTripSourceDefinitionsViaXGLLText(t *testing.T) {
+	src := SyntheticSource("Mid-High", "src1", 95.0)
+	src.Definition.CompanyLabel = "ACME Audio"
+	src.Definition.Description = "synthetic test source"
+
+	file := &gllbin.File{}
+	file.Header.Magic = "EGLL"
+	file.Header.FormatID = "EASE_GLL"
+	file.Header.FormatVersion = 4
+	file.GenSystem.Label = "Synthetic"
+	file.GenSystem.Key = "synSys"
+	file.GenSystem.Type = gllbin.SystemTypeLoudspeaker
+	file.GenSystem.SubVersion = 3
+	file.Database = &gllbin.Database{
+		SubVersion:        3,
+		SourceDefinitions: []gllbin.SourceDefinitionItem{src},
+	}
+
+	// Round 1: GLL model → XGLL document → XGLL text bytes.
+	doc, err := BuildXGLLDocument(file)
+	if err != nil {
+		t.Fatalf("build xgll: %v", err)
+	}
+	var textBuf bytes.Buffer
+	if err := WriteXGLL(doc, &textBuf); err != nil {
+		t.Fatalf("write xgll text: %v", err)
+	}
+
+	// Round 2: parse XGLL text → document → GLL model → binary GLL bytes.
+	parsedDoc, err := Parse(&textBuf)
+	if err != nil {
+		t.Fatalf("parse xgll text: %v", err)
+	}
+	roundFile, err := BuildGLLFile(parsedDoc)
+	if err != nil {
+		t.Fatalf("build gll file: %v", err)
+	}
+	if roundFile.Database == nil || len(roundFile.Database.SourceDefinitions) != 1 {
+		t.Fatalf("expected 1 SourceDefinition, got db=%v", roundFile.Database)
+	}
+
+	got := roundFile.Database.SourceDefinitions[0]
+	if got.Key != "src1" {
+		t.Errorf("Key = %q, want src1", got.Key)
+	}
+	if got.Definition == nil {
+		t.Fatal("Definition is nil after XGLL text round-trip")
+	}
+	def := got.Definition
+	if def.Label != "Mid-High" {
+		t.Errorf("Label = %q, want Mid-High", def.Label)
+	}
+	if def.CompanyLabel != "ACME Audio" {
+		t.Errorf("CompanyLabel = %q, want ACME Audio", def.CompanyLabel)
+	}
+	if def.Description != "synthetic test source" {
+		t.Errorf("Description = %q, want synthetic test source", def.Description)
+	}
+	if def.OnAxisLevel != 95.0 {
+		t.Errorf("OnAxisLevel = %v, want 95", def.OnAxisLevel)
+	}
+	if def.NominalBandwidthFrom != 50.0 || def.NominalBandwidthTo != 5000.0 {
+		t.Errorf("Bandwidth = %v..%v, want 50..5000", def.NominalBandwidthFrom, def.NominalBandwidthTo)
+	}
+	if def.DataType != gllbin.DataTypeThirdOctave {
+		t.Errorf("DataType = %v, want ThirdOctave", def.DataType)
+	}
+	if def.BalloonData == nil {
+		t.Fatal("BalloonData is nil after round-trip")
+	}
+	wantParallels := src.Definition.BalloonData.AngularResolution.ParallelCount()
+	if len(def.BalloonData.Responses) != wantParallels {
+		t.Errorf("balloon responses = %d, want %d", len(def.BalloonData.Responses), wantParallels)
+	}
+	if def.OnAxisSpectrum == nil {
+		t.Fatal("OnAxisSpectrum is nil after round-trip")
+	}
+	if def.OnAxisSpectrum.Definition.PointCount != src.Definition.OnAxisSpectrum.Definition.PointCount {
+		t.Errorf("OnAxisSpectrum.PointCount = %d, want %d",
+			def.OnAxisSpectrum.Definition.PointCount,
+			src.Definition.OnAxisSpectrum.Definition.PointCount)
+	}
+
+	// Round 3: write the round-tripped File as binary GLL and re-parse to
+	// confirm the binary path also survives.
+	var binBuf bytes.Buffer
+	if err := EncodeFile(roundFile, &binBuf); err != nil {
+		t.Fatalf("encode binary gll: %v", err)
+	}
+	finalFile, err := gllbin.Parse(bytes.NewReader(binBuf.Bytes()))
+	if err != nil {
+		t.Fatalf("parse final gll: %v", err)
+	}
+	if finalFile.Database == nil || len(finalFile.Database.SourceDefinitions) != 1 {
+		t.Fatalf("final gll missing source defs: %v", finalFile.Database)
+	}
+	finalDef := finalFile.Database.SourceDefinitions[0].Definition
+	if finalDef == nil || finalDef.BalloonData == nil {
+		t.Fatal("final gll lost balloon data")
+	}
+	// gllbin.Parse uses lazy loading for balloon responses, so Responses is
+	// nil here; ResponseCount is what we can assert without an extra load.
+	//nolint:gosec // wantParallels is bounded by the synthetic resolution
+	if finalDef.BalloonData.ResponseCount != int32(wantParallels) {
+		t.Errorf("final ResponseCount = %d, want %d",
+			finalDef.BalloonData.ResponseCount, wantParallels)
+	}
+}
+
 // TestReverseSymmetryCode_AllValues covers each switch arm of
 // reverseSymmetryCode.
 func TestReverseSymmetryCode_AllValues(t *testing.T) {

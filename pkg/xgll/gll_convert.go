@@ -203,6 +203,18 @@ func applyDatabaseSettings(file *gllbin.File, doc *Document) error {
 		file.Database.BoxTypes = boxTypes
 	}
 
+	// Extract SourceDefinitions
+	sources, err := parseSourceDefinitionStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse source definitions: %w", err)
+	}
+	if len(sources) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.SourceDefinitions = sources
+	}
+
 	return nil
 }
 
