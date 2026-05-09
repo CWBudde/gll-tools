@@ -243,7 +243,22 @@ All database buffers implemented:
     - Round-trip tested: `TestRoundTripSourceDefinitionsViaXGLLText` covers
       GLL → XGLL text → GLL → binary GLL → re-parse with metadata + balloon
       response counts preserved
-  - [ ] FilterGroups with filter definitions
+  - [x] FilterGroups with filter definitions
+    - XGLL text output via `buildFilterGroupStatements()` emits human-readable
+      metadata (Label, Key, IsOverridable, FilterDefinition labels/keys) plus
+      a `BinaryFilterGroup` base64 blob that preserves the full filter bank
+      data (IIR/FIR/LogSpectrum) without reimplementing the FilterGroup
+      binary encoder
+    - Raw FilterGroup bytes are now captured during `parseFilterGroup` into a
+      new `FilterGroup.RawBlock` field and re-inflated via the exported
+      `gll.ParseFilterGroupBytes` helper
+    - XGLL text parsing via `parseFilterGroupStatements()` skips loose
+      `FilterDefinition` lines whenever a `BinaryFilterGroup` blob has
+      already populated the filters (blob is the source of truth)
+    - Round-trip tested: `TestRoundTripFilterGroupsViaXGLLText` loads
+      `testdata/gll/3Way-LR.gll` (9 FilterGroups), runs GLL → XGLL text →
+      GLL, and verifies each group's Label/Key/IsOverridable plus per-filter
+      Label/Key are preserved
   - [ ] Limits, Warnings, Connectors, Frames
 
 ### 7.6 SOFA Export (Spatially Oriented Format for Acoustics)

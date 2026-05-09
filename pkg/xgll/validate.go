@@ -7,6 +7,7 @@ import (
 
 const (
 	kwBoxType             = "BoxType"
+	kwBoxTypes            = "BoxTypes"
 	kwSourceDefinition    = "SourceDefinition"
 	kwSourceDefinitions   = "SourceDefinitions"
 	kwInputConfigurations = "Input Configurations"
@@ -110,7 +111,7 @@ func ValidateDataConstraints(doc *Document) []Diagnostic {
 	// Walk statements and validate counts/references
 	for _, stmt := range doc.Statements {
 		switch stmt.Keyword {
-		case "BoxTypes":
+		case kwBoxTypes:
 			// Declared count for BoxType
 			expect.set(kwBoxType, stmt, &diags)
 		case kwBoxType:

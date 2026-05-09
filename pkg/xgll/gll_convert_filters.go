@@ -59,7 +59,7 @@ func parseFilterGroupStatements(statements []Statement) ([]gllbin.FilterGroup, e
 
 func parseFilterGroupContent(group *gllbin.FilterGroup, statements []Statement, startIdx int) error {
 	majorKeywords := map[string]bool{
-		kwBoxType: true, "BoxTypes": true,
+		kwBoxType: true, kwBoxTypes: true,
 		kwFrame: true, kwFrames: true,
 		kwConnector: true, kwConnectors: true,
 		kwLimit: true, kwLimits: true,

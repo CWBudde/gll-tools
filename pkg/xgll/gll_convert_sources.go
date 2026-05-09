@@ -82,7 +82,7 @@ func parseSourceDefinitionStatements(statements []Statement) ([]gllbin.SourceDef
 
 func parseSourceDefinitionContent(item *gllbin.SourceDefinitionItem, statements []Statement, startIdx int) error {
 	majorKeywords := map[string]bool{
-		kwBoxType: true, "BoxTypes": true,
+		kwBoxType: true, kwBoxTypes: true,
 		kwFrame: true, kwFrames: true,
 		kwConnector: true, kwConnectors: true,
 		kwLimit: true, kwLimits: true,
