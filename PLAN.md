@@ -281,19 +281,78 @@ All database buffers implemented:
 
 ### 7.6 SOFA Export (Spatially Oriented Format for Acoustics)
 
-- [x] TF export via FreeFieldDirectivityTF (one .sofa per BalloonData)
-  - go-sofa extended upstream with TF read+write support (Frequencies,
-    TFReal, TFImag fields; Save/Open dispatch on DataType)
-  - `pkg/sofaexport` library: BuildSOFAFile (pure), ExportSourceBalloon,
-    ExportFile (parses GLL and emits one .sofa per source/balloon)
-  - GLL-native log frequency grid preserved (no resampling)
-  - Combined absolute TF by default (balloon × OnAxisSpectrum, scaled by
-    OnAxisLevel); `--relative` flag emits raw balloon TF
-  - CLI: `gllinfo export sofa <file.gll> [-o dir] [--relative] [--source]
-[--use-case] [--pattern] [--overwrite] [-v]`
-  - Round-trip tests pass against `testdata/gll/3Way-LR.gll`
-- [ ] FIR export via IFFT (`--fir` flag, GeneralFIR convention)
-- [ ] External validation against SOFA Toolbox / pysofaconventions
+HDF5-based AES69-2015 format used in academic acoustics research and
+auralization pipelines. GLL data is fundamentally frequency-domain, so the
+default export targets the `FreeFieldDirectivityTF` convention (complex
+transfer function per direction) rather than time-domain FIR.
+
+#### 7.6.1 Upstream go-sofa TF support
+
+- [x] Add TF data fields to `sofa.File` (`Frequencies []float64`, `TFReal`,
+      `TFImag` as `[M][R][N]`)
+- [x] Split `validate()` to dispatch on `DataType` (`"FIR"` vs `"TF"`); keep
+      existing FIR checks, add TF shape/length checks
+- [x] Split `writeAudioDatasets()` into FIR vs TF paths, dispatched by
+      `Save()` based on `DataType`
+- [x] Write `/N` as a frequency vector (length N float64) for TF, scalar for
+      FIR — implemented via new `writeFrequencyDimension()`
+- [x] Extend `readDimensions()` to accept either scalar `/N` (FIR) or vector
+      `/N` of length N (TF)
+- [x] Extend `readAudioData()` to dispatch on `DataType`; new
+      `readTFAudioData()` reads `/Data.Real`, `/Data.Imag`, `/N`
+- [x] Synthetic round-trip test (`sofa_tf_roundtrip_test.go`): build TF File,
+      Save, Open, assert all values preserved
+- [x] Validator-rejection tests for missing/mis-shaped TF fields and
+      unsupported `DataType`
+- [x] Existing FIR test suite still green
+
+#### 7.6.2 `pkg/sofaexport` library (gll-tools)
+
+- [x] `coords.go`: `gridAngles()` and `directionToCartesian()` for GLL
+      meridian/parallel → SOFA cartesian conversion (table-driven tests at
+      poles, equator, on-axis)
+- [x] `combine.go`: `combineResponse()` builds complex (real, imag) per
+      direction, optionally combined with `OnAxisSpectrum` (errors on
+      frequency-grid mismatch)
+- [x] `build.go`: `BuildSOFAFile()` — pure function, uses
+      `acoustics.ResponseIndex` for pole-deduped lookup, expands to a
+      regular M = MeridianCount × ParallelCount grid
+- [x] `options.go`: `Options{Relative, OutputDir, FilenamePattern,
+      SourceFilter, UseCaseFilter, Overwrite}` with `withDefaults()`
+- [x] `export.go`: `ExportSourceBalloon()` (single file), `ExportFile()`
+      (iterates sources × balloons, lazy-loads balloon responses)
+- [x] Filename pattern rendering with `{gll}` / `{source}` / `{usecase}`
+      placeholders and filesystem-safe sanitization
+- [x] Integration test against `testdata/gll/3Way-LR.gll` produces 3 .sofa
+      files (one per source)
+
+#### 7.6.3 `gllinfo export sofa` CLI subcommand
+
+- [x] New `export` parent command (`cmd/gllinfo/cmd/export.go`) — hook for
+      future formats (CLF, FRD, CSV)
+- [x] `export sofa` subcommand with flags: `-o/--output-dir`, `--relative`,
+      `--pattern`, `--source`, `--use-case`, `--overwrite`, `-v/--verbose`
+- [x] CLI round-trip test (`export_sofa_test.go`): runs full subcommand,
+      reopens output via `sofa.Open()`, verifies dimensions and convention
+
+#### 7.6.4 Wiring & verification
+
+- [x] `go.mod` adds `github.com/cwbudde/go-sofa` with `replace ../go-sofa`
+      (and chained `replace ../go-hdf` for go-hdf5)
+- [x] `go test ./...` green in both `../go-sofa` and `gll-tools` (17 packages)
+- [x] `just lint` clean (no goconst/gosec/revive issues)
+- [x] End-to-end smoke run on real fixture: `gllinfo export sofa
+      testdata/gll/3Way-LR.gll -o /tmp/sofa-out -v` writes 3 ~1.4 MB .sofa
+      files (LF/MF/HF drivers)
+
+#### 7.6.5 Deferred / out of scope
+
+- [ ] FIR export via IFFT (`--fir` flag, GeneralFIR convention) — would
+      require a sample-rate choice and is lossy vs the native TF path
+- [ ] External validation against SOFA Toolbox for Matlab and
+      `pysofaconventions` AES69 conformance check (manual, not CI)
+- [ ] `--resample` flag for fixed log-spaced grids
+- [ ] `--merge-sources` option to bundle multiple sources into one .sofa
 
 ## Phase 8: WebAssembly Demo
 
@@ -319,15 +378,17 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
 
 ### 9.1 Acoustic Contract Review
 
-- [ ] Document the exact contract for `BalloonData.Responses`:
-  - Are balloon responses relative directivity only, absolute SPL, or already combined with on-axis data?
-  - Confirm whether visualization and array calculations should combine `SourceDefinition.OnAxisSpectrum` or the balloon response at `(meridian=0, parallel=0)`.
-  - [x] Add initial notes to `docs/format.md` and `docs/acoustic-model.md`.
+- [x] Document the exact contract for `BalloonData.Responses`:
+  - [x] Verdict: balloon responses are **relative directivity** in dB; absolute SPL is reconstructed by multiplying with `SourceDefinition.OnAxisSpectrum`. Documented in `docs/acoustic-model.md` ("Source Response Components"), backed by a 65-source fixture inventory and the `TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum` regression gate (`pkg/gll/array_calculations_groundtruth_test.go`).
+  - [x] Visualization and array calculations combine `SourceDefinition.OnAxisSpectrum`, not the balloon response at `(meridian=0, parallel=0)`. Implementation: `applyOnAxisSpectrum` in `pkg/gll/array_calculations.go`.
+  - [x] Initial notes to `docs/format.md` and `docs/acoustic-model.md`.
+  - [ ] Open follow-ups: (a) decide whether `OnAxisLevel` (universally 94.00 dB across fixtures) should fold into chart labels/SPL calibration; (b) determine whether the hybrid `example-vis.gll` "Full Range" source represents a valid third encoding or malformed data.
 - [ ] Validate propagation delay phase convention:
-  - Confirm whether stored phase uses the same sign convention as Go's complex summation.
-  - [x] Add a synthetic two-source interference test where expected nulls/peaks are analytically known.
-  - Align `TransferFunction.AddDelay`, web phase display, and group-delay calculation semantics.
-- [ ] Validate angular interpolation:
+  - [x] Internal convention pinned: engineering DSP `X(f) = ∫ x(t) e^{−j2πft} dt`; `AddDelay(δ)` subtracts `2π·f·δ` from stored phase. Documented in `docs/acoustic-model.md` ("Phase And Delay").
+  - [x] `TransferFunction.AddDelay`, web phase display (`internal/viz/applyDelayToPhase`), and group-delay calculation are aligned to the same convention. Pinning tests: `TestResolvedContract_AddDelaySign`, `TestAddDelaySignConvention`, `TestAddDelay`.
+  - [x] Synthetic two-source interference test where expected nulls/peaks are analytically known.
+  - [ ] Confirm parsed GLL phase data uses the same sign convention as the engineering-DSP basis above (current implementation propagates the file's sign without inversion).
+- [x] Validate angular interpolation:
   - [x] Replace direct linear interpolation of wrapped phase with unit-circle interpolation.
   - [x] Replace array-calculation angular interpolation with full complex-pressure interpolation.
   - [x] Decide whether display-only visualization paths should use dB interpolation or the same complex-pressure interpolation.
@@ -337,7 +398,8 @@ Goal: make the web demo visualization tab trustworthy, polished, and easy to com
   - [x] Replace the simplified attenuation model with ISO 9613-1 atmospheric absorption.
   - [x] Add ISO 9613-1 reference-value tests across frequency, humidity, temperature, and pressure.
   - [x] Wire temperature/pressure inputs consistently through Go, WASM, web, and Python APIs.
-  - [ ] Cross-check ISO 9613-1 coefficients against an external calculator or published reference table before treating the web demo as prediction-grade.
+  - [x] Cross-check ISO 9613-1 coefficients against an external calculator or published reference table — see [docs/iso-9613-1-validation.md](docs/iso-9613-1-validation.md). **Finding:** the implementation treats `h` (molar humidity) as a fraction, but ISO 9613-1's empirical constants are calibrated for `h` in percent. Result: `AirLossPerMeter` is ~30 % low at 1 kHz / 50 % RH and up to ~8× too small at 10 kHz humid air. Independent reference matches Salomons (2001) Table 3.1 within 5 %; gll-tools matches Salomons only for the dry-air case. One-line fix proposed (see validation doc); not applied yet because it shifts array-engine output magnitudes for any humid case and requires regenerating `TestAirLossPerMeter` goldens.
+  - [x] Apply the documented fix and regenerate `TestAirLossPerMeter` goldens; add a pinning test against published reference values. Implemented as a single-line conversion in `internal/acoustics/air.go` (`molarHumidity *= 100`); seven existing goldens regenerated; new `TestAirLossPerMeter_ReferenceValues` pins low-/mid-band α against Salomons (2001) Table 3.1 with a 20 % tolerance (covers the ISO 9613-1:1993 vs Hyland-Wexler vapor-pressure-formula residual). Full `go test ./...` and `just lint` green; no other packages depended on the old behavior.
 
 ### 9.2 Coordinate & Placement Consistency
 

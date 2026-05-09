@@ -35,7 +35,11 @@ func AirLossPerMeter(freq, temperatureC, humidity, pressureKPa float64) float64 
 
 	pressureRatio := pressureKPa / ReferencePressureKPa
 	temperatureRatio := temperatureK / ReferenceTemperatureK
-	molarHumidity := humidity * saturationVaporPressureRatio(temperatureK) / pressureRatio
+	// ISO 9613-1: h is the molar concentration of water vapor expressed as a
+	// PERCENT. The empirical constants below (24, 4.04e4, 9, 280, 0.391, 0.02,
+	// 4.17) are calibrated for that unit; a fractional h would be 100× too
+	// small and yield wildly wrong relaxation frequencies.
+	molarHumidity := 100.0 * humidity * saturationVaporPressureRatio(temperatureK) / pressureRatio
 
 	oxygenRelaxation := pressureRatio * (24.0 + 4.04e4*molarHumidity*(0.02+molarHumidity)/(0.391+molarHumidity))
 	nitrogenRelaxation := pressureRatio * math.Pow(temperatureRatio, -0.5) *

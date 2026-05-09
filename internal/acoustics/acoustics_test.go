@@ -30,13 +30,18 @@ func TestAirLossPerMeter(t *testing.T) {
 		pressure    float64
 		want        float64
 	}{
-		{"1kHz 20C 50% humidity", 1000, 20, 0.5, ReferencePressureKPa, 0.003497981668435808},
-		{"10kHz 20C 50% humidity", 10000, 20, 0.5, ReferencePressureKPa, 0.019332064293880853},
+		// Goldens regenerated 2026-05-09 after fixing the percent-vs-fraction
+		// bug in molarHumidity (see docs/iso-9613-1-validation.md). Values
+		// now match an independent Python re-implementation that follows the
+		// ISO 9613-1:1993 prescription, which itself agrees with Salomons
+		// (2001) Table 3.1 to within ~5 %.
+		{"1kHz 20C 50% humidity", 1000, 20, 0.5, ReferencePressureKPa, 0.0046647318738206125},
+		{"10kHz 20C 50% humidity", 10000, 20, 0.5, ReferencePressureKPa, 0.15883855730491786},
 		{"1kHz dry air", 1000, 20, 0.0, ReferencePressureKPa, 0.0015298579366498817},
-		{"1kHz humid air", 1000, 20, 1.0, ReferencePressureKPa, 0.006671748422991222},
-		{"10kHz cold dry air", 10000, 0, 0.2, ReferencePressureKPa, 0.016446609261933694},
-		{"1kHz 20C 50% humidity low pressure", 1000, 20, 0.5, 80, 0.003426690851040758},
-		{"1kHz 20C 50% humidity high pressure", 1000, 20, 0.5, 120, 0.003621659374769194},
+		{"1kHz humid air", 1000, 20, 1.0, ReferencePressureKPa, 0.005421943562373729},
+		{"10kHz cold dry air", 10000, 0, 0.2, ReferencePressureKPa, 0.06431398467367128},
+		{"1kHz 20C 50% humidity low pressure", 1000, 20, 0.5, 80, 0.004618841246680197},
+		{"1kHz 20C 50% humidity high pressure", 1000, 20, 0.5, 120, 0.004716820834705249},
 	}
 
 	for _, tt := range tests {
@@ -47,6 +52,47 @@ func TestAirLossPerMeter(t *testing.T) {
 					tt.freq, tt.temperature, tt.humidity, tt.pressure, loss, tt.want)
 			}
 		})
+	}
+}
+
+// TestAirLossPerMeter_ReferenceValues sanity-checks AirLossPerMeter against
+// published reference values from Salomons (2001) "Computational
+// Atmospheric Acoustics" Table 3.1 (T = 20 °C, p = 1 atm, RH = 50 %).
+//
+// The 20 % tolerance is intentionally loose: Salomons follows the ANSI
+// S1.26 / Hyland-Wexler vapor-pressure form, while this implementation
+// follows ISO 9613-1:1993's simpler Magnus-form. The residual difference
+// is ~13–16 % at low frequency and within 5 % around 1 kHz, both
+// consistent with that formula choice. The test still catches gross
+// errors of the order found in the percent-vs-fraction bug fixed in
+// 2026-05 (which gave 33 %–800 % deviations).
+//
+// See docs/iso-9613-1-validation.md.
+func TestAirLossPerMeter_ReferenceValues(t *testing.T) {
+	tests := []struct {
+		freq     float64
+		salomons float64 // dB/m
+	}{
+		{125, 0.000383},
+		{250, 0.001131},
+		{500, 0.002417},
+		{1000, 0.004876},
+		{2000, 0.01032},
+		{4000, 0.02613},
+		// 8 kHz / 10 kHz omitted: the simplified ISO 9613-1:1993 vapor-
+		// pressure form diverges further from Salomons there. Pinning the
+		// low-to-mid bands is sufficient to catch gross constant errors.
+	}
+
+	const relTolerance = 0.20
+
+	for _, tt := range tests {
+		got := AirLossPerMeter(tt.freq, 20, 0.5, ReferencePressureKPa)
+		rel := math.Abs(got-tt.salomons) / tt.salomons
+		if rel > relTolerance {
+			t.Errorf("α(%g Hz) = %g dB/m, Salomons reference = %g dB/m (%.1f%% off, tolerance %.0f%%)",
+				tt.freq, got, tt.salomons, rel*100, relTolerance*100)
+		}
 	}
 }
 
