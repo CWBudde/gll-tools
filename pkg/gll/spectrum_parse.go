@@ -167,13 +167,10 @@ func parseRecord(br *gll.ByteReader) ([]int16, error) {
 		}
 
 		// Read compressed bytes (each int16 = 2 bytes)
-		compressedBytes := make([]byte, compressedLen*2)
-		for i := int32(0); i < compressedLen*2; i++ {
-			compressedBytes[i], err = br.ReadByte()
-			if err != nil {
-				_, _ = br.Seek(endOffset, io.SeekStart)
-				return nil, fmt.Errorf("reading compressed byte[%d]: %w", i, err)
-			}
+		compressedBytes, err := br.ReadBytes(int(compressedLen) * 2)
+		if err != nil {
+			_, _ = br.Seek(endOffset, io.SeekStart)
+			return nil, fmt.Errorf("reading compressed bytes: %w", err)
 		}
 
 		// Decompress using BitCompression with differentiation

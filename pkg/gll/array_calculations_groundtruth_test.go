@@ -96,10 +96,12 @@ package gll
 //   fails if the dominant convention disappears from the fixture set.
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -114,11 +116,11 @@ func TestGroundTruth_SingleSourceOnAxis_MatchesOnAxisSpectrum(t *testing.T) {
 	// (Hybrid-1, IG-80, IG-100, LX-10, LX-20, LX-60) work the same way.
 	const fixture = "D12-v10.gll"
 
-	f, err := os.Open(filepath.Join("..", "..", "testdata", "gll", fixture))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "gll", fixture))
 	if err != nil {
 		t.Skipf("fixture not available: %v", err)
 	}
-	t.Cleanup(func() { f.Close() })
+	f := bytes.NewReader(raw)
 
 	gllFile, err := Parse(f)
 	if err != nil {
@@ -204,82 +206,87 @@ func TestGroundTruth_OnAxisSpectrum_ConventionAcrossFixtures(t *testing.T) {
 		t.Skipf("testdata dir not available: %v", err)
 	}
 
-	var convA, convB, placeholder, unknown int
+	var convA, convB, placeholder, unknown atomic.Int64
+	t.Cleanup(func() {
+		convATotal := convA.Load()
+		t.Logf("Convention inventory across fixtures:")
+		t.Logf("  A  (relative balloon + realistic OnAxisSpectrum) : %d sources", convATotal)
+		t.Logf("  B  (absolute balloon, no/zero OnAxisSpectrum)    : %d sources", convB.Load())
+		t.Logf("  P  (placeholder: zero balloon + zero spectrum)   : %d sources", placeholder.Load())
+		t.Logf("  ?  (unknown / hybrid)                            : %d sources", unknown.Load())
+
+		if convATotal == 0 {
+			t.Errorf("no Convention A sources found in fixtures; the proposed " +
+				"OnAxisSpectrum fix has no test coverage")
+		}
+	})
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".gll" {
 			continue
 		}
-		f, err := os.Open(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-
-		gllFile, err := Parse(f)
-		if err != nil {
-			f.Close()
-			continue
-		}
-		if gllFile.Database == nil {
-			f.Close()
-			continue
-		}
-
-		for _, item := range gllFile.Database.SourceDefinitions {
-			src := item.Definition
-			if src == nil || src.BalloonData == nil {
-				continue
+		path := filepath.Join(dir, e.Name())
+		name := e.Name()
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return
 			}
-			if err := LoadBalloonResponses(f, src.BalloonData); err != nil {
-				continue
+			f := bytes.NewReader(raw)
+
+			gllFile, err := Parse(f)
+			if err != nil {
+				return
 			}
-			if len(src.BalloonData.Responses) == 0 ||
-				len(src.BalloonData.Responses[0].Level) == 0 {
-				continue
+			if gllFile.Database == nil {
+				return
 			}
 
-			front := &src.BalloonData.Responses[0]
-			fmid := front.Level[len(front.Level)/2]
-			balloonRelative := math.Abs(fmid) < 5.0
-			balloonAbsolute := fmid > 50
+			for _, item := range gllFile.Database.SourceDefinitions {
+				src := item.Definition
+				if src == nil || src.BalloonData == nil {
+					continue
+				}
+				if err := LoadBalloonResponses(f, src.BalloonData); err != nil {
+					continue
+				}
+				if len(src.BalloonData.Responses) == 0 ||
+					len(src.BalloonData.Responses[0].Level) == 0 {
+					continue
+				}
 
-			hasSpectrum := src.OnAxisSpectrum != nil && len(src.OnAxisSpectrum.Level) > 0
-			spectrumRealistic := false
-			if hasSpectrum {
-				v := src.OnAxisSpectrum.Level[len(src.OnAxisSpectrum.Level)/2]
-				spectrumRealistic = v >= 50 && v <= 130
+				front := &src.BalloonData.Responses[0]
+				fmid := front.Level[len(front.Level)/2]
+				balloonRelative := math.Abs(fmid) < 5.0
+				balloonAbsolute := fmid > 50
+
+				hasSpectrum := src.OnAxisSpectrum != nil && len(src.OnAxisSpectrum.Level) > 0
+				spectrumRealistic := false
+				if hasSpectrum {
+					v := src.OnAxisSpectrum.Level[len(src.OnAxisSpectrum.Level)/2]
+					spectrumRealistic = v >= 50 && v <= 130
+				}
+
+				switch {
+				case balloonRelative && spectrumRealistic:
+					convA.Add(1)
+				case balloonAbsolute && !spectrumRealistic:
+					convB.Add(1)
+				case balloonRelative && !spectrumRealistic:
+					placeholder.Add(1)
+				default:
+					unknown.Add(1)
+					t.Logf("UNKNOWN convention: %s src=%q balloonFrontMid=%.2f dB "+
+						"OnAxisSpectrumMid=%v", name, src.Label, fmid,
+						func() string {
+							if !hasSpectrum {
+								return "<absent>"
+							}
+							return fmt.Sprintf("%.2f dB",
+								src.OnAxisSpectrum.Level[len(src.OnAxisSpectrum.Level)/2])
+						}())
+				}
 			}
-
-			switch {
-			case balloonRelative && spectrumRealistic:
-				convA++
-			case balloonAbsolute && !spectrumRealistic:
-				convB++
-			case balloonRelative && !spectrumRealistic:
-				placeholder++
-			default:
-				unknown++
-				t.Logf("UNKNOWN convention: %s src=%q balloonFrontMid=%.2f dB "+
-					"OnAxisSpectrumMid=%v", e.Name(), src.Label, fmid,
-					func() string {
-						if !hasSpectrum {
-							return "<absent>"
-						}
-						return fmt.Sprintf("%.2f dB",
-							src.OnAxisSpectrum.Level[len(src.OnAxisSpectrum.Level)/2])
-					}())
-			}
-		}
-		f.Close()
-	}
-
-	t.Logf("Convention inventory across fixtures:")
-	t.Logf("  A  (relative balloon + realistic OnAxisSpectrum) : %d sources", convA)
-	t.Logf("  B  (absolute balloon, no/zero OnAxisSpectrum)    : %d sources", convB)
-	t.Logf("  P  (placeholder: zero balloon + zero spectrum)   : %d sources", placeholder)
-	t.Logf("  ?  (unknown / hybrid)                            : %d sources", unknown)
-
-	if convA == 0 {
-		t.Errorf("no Convention A sources found in fixtures; the proposed " +
-			"OnAxisSpectrum fix has no test coverage")
+		})
 	}
 }

@@ -123,13 +123,10 @@ func parseCLogSpectrumLP(br *gll.ByteReader) (*TransferFunction, error) {
 			return nil, fmt.Errorf("reading compressed level length: %w", err)
 		}
 
-		compressedLevelBytes := make([]byte, compressedLevelLen*2)
-		for i := int32(0); i < compressedLevelLen*2; i++ {
-			compressedLevelBytes[i], err = br.ReadByte()
-			if err != nil {
-				_, _ = br.Seek(endOffset, io.SeekStart)
-				return nil, fmt.Errorf("reading compressed level byte[%d]: %w", i, err)
-			}
+		compressedLevelBytes, err := br.ReadBytes(int(compressedLevelLen) * 2)
+		if err != nil {
+			_, _ = br.Seek(endOffset, io.SeekStart)
+			return nil, fmt.Errorf("reading compressed level bytes: %w", err)
 		}
 
 		levelData := compression.DecompressByteArray(compressedLevelBytes, int(levelCount), true, 8)
@@ -150,13 +147,10 @@ func parseCLogSpectrumLP(br *gll.ByteReader) (*TransferFunction, error) {
 			return nil, fmt.Errorf("reading compressed phase length: %w", err)
 		}
 
-		compressedPhaseBytes := make([]byte, compressedPhaseLen*2)
-		for i := int32(0); i < compressedPhaseLen*2; i++ {
-			compressedPhaseBytes[i], err = br.ReadByte()
-			if err != nil {
-				_, _ = br.Seek(endOffset, io.SeekStart)
-				return nil, fmt.Errorf("reading compressed phase byte[%d]: %w", i, err)
-			}
+		compressedPhaseBytes, err := br.ReadBytes(int(compressedPhaseLen) * 2)
+		if err != nil {
+			_, _ = br.Seek(endOffset, io.SeekStart)
+			return nil, fmt.Errorf("reading compressed phase bytes: %w", err)
 		}
 
 		phaseData := compression.DecompressByteArray(compressedPhaseBytes, int(phaseCount), true, 8)
