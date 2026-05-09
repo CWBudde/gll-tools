@@ -228,6 +228,10 @@ All database buffers implemented:
     - XGLL text output via `buildInputConfigStatements()`
     - XGLL text parsing via `parseInputConfigStatement()`
     - Round-trip tested: GLL → XGLL → GLL preserves InputConfig data
+    - Synthetic encoder round-trip covers InputConfig + CaseGeometry + opening
+      angles via `TestEncoderSynthetic_BoxTypeFull` (encoder now wraps the
+      InputConfigBuffer in its outer `int32` size header to match
+      `parseInputConfigBuffer`)
   - [ ] SourceDefinitions with balloon/transfer function data
   - [ ] FilterGroups with filter definitions
   - [ ] Limits, Warnings, Connectors, Frames
