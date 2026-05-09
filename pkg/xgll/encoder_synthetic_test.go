@@ -392,6 +392,203 @@ func TestClampInt16_Bounds(t *testing.T) {
 	}
 }
 
+// TestRoundTripLimitsWarningsViaXGLLText loads a real GLL fixture with
+// Limits and Warnings, builds an XGLL document, writes it as text, parses
+// it back, and verifies the metadata + raw block round-trips. Uses
+// APS-V1_1.gll (L=11 W=2 C=23 F=3).
+func TestRoundTripLimitsWarningsViaXGLLText(t *testing.T) {
+	const fixture = "../../testdata/gll/APS-V1_1.gll"
+
+	f, err := os.Open(fixture)
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	defer f.Close()
+
+	origFile, err := gllbin.Parse(f)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+
+	if origFile.Database == nil {
+		t.Fatalf("fixture has no Database")
+	}
+	if len(origFile.Database.Limits) == 0 {
+		t.Fatalf("fixture has no Limits")
+	}
+	if len(origFile.Database.Warnings) == 0 {
+		t.Fatalf("fixture has no Warnings")
+	}
+
+	doc, err := BuildXGLLDocument(origFile)
+	if err != nil {
+		t.Fatalf("build xgll: %v", err)
+	}
+	var textBuf bytes.Buffer
+	if err := WriteXGLL(doc, &textBuf); err != nil {
+		t.Fatalf("write xgll text: %v", err)
+	}
+
+	parsedDoc, err := Parse(&textBuf)
+	if err != nil {
+		t.Fatalf("parse xgll text: %v", err)
+	}
+	roundFile, err := BuildGLLFile(parsedDoc)
+	if err != nil {
+		t.Fatalf("build gll file: %v", err)
+	}
+
+	if roundFile.Database == nil {
+		t.Fatal("round-tripped database is nil")
+	}
+
+	gotLimits := roundFile.Database.Limits
+	if len(gotLimits) != len(origFile.Database.Limits) {
+		t.Fatalf("Limits count = %d, want %d", len(gotLimits), len(origFile.Database.Limits))
+	}
+	for i, want := range origFile.Database.Limits {
+		got := gotLimits[i]
+		if got.Frame != want.Frame || got.Type != want.Type ||
+			got.BoxType != want.BoxType || got.LimitValue != want.LimitValue {
+			t.Errorf("Limits[%d] = %+v, want %+v", i, got, want)
+		}
+	}
+
+	gotWarnings := roundFile.Database.Warnings
+	if len(gotWarnings) != len(origFile.Database.Warnings) {
+		t.Fatalf("Warnings count = %d, want %d", len(gotWarnings), len(origFile.Database.Warnings))
+	}
+	for i, want := range origFile.Database.Warnings {
+		got := gotWarnings[i]
+		if got.Frame != want.Frame || got.Type != want.Type ||
+			got.Text != want.Text || got.LimitValue != want.LimitValue {
+			t.Errorf("Warnings[%d] = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+// TestRoundTripConnectorsViaXGLLText loads APS-V1_1.gll (23 connectors),
+// round-trips through XGLL text, and verifies the BinaryConnector blob
+// recovers the LabeledValueD angle list.
+func TestRoundTripConnectorsViaXGLLText(t *testing.T) {
+	const fixture = "../../testdata/gll/APS-V1_1.gll"
+
+	f, err := os.Open(fixture)
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	defer f.Close()
+
+	origFile, err := gllbin.Parse(f)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+
+	if origFile.Database == nil || len(origFile.Database.Connectors) == 0 {
+		t.Fatalf("fixture has no Connectors")
+	}
+
+	doc, err := BuildXGLLDocument(origFile)
+	if err != nil {
+		t.Fatalf("build xgll: %v", err)
+	}
+	var textBuf bytes.Buffer
+	if err := WriteXGLL(doc, &textBuf); err != nil {
+		t.Fatalf("write xgll text: %v", err)
+	}
+	parsedDoc, err := Parse(&textBuf)
+	if err != nil {
+		t.Fatalf("parse xgll text: %v", err)
+	}
+	roundFile, err := BuildGLLFile(parsedDoc)
+	if err != nil {
+		t.Fatalf("build gll file: %v", err)
+	}
+	gotConnectors := roundFile.Database.Connectors
+	if len(gotConnectors) != len(origFile.Database.Connectors) {
+		t.Fatalf("Connectors count = %d, want %d", len(gotConnectors), len(origFile.Database.Connectors))
+	}
+	for i, want := range origFile.Database.Connectors {
+		got := gotConnectors[i]
+		if got.UpperBox != want.UpperBox || got.LowerBox != want.LowerBox ||
+			got.Frame != want.Frame {
+			t.Errorf("Connectors[%d] keys mismatch: got %+v, want %+v", i, got, want)
+		}
+		if len(got.Angles) != len(want.Angles) {
+			t.Errorf("Connectors[%d].Angles count = %d, want %d",
+				i, len(got.Angles), len(want.Angles))
+			continue
+		}
+		for j, wa := range want.Angles {
+			ga := got.Angles[j]
+			if ga.Label != wa.Label || ga.Value != wa.Value {
+				t.Errorf("Connectors[%d].Angles[%d] = %+v, want %+v", i, j, ga, wa)
+			}
+		}
+	}
+}
+
+// TestRoundTripFramesViaXGLLText loads APS-V1_1.gll (3 frames), round-trips
+// through XGLL text, and verifies BinaryFrame blob inflation recovers
+// CaseGeometry/PinPoints/etc.
+func TestRoundTripFramesViaXGLLText(t *testing.T) {
+	const fixture = "../../testdata/gll/APS-V1_1.gll"
+
+	f, err := os.Open(fixture)
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	defer f.Close()
+
+	origFile, err := gllbin.Parse(f)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+
+	if origFile.Database == nil || len(origFile.Database.Frames) == 0 {
+		t.Fatalf("fixture has no Frames")
+	}
+
+	doc, err := BuildXGLLDocument(origFile)
+	if err != nil {
+		t.Fatalf("build xgll: %v", err)
+	}
+	var textBuf bytes.Buffer
+	if err := WriteXGLL(doc, &textBuf); err != nil {
+		t.Fatalf("write xgll text: %v", err)
+	}
+	parsedDoc, err := Parse(&textBuf)
+	if err != nil {
+		t.Fatalf("parse xgll text: %v", err)
+	}
+	roundFile, err := BuildGLLFile(parsedDoc)
+	if err != nil {
+		t.Fatalf("build gll file: %v", err)
+	}
+
+	gotFrames := roundFile.Database.Frames
+	if len(gotFrames) != len(origFile.Database.Frames) {
+		t.Fatalf("Frames count = %d, want %d", len(gotFrames), len(origFile.Database.Frames))
+	}
+	for i, want := range origFile.Database.Frames {
+		got := gotFrames[i]
+		if got.Label != want.Label || got.Key != want.Key {
+			t.Errorf("Frames[%d] label/key = (%q,%q), want (%q,%q)",
+				i, got.Label, got.Key, want.Label, want.Key)
+		}
+		if got.TypeFlown != want.TypeFlown {
+			t.Errorf("Frames[%d].TypeFlown = %v, want %v", i, got.TypeFlown, want.TypeFlown)
+		}
+		if got.Weight != want.Weight {
+			t.Errorf("Frames[%d].Weight = %v, want %v", i, got.Weight, want.Weight)
+		}
+		if len(got.PinPoints) != len(want.PinPoints) {
+			t.Errorf("Frames[%d].PinPoints count = %d, want %d",
+				i, len(got.PinPoints), len(want.PinPoints))
+		}
+	}
+}
+
 // TestEncodeBlock_Roundtrip exercises the encodeBlock helper. encodeBlock
 // prepends [int32 totalSize][int16 vcheck=0][int16 subVersion] before content.
 func TestEncodeBlock_Roundtrip(t *testing.T) {

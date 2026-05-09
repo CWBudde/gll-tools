@@ -259,7 +259,25 @@ All database buffers implemented:
       `testdata/gll/3Way-LR.gll` (9 FilterGroups), runs GLL → XGLL text →
       GLL, and verifies each group's Label/Key/IsOverridable plus per-filter
       Label/Key are preserved
-  - [ ] Limits, Warnings, Connectors, Frames
+  - [x] Limits, Warnings, Connectors, Frames
+    - Each type captures `RawBlock []byte` during its binary parser
+      (`parseLimit`, `parseWarning`, `parseConnector`, `parseFrame`) so the
+      original on-disk bytes can be re-emitted verbatim
+    - XGLL text output via `buildLimitStatements`, `buildWarningStatements`,
+      `buildConnectorStatements`, `buildFrameStatements` emits the
+      human-readable metadata (Frame/Type/BoxType/Value, Angles list,
+      PinPoints, etc.) plus a `BinaryLimit` / `BinaryWarning` /
+      `BinaryConnector` / `BinaryFrame` base64 blob
+    - XGLL text parsing inflates each blob via the new exported
+      `gll.ParseLimitBytes` / `gll.ParseWarningBytes` /
+      `gll.ParseConnectorBytes` / `gll.ParseFrameBytes` helpers; the blob is
+      the source of truth and metadata-only fallback is kept lenient for
+      hand-edited XGLL fixtures
+    - Round-trip tested: `TestRoundTripLimitsWarningsViaXGLLText`,
+      `TestRoundTripConnectorsViaXGLLText`,
+      `TestRoundTripFramesViaXGLLText` use `testdata/gll/APS-V1_1.gll`
+      (L=11, W=2, C=23, F=3) and verify counts + per-item field equality
+      after GLL → XGLL text → GLL
 
 ### 7.6 SOFA Export (Spatially Oriented Format for Acoustics)
 

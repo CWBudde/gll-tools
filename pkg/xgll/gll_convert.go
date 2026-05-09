@@ -227,6 +227,54 @@ func applyDatabaseSettings(file *gllbin.File, doc *Document) error {
 		file.Database.FilterGroups = filterGroups
 	}
 
+	// Extract Frames
+	frames, err := parseFrameStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse frames: %w", err)
+	}
+	if len(frames) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.Frames = frames
+	}
+
+	// Extract Connectors
+	connectors, err := parseConnectorStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse connectors: %w", err)
+	}
+	if len(connectors) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.Connectors = connectors
+	}
+
+	// Extract Limits
+	limits, err := parseLimitStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse limits: %w", err)
+	}
+	if len(limits) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.Limits = limits
+	}
+
+	// Extract Warnings
+	warnings, err := parseWarningStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse warnings: %w", err)
+	}
+	if len(warnings) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.Warnings = warnings
+	}
+
 	return nil
 }
 

@@ -45,6 +45,12 @@ type Limit struct {
 	Type       LimitType `json:"type"`               // Type of limit
 	BoxType    string    `json:"box_type,omitempty"` // Box type key this applies to
 	LimitValue float64   `json:"limit_value"`        // The limit value
+
+	// RawBlock holds the original on-disk bytes of the Limit block (size
+	// header + version check + sub-version + payload). Captured during
+	// Parse() so the XGLL text serializer can preserve the block verbatim
+	// via a BinaryLimit base64 blob.
+	RawBlock []byte `json:"-"`
 }
 
 // WarningType represents the type of configuration warning
@@ -82,6 +88,10 @@ type Warning struct {
 	Type       WarningType `json:"type"`            // Type of warning
 	Text       string      `json:"text,omitempty"`  // Warning message text
 	LimitValue float64     `json:"limit_value"`     // The limit value that triggers warning
+
+	// RawBlock holds the original on-disk bytes of the Warning block,
+	// captured during Parse() for XGLL round-trip via BinaryWarning.
+	RawBlock []byte `json:"-"`
 }
 
 // parseLimitBuffer parses the Limits buffer
@@ -90,6 +100,8 @@ func parseLimitBuffer(br *gll.ByteReader, maxOffset int64) ([]Limit, error) {
 }
 
 func parseLimit(br *gll.ByteReader) (*Limit, error) {
+	blockStart := br.Offset()
+
 	blockSize, err := br.ReadInt32()
 	if err != nil {
 		return nil, fmt.Errorf("reading block size: %w", err)
@@ -98,6 +110,8 @@ func parseLimit(br *gll.ByteReader) (*Limit, error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("invalid block size: %d", blockSize)
 	}
+
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	endOffset := br.Offset() + int64(blockSize) - 4
 
@@ -117,6 +131,9 @@ func parseLimit(br *gll.ByteReader) (*Limit, error) {
 	}
 
 	limit := &Limit{}
+	if len(rawBlock) > 0 {
+		limit.RawBlock = rawBlock
+	}
 
 	limit.Frame, err = br.ReadString()
 	if err != nil {
@@ -155,6 +172,8 @@ func parseWarningBuffer(br *gll.ByteReader, maxOffset int64) ([]Warning, error) 
 }
 
 func parseWarning(br *gll.ByteReader) (*Warning, error) {
+	blockStart := br.Offset()
+
 	blockSize, err := br.ReadInt32()
 	if err != nil {
 		return nil, fmt.Errorf("reading block size: %w", err)
@@ -163,6 +182,8 @@ func parseWarning(br *gll.ByteReader) (*Warning, error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("invalid block size: %d", blockSize)
 	}
+
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	endOffset := br.Offset() + int64(blockSize) - 4
 
@@ -182,6 +203,9 @@ func parseWarning(br *gll.ByteReader) (*Warning, error) {
 	}
 
 	warning := &Warning{}
+	if len(rawBlock) > 0 {
+		warning.RawBlock = rawBlock
+	}
 
 	warning.Frame, err = br.ReadString()
 	if err != nil {

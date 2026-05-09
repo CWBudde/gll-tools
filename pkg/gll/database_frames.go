@@ -24,6 +24,11 @@ type Frame struct {
 	NextPivot    *Vector3D         `json:"next_pivot,omitempty"` // Pivot point for next element
 	CenterOfMass *Vector3D         `json:"center_of_mass,omitempty"`
 	PinPoints    []LabeledVector3D `json:"pin_points,omitempty"` // Rigging attachment points
+
+	// RawBlock holds the original on-disk bytes of the Frame block (size
+	// header + payload). Captured during Parse() so XGLL text can preserve
+	// the CaseGeometry mesh + pin points verbatim via BinaryFrame.
+	RawBlock []byte `json:"-"`
 }
 
 // parseFrameBuffer parses the Frames buffer
@@ -32,6 +37,8 @@ func parseFrameBuffer(br *gll.ByteReader, maxOffset int64) ([]Frame, error) {
 }
 
 func parseFrame(br *gll.ByteReader) (*Frame, error) {
+	blockStart := br.Offset()
+
 	// Read block size
 	blockSize, err := br.ReadInt32()
 	if err != nil {
@@ -41,6 +48,8 @@ func parseFrame(br *gll.ByteReader) (*Frame, error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("invalid block size: %d", blockSize)
 	}
+
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	endOffset := br.Offset() + int64(blockSize) - 4
 
@@ -62,6 +71,9 @@ func parseFrame(br *gll.ByteReader) (*Frame, error) {
 	}
 
 	frame := &Frame{}
+	if len(rawBlock) > 0 {
+		frame.RawBlock = rawBlock
+	}
 
 	// Read Label
 	frame.Label, err = br.ReadString()

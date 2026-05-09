@@ -20,6 +20,11 @@ type Connector struct {
 	LowerBox string          `json:"lower_box"` // Key of lower box type
 	Frame    string          `json:"frame"`     // Key of rigging frame (optional)
 	Angles   []LabeledValueD `json:"angles"`    // Available splay angles
+
+	// RawBlock holds the original on-disk bytes of the Connector block
+	// (size header + payload). Captured during Parse() so XGLL text can
+	// preserve the LabeledValueD angle list verbatim via BinaryConnector.
+	RawBlock []byte `json:"-"`
 }
 
 // parseConnectorBuffer parses the Connectors buffer
@@ -28,6 +33,8 @@ func parseConnectorBuffer(br *gll.ByteReader, maxOffset int64) ([]Connector, err
 }
 
 func parseConnector(br *gll.ByteReader) (*Connector, error) {
+	blockStart := br.Offset()
+
 	// Read block size
 	blockSize, err := br.ReadInt32()
 	if err != nil {
@@ -37,6 +44,8 @@ func parseConnector(br *gll.ByteReader) (*Connector, error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("invalid block size: %d", blockSize)
 	}
+
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	endOffset := br.Offset() + int64(blockSize) - 4
 
@@ -58,6 +67,9 @@ func parseConnector(br *gll.ByteReader) (*Connector, error) {
 	}
 
 	connector := &Connector{}
+	if len(rawBlock) > 0 {
+		connector.RawBlock = rawBlock
+	}
 
 	// Read UpperBox
 	connector.UpperBox, err = br.ReadString()

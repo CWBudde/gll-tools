@@ -134,6 +134,10 @@ func BuildXGLLDocument(file *gllbin.File) (*Document, error) {
 		}
 		statements = append(statements, sourceStmts...)
 		statements = append(statements, buildFilterGroupStatements(file.Database)...)
+		statements = append(statements, buildFrameStatements(file.Database)...)
+		statements = append(statements, buildConnectorStatements(file.Database)...)
+		statements = append(statements, buildLimitStatements(file.Database)...)
+		statements = append(statements, buildWarningStatements(file.Database)...)
 	}
 
 	// Assemble document and validate blocks
