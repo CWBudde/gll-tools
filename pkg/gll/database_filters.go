@@ -14,6 +14,12 @@ type FilterGroup struct {
 	Key           string             `json:"key"`
 	IsOverridable bool               `json:"is_overridable,omitempty"`
 	Filters       []FilterDefinition `json:"filters,omitempty"`
+
+	// RawBlock holds the original on-disk bytes of the FilterGroup block
+	// (size header + version check + sub-version + payload). It is captured
+	// during Parse() so XGLL text serialization can preserve the full filter
+	// data without reimplementing the FilterGroup binary encoder.
+	RawBlock []byte `json:"-"`
 }
 
 // FilterDefinition represents a single filter in a filter group
@@ -131,6 +137,9 @@ func parseFilterGroupBuffer(br *gll.ByteReader, maxOffset int64) ([]FilterGroup,
 }
 
 func parseFilterGroup(br *gll.ByteReader) (*FilterGroup, error) {
+	// Capture raw block bytes (size header + payload) for XGLL round-trip.
+	blockStart := br.Offset()
+
 	// Read block size
 	blockSize, err := br.ReadInt32()
 	if err != nil {
@@ -140,6 +149,8 @@ func parseFilterGroup(br *gll.ByteReader) (*FilterGroup, error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("invalid block size: %d", blockSize)
 	}
+
+	rawBlock, _ := readRawBlock(br, blockStart, int(blockSize))
 
 	endOffset := br.Offset() + int64(blockSize) - 4
 
@@ -161,6 +172,9 @@ func parseFilterGroup(br *gll.ByteReader) (*FilterGroup, error) {
 	}
 
 	group := &FilterGroup{}
+	if len(rawBlock) > 0 {
+		group.RawBlock = rawBlock
+	}
 
 	// Read Label
 	group.Label, err = br.ReadString()

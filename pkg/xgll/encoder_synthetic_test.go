@@ -2,6 +2,7 @@ package xgll
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	gllbin "github.com/cwbudde/gll-tools/pkg/gll"
@@ -260,6 +261,90 @@ func TestRoundTripSourceDefinitionsViaXGLLText(t *testing.T) {
 	if finalDef.BalloonData.ResponseCount != int32(wantParallels) {
 		t.Errorf("final ResponseCount = %d, want %d",
 			finalDef.BalloonData.ResponseCount, wantParallels)
+	}
+}
+
+// TestRoundTripFilterGroupsViaXGLLText loads a real GLL fixture with
+// FilterGroups, builds an XGLL document, writes it as text, parses it back,
+// and verifies the FilterGroup metadata + filter definitions survive the
+// round-trip. The XGLL text emits each FilterGroup as human-readable
+// metadata + a BinaryFilterGroup base64 blob; the parser inflates the blob
+// via gllbin.ParseFilterGroupBytes to recover the full filter bank data.
+func TestRoundTripFilterGroupsViaXGLLText(t *testing.T) {
+	const fixture = "../../testdata/gll/3Way-LR.gll"
+
+	f, err := os.Open(fixture)
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	defer f.Close()
+
+	origFile, err := gllbin.Parse(f)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+
+	if origFile.Database == nil || len(origFile.Database.FilterGroups) == 0 {
+		t.Fatalf("fixture has no FilterGroups")
+	}
+	origGroups := origFile.Database.FilterGroups
+
+	// GLL → XGLL document → XGLL text bytes
+	doc, err := BuildXGLLDocument(origFile)
+	if err != nil {
+		t.Fatalf("build xgll: %v", err)
+	}
+	var textBuf bytes.Buffer
+	if err := WriteXGLL(doc, &textBuf); err != nil {
+		t.Fatalf("write xgll text: %v", err)
+	}
+
+	// XGLL text → document → File
+	parsedDoc, err := Parse(&textBuf)
+	if err != nil {
+		t.Fatalf("parse xgll text: %v", err)
+	}
+	roundFile, err := BuildGLLFile(parsedDoc)
+	if err != nil {
+		t.Fatalf("build gll file: %v", err)
+	}
+
+	if roundFile.Database == nil {
+		t.Fatal("round-tripped database is nil")
+	}
+	gotGroups := roundFile.Database.FilterGroups
+	if len(gotGroups) != len(origGroups) {
+		t.Fatalf("FilterGroups count = %d, want %d", len(gotGroups), len(origGroups))
+	}
+
+	for i, want := range origGroups {
+		got := gotGroups[i]
+		if got.Label != want.Label {
+			t.Errorf("FilterGroups[%d].Label = %q, want %q", i, got.Label, want.Label)
+		}
+		if got.Key != want.Key {
+			t.Errorf("FilterGroups[%d].Key = %q, want %q", i, got.Key, want.Key)
+		}
+		if got.IsOverridable != want.IsOverridable {
+			t.Errorf("FilterGroups[%d].IsOverridable = %v, want %v",
+				i, got.IsOverridable, want.IsOverridable)
+		}
+		if len(got.Filters) != len(want.Filters) {
+			t.Errorf("FilterGroups[%d].Filters count = %d, want %d",
+				i, len(got.Filters), len(want.Filters))
+			continue
+		}
+		for j, wantFilter := range want.Filters {
+			gotFilter := got.Filters[j]
+			if gotFilter.Label != wantFilter.Label {
+				t.Errorf("FilterGroups[%d].Filters[%d].Label = %q, want %q",
+					i, j, gotFilter.Label, wantFilter.Label)
+			}
+			if gotFilter.Key != wantFilter.Key {
+				t.Errorf("FilterGroups[%d].Filters[%d].Key = %q, want %q",
+					i, j, gotFilter.Key, wantFilter.Key)
+			}
+		}
 	}
 }
 

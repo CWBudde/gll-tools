@@ -215,6 +215,18 @@ func applyDatabaseSettings(file *gllbin.File, doc *Document) error {
 		file.Database.SourceDefinitions = sources
 	}
 
+	// Extract FilterGroups
+	filterGroups, err := parseFilterGroupStatements(doc.Statements)
+	if err != nil {
+		return fmt.Errorf("parse filter groups: %w", err)
+	}
+	if len(filterGroups) > 0 {
+		if file.Database == nil {
+			file.Database = &gllbin.Database{}
+		}
+		file.Database.FilterGroups = filterGroups
+	}
+
 	return nil
 }
 

@@ -133,6 +133,7 @@ func BuildXGLLDocument(file *gllbin.File) (*Document, error) {
 			return nil, fmt.Errorf("build source definitions: %w", err)
 		}
 		statements = append(statements, sourceStmts...)
+		statements = append(statements, buildFilterGroupStatements(file.Database)...)
 	}
 
 	// Assemble document and validate blocks
