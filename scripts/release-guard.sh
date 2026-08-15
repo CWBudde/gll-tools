@@ -28,7 +28,7 @@
 #   scripts/release-guard.sh gate vX.Y.Z     # all release preconditions
 #   scripts/release-guard.sh tag  vX.Y.Z     # gate, then create and push the tag
 #
-# Prefer the justfile wrappers: `just check-deps`, `just release vX.Y.Z`.
+# Prefer the justfile wrappers: `just check-deps`, `just tag-release vX.Y.Z`.
 
 set -euo pipefail
 
@@ -131,14 +131,24 @@ cmd_unreleased() {
 	count=$(git rev-list "${tag}..HEAD" --count)
 	if [ "$count" -eq 0 ]; then
 		ok "HEAD is $tag"
-	else
-		# Deliberately a warning, not a failure. Untagged work is normal
-		# mid-development; it only becomes a problem when it is forgotten.
-		# The scheduled CI job is what turns a large number into a nag.
-		warn "$count commit(s) since $tag — consider cutting a release"
-		git log --oneline "${tag}..HEAD" | head -5 | sed 's/^/      /'
-		[ "$count" -gt 5 ] && echo "      … and $((count - 5)) more"
+		return 0
 	fi
+
+	# A handful of untagged commits is normal mid-development, so a small count
+	# is only a warning. Past the threshold it becomes a reportable state, so the
+	# scheduled workflow can raise the same nag it raises for stale deps —
+	# otherwise "work stuck on main" is detected and then silently dropped, which
+	# is exactly how algo-fft reached 97 unreleased commits.
+	warn "$count commit(s) since $tag — consider cutting a release"
+	git log --oneline "${tag}..HEAD" | head -5 | sed 's/^/      /'
+	[ "$count" -gt 5 ] && echo "      … and $((count - 5)) more"
+
+	if [ "$count" -ge "${UNRELEASED_THRESHOLD:-20}" ]; then
+		red "  ✗ $count commits is past the ${UNRELEASED_THRESHOLD:-20}-commit threshold — release or explain why not"
+		return 1
+	fi
+
+	return 0
 }
 
 # semver_field VERSION INDEX -> the numeric field (1=major, 2=minor, 3=patch)
@@ -148,17 +158,30 @@ semver_field() {
 
 cmd_gate() {
 	local version="$1"
-	local base
-	base=$(latest_tag)
 
 	echo "Release gate for ${version}"
 	echo
 
 	# --- shape of the version string -------------------------------------
+	# `return 1` explicitly, never a bare `return`: fail() ends in an assignment,
+	# which succeeds, so a bare return here would report the gate as PASSED and
+	# cmd_tag would go on to tag and push an invalid version.
 	if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		fail "'$version' is not a vX.Y.Z tag"
-		return
+		return 1
 	fi
+
+	# --- refresh tags before anything is compared against them -------------
+	# The base must be read AFTER fetching, or a release tagged elsewhere since
+	# the last fetch is invisible and both the monotonic check and the API
+	# comparison silently run against a stale predecessor.
+	if ! git fetch --quiet origin --tags; then
+		fail "could not fetch tags from origin — cannot verify ${version} against the real latest release"
+		return 1
+	fi
+
+	local base
+	base=$(latest_tag)
 
 	# --- working tree and branch -----------------------------------------
 	local dirty=0
@@ -178,7 +201,6 @@ cmd_gate() {
 		ok "on $branch"
 	fi
 
-	git fetch --quiet origin --tags 2>/dev/null || true
 	if git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
 		if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${branch}")" ]; then
 			fail "HEAD differs from origin/${branch} — push or pull first"
@@ -211,8 +233,14 @@ cmd_gate() {
 
 	# --- CHANGELOG ---------------------------------------------------------
 	if [ -f CHANGELOG.md ]; then
-		# Accept "## [0.8.0]", "## v0.8.0", "## [v0.8.0]" — but not "Unreleased".
-		if grep -qiE "^##+ *\[?v?${version#v}\]?" CHANGELOG.md; then
+		# Accept "## [0.8.0]", "## v0.8.0", "## [v0.8.0]" — but not "Unreleased",
+		# and not a near-miss like "## 0.8.0-rc1" or "## 0.8.0.1". The heading must
+		# END at the version, so the trailing group may only start with something
+		# that cannot continue a version string. Dots are escaped because an
+		# unescaped "." would let 0.8.0 match a heading for 0x8y0.
+		local ver_re
+		ver_re=$(printf '%s' "${version#v}" | sed 's/[.]/[.]/g')
+		if grep -qiE "^##+ *\[?v?${ver_re}\]?([^0-9.-].*)?$" CHANGELOG.md; then
 			ok "CHANGELOG.md has a section for ${version}"
 		else
 			fail "CHANGELOG.md has no section for ${version}"
@@ -276,11 +304,16 @@ cmd_gate() {
 			local required_ok=0
 			if [ "$bmaj" -eq 0 ]; then
 				# v0.x: we require a MINOR bump, stricter than semver demands.
-				[ "$vmin" -gt "$bmin" ] && required_ok=1
+				# A MAJOR bump counts too — graduating v0.x -> v1.0.0 signals the
+				# incompatibility at least as loudly, and comparing minors alone
+				# would reject it (1.0.0 has minor 0, which is not > 8).
+				if [ "$vmaj" -gt "$bmaj" ] || [ "$vmin" -gt "$bmin" ]; then
+					required_ok=1
+				fi
 				if [ $required_ok -eq 0 ]; then
-					fail "incompatible changes require a minor bump for v0.x (v0.$((bmin + 1)).0 or later), got ${version}"
+					fail "incompatible changes require a minor or major bump for v0.x (v0.$((bmin + 1)).0 or v$((bmaj + 1)).0.0 or later), got ${version}"
 				else
-					ok "minor bump signals the incompatible changes"
+					ok "version bump signals the incompatible changes"
 				fi
 			else
 				[ "$vmaj" -gt "$bmaj" ] && required_ok=1
@@ -311,15 +344,29 @@ cmd_gate() {
 
 cmd_tag() {
 	local version="$1"
-	cmd_gate "$version"
+
+	# Check the gate explicitly rather than leaning on `set -e`. The dispatcher
+	# invokes cmd_tag inside a `||` list to capture its status, and that context
+	# disables errexit for everything it calls — so an unchecked `cmd_gate` here
+	# would let a failed gate fall straight through into `git tag` and `git push`.
+	if ! cmd_gate "$version"; then
+		return 1
+	fi
+	if [ "$FAILED" -ne 0 ]; then
+		red "refusing to tag ${version}"
+		return 1
+	fi
 
 	echo
 	echo "Tagging ${version}…"
 	git tag -a "$version" -m "${version}
 
 $(if [ -f CHANGELOG.md ]; then
-		awk -v v="${version#v}" '
-      $0 ~ "^##+ *\\[?v?" v "\\]?" {f=1; next}
+		# Same heading-boundary rule as the gate, for the same reason: a
+		# "## 0.8.0-rc1" section preceding the real one would otherwise be
+		# picked up and embedded as this tag's release notes.
+		awk -v v="$(printf '%s' "${version#v}" | sed 's/[.]/[.]/g')" '
+      $0 ~ "^##+ *\\[?v?" v "\\]?([^0-9.-].*)?$" {f=1; next}
       f && /^##+ /{exit}
       f {print}
     ' CHANGELOG.md | head -40
@@ -333,22 +380,27 @@ $(if [ -f CHANGELOG.md ]; then
 	echo "    go get $(go list -m)@${version} && go mod tidy"
 }
 
+# STATUS carries a subcommand's own return value; FAILED carries any fail() call.
+# Both must reach the exit code — `exit "$FAILED"` alone would discard the
+# threshold result from cmd_unreleased, which reports through its return value.
+STATUS=0
+
 case "${1:-}" in
-deps) cmd_deps ;;
-unreleased) cmd_unreleased ;;
+deps) cmd_deps || STATUS=$? ;;
+unreleased) cmd_unreleased || STATUS=$? ;;
 gate)
 	[ $# -ge 2 ] || {
 		red "usage: $0 gate vX.Y.Z"
 		exit 2
 	}
-	cmd_gate "$2"
+	cmd_gate "$2" || STATUS=$?
 	;;
 tag)
 	[ $# -ge 2 ] || {
 		red "usage: $0 tag vX.Y.Z"
 		exit 2
 	}
-	cmd_tag "$2"
+	cmd_tag "$2" || STATUS=$?
 	;;
 *)
 	echo "usage: $0 {deps|unreleased|gate vX.Y.Z|tag vX.Y.Z}" >&2
@@ -356,4 +408,8 @@ tag)
 	;;
 esac
 
-exit "$FAILED"
+if [ "$FAILED" -ne 0 ] && [ "$STATUS" -eq 0 ]; then
+	STATUS=1
+fi
+
+exit "$STATUS"

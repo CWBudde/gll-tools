@@ -42,14 +42,19 @@ jobs:
           set -e
 
       - name: Report untagged work
-        run: ./scripts/release-guard.sh unreleased 2>&1 | tee -a drift.log
+        id: unreleased
+        run: |
+          set +e
+          ./scripts/release-guard.sh unreleased 2>&1 | tee -a drift.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          set -e
 
       - name: Open or update a drift issue
-        if: steps.deps.outputs.status != '0'
+        if: steps.deps.outputs.status != '0' || steps.unreleased.outputs.status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          title="Dependency drift: sibling modules are behind their latest tags"
+          title="Dependency drift: siblings behind, or work stuck untagged"
           body=$'This is filed automatically by `.github/workflows/dep-drift.yml`.\n\n```\n'"$(cat drift.log)"$'\n```\n\nBump with `go get <module>@<version> && go mod tidy`.\nIf a bump is deliberately deferred, record why in `PLAN.md` and close this issue.'
 
           existing=$(gh issue list --state open --search "$title" --json number,title \
@@ -63,7 +68,7 @@ jobs:
           fi
 
       - name: Fail if drifted
-        if: steps.deps.outputs.status != '0'
+        if: steps.deps.outputs.status != '0' || steps.unreleased.outputs.status != '0'
         run: |
-          echo "::error::Sibling dependencies are behind their latest tags — see the filed issue."
+          echo "::error::Dependency drift or untagged work past the threshold — see the filed issue."
           exit 1

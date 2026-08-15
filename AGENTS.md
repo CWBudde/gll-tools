@@ -232,7 +232,7 @@ just check-deps           # are all github.com/cwbudde/* deps at their latest ta
 
 This is wired into the repo's aggregate check recipe, and the same scheduled job files a
 GitHub issue when it starts failing. If a bump is _deliberately_ deferred, write down why in
-`PLAN.md` — an undocumented old pin is indistinguishable from an forgotten one.
+`PLAN.md` — an undocumented old pin is indistinguishable from a forgotten one.
 
 Renovate (`.github/renovate.json`) opens the bump PRs automatically and groups the whole
 `cwbudde` family into a single PR on purpose: an incompatible `algo-fft` can reach a
