@@ -59,6 +59,24 @@ latest_tag() {
 	git tag --list 'v*' --sort=-v:refname | head -1
 }
 
+# default_branch resolves the branch releases are cut from. Not every repo in
+# this family uses "main" — `wav` is on "master" — so this must be discovered
+# rather than assumed.
+default_branch() {
+	local b
+	b=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+	b=${b#origin/}
+	if [ -z "$b" ]; then
+		for candidate in main master; do
+			if git rev-parse --verify --quiet "refs/remotes/origin/${candidate}" >/dev/null; then
+				b=$candidate
+				break
+			fi
+		done
+	fi
+	echo "${b:-main}"
+}
+
 # sibling_modules lists every github.com/cwbudde/* module this one requires,
 # direct or indirect. Indirect ones matter too: a stale indirect pin is how an
 # incompatible algo-fft reached algo-acoustics through two different paths.
@@ -85,7 +103,7 @@ cmd_deps() {
 
 	while IFS= read -r line; do
 		[ -z "$line" ] && continue
-		if [[ $line == *" -> "* ]]; then
+		if [[ "$line" == *" -> "* ]]; then
 			fail "$line"
 		else
 			ok "$line"
@@ -137,7 +155,7 @@ cmd_gate() {
 	echo
 
 	# --- shape of the version string -------------------------------------
-	if ! [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		fail "'$version' is not a vX.Y.Z tag"
 		return
 	fi
@@ -151,12 +169,13 @@ cmd_gate() {
 		ok "working tree clean"
 	fi
 
-	local branch
+	local branch expected
 	branch=$(git rev-parse --abbrev-ref HEAD)
-	if [ "$branch" != "main" ]; then
-		fail "on branch '$branch', expected main"
+	expected=$(default_branch)
+	if [ "$branch" != "$expected" ]; then
+		fail "on branch '$branch', expected '$expected'"
 	else
-		ok "on main"
+		ok "on $branch"
 	fi
 
 	git fetch --quiet origin --tags 2>/dev/null || true

@@ -247,7 +247,7 @@ Always release through the guard rather than by hand:
 just tag-release v0.8.0       # runs every precondition, then tags and pushes
 ```
 
-It refuses to tag when the tree is dirty, when `HEAD` is not a pushed `main`, when the tag
+It refuses to tag when the tree is dirty, when `HEAD` is not a pushed default branch, when the tag
 already exists or does not sort after the current one, when siblings are stale, when
 `CHANGELOG.md` has no section for the version, or when the exported API changed
 incompatibly without the version reflecting it.
