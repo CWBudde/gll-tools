@@ -1,0 +1,69 @@
+name: Dependency Drift
+
+# Catches the two states that produced the August 2026 algo-* tangle:
+#   * this module pins a sibling that has since tagged a newer version
+#   * this module has work on main that was never tagged, so consumers cannot
+#     take it even if they want to
+#
+# Deliberately NOT run on pull requests. A sibling tagging something overnight
+# must not turn an unrelated PR red. This runs on a schedule and files an issue
+# instead, so the nag is persistent but never blocks anyone mid-task.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    name: Sibling dependency drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release-guard needs tags to find the latest release
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Check sibling dependencies
+        id: deps
+        run: |
+          set +e
+          ./scripts/release-guard.sh deps 2>&1 | tee drift.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Report untagged work
+        run: ./scripts/release-guard.sh unreleased 2>&1 | tee -a drift.log
+
+      - name: Open or update a drift issue
+        if: steps.deps.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Dependency drift: sibling modules are behind their latest tags"
+          body=$'This is filed automatically by `.github/workflows/dep-drift.yml`.\n\n```\n'"$(cat drift.log)"$'\n```\n\nBump with `go get <module>@<version> && go mod tidy`.\nIf a bump is deliberately deferred, record why in `PLAN.md` and close this issue.'
+
+          existing=$(gh issue list --state open --search "$title" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label dependencies 2>/dev/null \
+              || gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Fail if drifted
+        if: steps.deps.outputs.status != '0'
+        run: |
+          echo "::error::Sibling dependencies are behind their latest tags — see the filed issue."
+          exit 1
